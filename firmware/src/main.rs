@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod platform;
+mod radio;
 mod storage;
 mod uplink;
 
@@ -13,7 +14,7 @@ use core::net::Ipv6Addr;
 use embassy_executor::Spawner;
 use embassy_futures::select::{Either3, select3};
 use embassy_net::StackResources;
-use embassy_time::{Duration, Instant, Timer, with_timeout};
+use embassy_time::{Duration, Instant, Timer};
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::rng::Rng;
@@ -35,7 +36,6 @@ esp_bootloader_esp_idf::esp_app_desc!();
 const DEFAULT_CHANNEL: u8 = 1;
 /// ESP-NOW keeps a peer list of its own, with room for this many.
 const MAX_ESPNOW_PEERS: usize = 20;
-const SEND_TIMEOUT: Duration = Duration::from_millis(100);
 const STALL_WARNING: Duration = Duration::from_millis(500);
 
 #[cfg(feature = "esp32s3")]
@@ -82,7 +82,8 @@ async fn main(spawner: Spawner) -> ! {
 			.expect("setting the WiFi channel");
 		info!("Using WiFi channel {channel}");
 	}
-	let (manager, mut sender, mut receiver) = esp_now.split();
+	let (manager, sender, mut receiver) = esp_now.split();
+	spawner.spawn(radio::sender(sender).expect("spawning the radio task"));
 
 	if let Some(settings) = uplink {
 		let (stack, runner) = embassy_net::new(
@@ -115,10 +116,12 @@ async fn main(spawner: Spawner) -> ! {
 	let mut frame = alloc::vec![0u8; FRAME_LEN];
 	let mut stream: Option<StreamId> = None;
 	let mut next_save = Instant::now() + Duration::from_secs(SAVE_INTERVAL_SECS);
-	let mut stats = SendStats::new();
 	loop {
 		let started = Instant::now();
-		while let Some((destination, len)) = node.poll_transmit(&mut frame) {
+		while !radio::OUTBOX.is_full() {
+			let Some((destination, len)) = node.poll_transmit(&mut frame) else {
+				break;
+			};
 			let mac = match destination {
 				Destination::Broadcast => BROADCAST_ADDRESS,
 				Destination::Unicast(mac) => {
@@ -126,17 +129,13 @@ async fn main(spawner: Spawner) -> ! {
 					mac
 				}
 			};
-			// Lost frames are resent by the link layer, so only a stuck send matters.
-			let send = sender.send_async(&mac, &frame[..len]);
-			match with_timeout(SEND_TIMEOUT, send).await {
-				Ok(Ok(())) => {}
-				// Broadcasts are never acknowledged, so they never fail.
-				Ok(Err(_)) => stats.failed += 1,
-				Err(_) => stats.timed_out += 1,
-			}
-			stats.sent += 1;
+			let outgoing = radio::Outgoing {
+				mac,
+				frame: frame[..len].to_vec(),
+			};
+			let _ = radio::OUTBOX.try_send(outgoing);
 		}
-		let backlogged = flush_stream(&mut node, &mut stream);
+		let backlogged = flush_stream(&mut node, &mut stream) || radio::OUTBOX.is_full();
 
 		let mut wake = node
 			.poll_timeout()
@@ -144,7 +143,7 @@ async fn main(spawner: Spawner) -> ! {
 			.unwrap_or_else(|| Instant::now() + Duration::from_secs(1))
 			.min(next_save);
 		if backlogged {
-			// Try again soon, once the TCP task has caught up.
+			// Try again soon, once the radio or TCP task has caught up.
 			wake = wake.min(Instant::now() + Duration::from_millis(5));
 		}
 		let waited = Instant::now();
@@ -169,7 +168,6 @@ async fn main(spawner: Spawner) -> ! {
 		if busy > STALL_WARNING {
 			warn!("Main loop was busy for {} ms", busy.as_millis());
 		}
-		stats.report_if_due();
 		if Instant::now() >= next_save {
 			store.save_time(unix_base + Instant::now().as_secs());
 			next_save = Instant::now() + Duration::from_secs(SAVE_INTERVAL_SECS);
@@ -293,43 +291,5 @@ struct Hex<'a>(&'a [u8]);
 impl core::fmt::Display for Hex<'_> {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		self.0.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
-	}
-}
-
-/// Counts ESP-NOW sends that went unacknowledged or never finished, and logs
-/// them every so often.
-struct SendStats {
-	sent: u32,
-	failed: u32,
-	timed_out: u32,
-	since: Instant,
-}
-
-impl SendStats {
-	const PERIOD: Duration = Duration::from_secs(10);
-
-	fn new() -> Self {
-		SendStats {
-			sent: 0,
-			failed: 0,
-			timed_out: 0,
-			since: Instant::now(),
-		}
-	}
-
-	fn report_if_due(&mut self) {
-		if Instant::now() < self.since + Self::PERIOD {
-			return;
-		}
-		if self.failed > 0 || self.timed_out > 0 {
-			warn!(
-				"ESP-NOW sends in the last {} s: {} sent, {} unacknowledged, {} timed out",
-				Self::PERIOD.as_secs(),
-				self.sent,
-				self.failed,
-				self.timed_out
-			);
-		}
-		*self = SendStats::new();
 	}
 }
