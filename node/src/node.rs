@@ -48,6 +48,8 @@ pub struct Config {
 	/// How many bytes of IPv6 packets to hold for [`Node::recv_ipv6`] before
 	/// dropping the oldest.
 	pub max_inbox_bytes: usize,
+	/// Timing for the reliable link to each neighbor.
+	pub link: espnow_reliable::Config,
 }
 
 impl Config {
@@ -61,6 +63,13 @@ impl Config {
 			max_message_size: 16 * 1024,
 			mtu: 1280,
 			max_inbox_bytes: 8 * 1024,
+			// ESP-NOW already retries each frame in hardware, so resends can
+			// come quickly without much risk of crowding the radio.
+			link: espnow_reliable::Config {
+				max_retransmit_timeout: Duration::from_millis(250),
+				max_retransmits: 20,
+				..espnow_reliable::Config::default()
+			},
 		}
 	}
 }
@@ -111,6 +120,7 @@ pub struct Node<P> {
 	inbox_bytes: usize,
 	max_inbox_bytes: usize,
 	max_neighbors: usize,
+	link_config: espnow_reliable::Config,
 	beacon_interval: Duration,
 	beacon_at: Instant,
 	neighbors: BTreeMap<Mac, Neighbor>,
@@ -146,6 +156,7 @@ impl<P: Platform + Clone + Send + 'static> Node<P> {
 			inbox_bytes: 0,
 			max_inbox_bytes: config.max_inbox_bytes,
 			max_neighbors: config.max_neighbors,
+			link_config: config.link,
 			beacon_interval: config.beacon_interval,
 			beacon_at,
 			neighbors: BTreeMap::new(),
@@ -395,7 +406,7 @@ impl<P: Platform> Node<P> {
 			return false;
 		}
 		let session = self.random_session();
-		let link = Box::new(PeerLink::new(session, espnow_reliable::Config::default()));
+		let link = Box::new(PeerLink::new(session, self.link_config));
 		self.neighbors.insert(
 			mac,
 			Neighbor {
