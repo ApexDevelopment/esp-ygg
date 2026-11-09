@@ -220,9 +220,7 @@ fn edits_and_saves_bridge_settings() {
 	press(&mut app, &[Key::Up, Key::Up, Key::Up, Key::Up, Key::Enter]);
 	type_text(&mut app, "192.168.1.176:9001");
 	press(&mut app, &[Key::Enter, Key::Down, Key::Down, Key::Enter]);
-	for _ in 0..6 {
-		press(&mut app, &[Key::Backspace]);
-	}
+	// Typing replaces the old value, "+00:00".
 	type_text(&mut app, "-5");
 	press(&mut app, &[Key::Enter]);
 	assert!(screen(&app).join("\n").contains("UTC-05:00"));
@@ -301,4 +299,34 @@ fn shows_the_local_time_once_known() {
 	status.board.time = Some(1_794_249_000_000_000);
 	app.set_status(status);
 	assert!(screen(&app)[0].contains("13:30"), "{}", screen(&app)[0]);
+}
+
+#[test]
+fn typing_replaces_a_field_and_backspace_edits_it() {
+	let mut settings = Settings::new();
+	settings.channel = 11;
+	let mut app = App::new(settings, at(0));
+	app.set_status(status(&[], &[]));
+	let settings = [Key::Down, Key::Down, Key::Down, Key::Down, Key::Enter];
+	let channel = [
+		Key::Down,
+		Key::Down,
+		Key::Down,
+		Key::Down,
+		Key::Down,
+		Key::Enter,
+	];
+	press(&mut app, &settings);
+	press(&mut app, &channel);
+	type_text(&mut app, "6");
+	press(&mut app, &[Key::Enter]);
+	assert!(screen(&app).join("\n").contains("Channel  6"));
+	press(&mut app, &[Key::Enter, Key::Backspace]);
+	type_text(&mut app, "3");
+	press(&mut app, &[Key::Enter]);
+	assert!(screen(&app).join("\n").contains("Channel  3"));
+	press(&mut app, &[Key::Enter, Key::Backspace, Key::Backspace]);
+	type_text(&mut app, "12");
+	press(&mut app, &[Key::Enter]);
+	assert!(screen(&app).join("\n").contains("Channel  12"));
 }

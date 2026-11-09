@@ -525,11 +525,11 @@ impl App {
 
 	fn activate(&mut self, field: Field) {
 		let input = match field {
-			Field::Name => TextInput::new(&self.draft.name, 32),
+			Field::Name => TextInput::prefilled(&self.draft.name, 32),
 			Field::Password => TextInput::secret(&self.draft.password, 63),
-			Field::Peer => TextInput::new(&self.draft.peer, 21),
-			Field::Channel => TextInput::new(&self.draft.channel.to_string(), 2),
-			Field::TimeZone => TextInput::new(&format_offset(self.draft.utc_offset), 6),
+			Field::Peer => TextInput::prefilled(&self.draft.peer, 21),
+			Field::Channel => TextInput::prefilled(&self.draft.channel.to_string(), 2),
+			Field::TimeZone => TextInput::prefilled(&format_offset(self.draft.utc_offset), 6),
 			Field::Bridge => {
 				self.draft.bridge = !self.draft.bridge;
 				return;

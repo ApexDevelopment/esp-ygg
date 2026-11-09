@@ -356,10 +356,17 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App) {
 			if let (true, Some((editing, input))) = (selected, &app.editing)
 				&& editing == field
 			{
-				return Line::from(Vec::from([
-					Span::raw(format!(" {label:<9}")),
-					Span::styled(format!("{}_", visible_end(&input.display(), 29)), SELECTED),
-				]));
+				let text = visible_end(&input.display(), 29);
+				// The old value shows as selected until typing replaces it.
+				let value = if input.replaceable {
+					Span::styled(text, SELECTED)
+				} else {
+					Span::styled(
+						format!("{text}_"),
+						Style::new().add_modifier(Modifier::BOLD),
+					)
+				};
+				return Line::from(Vec::from([Span::raw(format!(" {label:<9}")), value]));
 			}
 			let text = format!(" {label:<9}{value}");
 			let style = if selected { SELECTED } else { Style::new() };
