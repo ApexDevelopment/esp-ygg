@@ -1,15 +1,13 @@
 //! A simulated ESP-NOW mesh whose first node also peers over TCP with a
 //! yggdrasil-rs node, standing in for a desktop on the wider network.
 
-mod common;
-
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Ipv6Addr, TcpStream};
 use std::time::{Duration, Instant};
 
-use common::{Radio, echo_request, is_echo_reply, private_key};
 use yggdrasil::core::{Core, Options};
 use yggdrasil::ipv6rwc::ReadWriteCloser;
+use yggdrasil_espnow::sim::{Radio, echo_request, is_echo_reply, private_key};
 use yggdrasil_espnow::yggdrasil_proto::requests::build_nodeinfo;
 use yggdrasil_espnow::{Config, PublicKey, StreamId};
 

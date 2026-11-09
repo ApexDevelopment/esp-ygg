@@ -13,10 +13,15 @@
 //! application.
 #![no_std]
 
+#[cfg(feature = "sim")]
+extern crate std;
+
 extern crate alloc;
 
 mod espnow;
 mod node;
+#[cfg(feature = "sim")]
+pub mod sim;
 mod stream;
 
 pub use espnow::{BEACON_VERSION, Destination, FRAME_LEN, Mac};

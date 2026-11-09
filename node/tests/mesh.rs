@@ -1,8 +1,6 @@
-mod common;
-
 use std::time::Duration;
 
-use common::Radio;
+use yggdrasil_espnow::sim::Radio;
 
 #[test]
 fn neighbors_peer_over_espnow() {
@@ -32,7 +30,9 @@ fn survives_a_lossy_radio() {
 fn reroutes_when_a_neighbor_moves_away() {
 	// 0 - 1 - 2, and 0 - 3 - 2 as a second route
 	let mut radio = Radio::line(3);
-	radio.add_node(yggdrasil_espnow::Config::new(common::private_key(9)));
+	radio.add_node(yggdrasil_espnow::Config::new(
+		yggdrasil_espnow::sim::private_key(9),
+	));
 	radio.connect(0, 3);
 	radio.connect(3, 2);
 	assert!(radio.run_until(Duration::from_secs(20), |radio| radio.all_peered()));

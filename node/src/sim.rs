@@ -1,15 +1,17 @@
-//! A simulated ESP-NOW radio shared by several nodes.
-
-#![allow(dead_code)]
+//! A simulated ESP-NOW radio shared by several nodes, for tests and desktop
+//! previews. Enabled by the `sim` feature.
 
 use std::collections::BTreeMap;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+use std::vec;
+use std::vec::Vec;
 
-use yggdrasil_espnow::yggdrasil_proto::icmpv6::create_icmpv6;
-use yggdrasil_espnow::{Config, Destination, FRAME_LEN, Instant, Mac, Node, Platform, PrivateKey};
+use yggdrasil_proto::icmpv6::create_icmpv6;
+
+use crate::{Config, Destination, FRAME_LEN, Instant, Mac, Node, Platform, PrivateKey};
 
 const LATENCY_MICROS: u64 = 1_000;
 
@@ -54,6 +56,12 @@ pub struct Radio {
 	sent: u64,
 	/// Every `loss_every`-th frame is lost, if set.
 	pub loss_every: Option<u64>,
+}
+
+impl Default for Radio {
+	fn default() -> Self {
+		Self::new()
+	}
 }
 
 impl Radio {
