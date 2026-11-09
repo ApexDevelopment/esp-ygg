@@ -37,3 +37,11 @@ pub fn to_embassy(instant: Instant) -> embassy_time::Instant {
 	let micros = instant.as_duration().as_micros();
 	embassy_time::Instant::from_micros(u64::try_from(micros).unwrap_or(u64::MAX))
 }
+
+/// The current time, as the node and the UI count it.
+#[cfg(feature = "cardputer")]
+pub fn now() -> Instant {
+	Instant::from_duration(Duration::from_micros(
+		embassy_time::Instant::now().as_micros(),
+	))
+}

@@ -3,7 +3,6 @@
 //! 74HC138 decoder, and the ADV reads them from a TCA8418 over I2C.
 
 use alloc::vec::Vec;
-use core::time::Duration as CoreDuration;
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -298,10 +297,7 @@ async fn keyboard(mut reader: KeyReader) {
 	let mut keyboard = Keyboard::new();
 	loop {
 		let held = reader.held();
-		let now = yggdrasil_espnow::Instant::from_duration(CoreDuration::from_micros(
-			embassy_time::Instant::now().as_micros(),
-		));
-		for key in keyboard.update(&held, now) {
+		for key in keyboard.update(&held, crate::platform::now()) {
 			let _ = KEYS.try_send(key);
 		}
 		Timer::after(SCAN_INTERVAL).await;

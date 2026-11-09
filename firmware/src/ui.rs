@@ -1,97 +1,98 @@
-//! Connects the on-device UI to the screen, the keyboard and the rest of
-//! the firmware.
+//! Runs the on-device UI on the second core, so drawing and scanning keys
+//! never delay the radio and network work on the first. The cores exchange
+//! messages through channels.
 
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU8, Ordering};
 
-use embassy_futures::select::{Either, select};
-use embassy_time::{Duration, Instant};
-use esp_ygg_app::ui::{self, App, Command, Key, Status, Uplink, WifiNetwork};
-use esp_ygg_app::{BoardInfo, Event, Settings};
-use yggdrasil_espnow::Node;
+use embassy_futures::select::{Either3, select3};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
+use embassy_time::{Duration, Timer};
+use esp_hal::peripherals::{CPU_CTRL, FROM_CPU_INTR1};
+use esp_hal::system::Stack;
+use esp_rtos::embassy::Executor;
+use esp_ygg_app::ui::{self, App, Command, Status, WifiNetwork};
+use esp_ygg_app::{Event, Settings};
+use static_cell::StaticCell;
+use yggdrasil_espnow::PublicKey;
 
-use crate::cardputer::{KEYS, Screen};
-use crate::platform::EspPlatform;
-use crate::uplink::{SCAN_RESULTS, ScannedNetwork};
+use crate::cardputer::{self, KEYS, Model, Pins, Screen};
+use crate::platform::now;
 
-const STATUS_INTERVAL: Duration = Duration::from_secs(1);
-const FRAME_INTERVAL: Duration = Duration::from_millis(50);
+/// How often the UI runs its timers when nothing else happens.
+const TICK: Duration = Duration::from_millis(100);
+const STACK_SIZE: usize = 16 * 1024;
 
-pub enum Input {
-	Key(Key),
-	Networks(Vec<ScannedNetwork>),
+/// What the network side tells the UI.
+pub enum ToUi {
+	Status(Status),
+	Event(Event),
+	NodeInfo(PublicKey, Option<Vec<u8>>),
+	Networks(Vec<WifiNetwork>),
 }
 
-pub async fn next_input() -> Input {
-	match select(KEYS.receive(), SCAN_RESULTS.receive()).await {
-		Either::First(key) => Input::Key(key),
-		Either::Second(networks) => Input::Networks(networks),
+pub static TO_UI: Channel<CriticalSectionRawMutex, ToUi, 16> = Channel::new();
+/// What the UI asks the network side to do.
+pub static FROM_UI: Channel<CriticalSectionRawMutex, Command, 8> = Channel::new();
+
+/// 0 until the second core has detected the board.
+static MODEL: AtomicU8 = AtomicU8::new(0);
+
+/// Starts the screen, the keyboard and the UI on the second core.
+pub fn start(
+	cpu_control: CPU_CTRL<'static>,
+	interrupt: FROM_CPU_INTR1<'static>,
+	pins: Pins,
+	settings: Settings,
+) {
+	static STACK: StaticCell<Stack<STACK_SIZE>> = StaticCell::new();
+	esp_rtos::start_second_core(
+		cpu_control,
+		interrupt,
+		STACK.init(Stack::new()),
+		move || {
+			static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+			EXECUTOR.init(Executor::new()).run(|spawner| {
+				let (model, screen) = cardputer::start(&spawner, pins);
+				MODEL.store(model as u8 + 1, Ordering::Relaxed);
+				spawner.spawn(run(screen, settings).expect("spawning the UI task"));
+			});
+		},
+	);
+}
+
+/// The board's name, once the second core has detected it.
+pub fn model_name() -> &'static str {
+	match MODEL.load(Ordering::Relaxed) {
+		1 => Model::Original.name(),
+		2 => Model::Adv.name(),
+		_ => "M5Stack Cardputer",
 	}
 }
 
-pub struct Ui {
-	app: App,
-	screen: Screen,
-	next_status: Instant,
-	next_frame: Instant,
+#[embassy_executor::task]
+async fn run(mut screen: Screen, settings: Settings) {
+	let mut app = App::new(settings, now());
+	loop {
+		match select3(KEYS.receive(), TO_UI.receive(), Timer::after(TICK)).await {
+			Either3::First(key) => app.handle_key(key),
+			Either3::Second(message) => handle_message(&mut app, message),
+			Either3::Third(()) => {}
+		}
+		app.tick(now());
+		while let Some(command) = app.poll_command() {
+			FROM_UI.send(command).await;
+		}
+		let _ = screen.draw(|frame| ui::draw(frame, &app));
+	}
 }
 
-impl Ui {
-	pub fn new(screen: Screen, settings: Settings, node: &Node<EspPlatform>) -> Self {
-		Ui {
-			app: App::new(settings, node.now()),
-			screen,
-			next_status: Instant::now(),
-			next_frame: Instant::now(),
-		}
-	}
-
-	pub fn handle_input(&mut self, input: Input) {
-		match input {
-			Input::Key(key) => self.app.handle_key(key),
-			Input::Networks(networks) => self.app.set_networks(
-				networks
-					.into_iter()
-					.map(|network| WifiNetwork {
-						ssid: network.ssid,
-						signal: network.signal,
-						secured: network.secured,
-					})
-					.collect(),
-			),
-		}
-	}
-
-	pub fn handle_event(&mut self, event: Event) {
-		self.app.handle_event(event);
-	}
-
-	pub fn handle_nodeinfo(&mut self, key: yggdrasil_espnow::PublicKey, info: Option<Vec<u8>>) {
-		self.app.handle_nodeinfo(key, info);
-	}
-
-	/// Refreshes the status shown, runs the UI's timers and redraws when
-	/// due. Returns what the UI asked for.
-	pub fn update(
-		&mut self,
-		node: &Node<EspPlatform>,
-		board: &BoardInfo,
-		uplink: Uplink,
-	) -> Vec<Command> {
-		let now = Instant::now();
-		if now >= self.next_status {
-			self.app.set_status(Status::from_node(node, board, uplink));
-			self.next_status = now + STATUS_INTERVAL;
-		}
-		self.app.tick(node.now());
-		if now >= self.next_frame {
-			let _ = self.screen.draw(|frame| ui::draw(frame, &self.app));
-			self.next_frame = now + FRAME_INTERVAL;
-		}
-		core::iter::from_fn(|| self.app.poll_command()).collect()
-	}
-
-	/// When [`Ui::update`] should next run.
-	pub fn wake_at(&self) -> Instant {
-		self.next_status.min(self.next_frame)
+fn handle_message(app: &mut App, message: ToUi) {
+	match message {
+		ToUi::Status(status) => app.set_status(status),
+		ToUi::Event(event) => app.handle_event(event),
+		ToUi::NodeInfo(key, info) => app.handle_nodeinfo(key, info),
+		ToUi::Networks(networks) => app.set_networks(networks),
 	}
 }

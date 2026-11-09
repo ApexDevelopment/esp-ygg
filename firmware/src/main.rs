@@ -27,7 +27,7 @@ use esp_radio::esp_now::{BROADCAST_ADDRESS, EspNowManager, EspNowWifiInterface, 
 use esp_radio::wifi::{ControllerConfig, WifiController};
 use esp_storage::FlashStorage;
 #[cfg(feature = "cardputer")]
-use esp_ygg_app::ui::{Command, Uplink};
+use esp_ygg_app::ui::{Command, Status, Uplink, WifiNetwork};
 use esp_ygg_app::{BoardInfo, Overlay, Settings};
 use log::{info, warn};
 use static_cell::StaticCell;
@@ -44,6 +44,9 @@ const DEFAULT_CHANNEL: u8 = 1;
 /// ESP-NOW keeps a peer list of its own, with room for this many.
 const MAX_ESPNOW_PEERS: usize = 20;
 const STALL_WARNING: Duration = Duration::from_millis(500);
+/// How often the UI gets a fresh status.
+#[cfg(feature = "cardputer")]
+const STATUS_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(feature = "esp32s3")]
 const CHIP: &str = "esp32s3";
@@ -60,8 +63,11 @@ async fn main(spawner: Spawner) -> ! {
 	let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
 	esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
 	// The original ESP32 has less RAM to spare
-	#[cfg(not(feature = "esp32"))]
+	#[cfg(not(any(feature = "esp32", feature = "cardputer")))]
 	esp_alloc::heap_allocator!(size: 200 * 1024);
+	// The UI's core has a stack of its own, so leave room for it.
+	#[cfg(feature = "cardputer")]
+	esp_alloc::heap_allocator!(size: 184 * 1024);
 	#[cfg(feature = "esp32")]
 	esp_alloc::heap_allocator!(size: 120 * 1024);
 	let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -129,7 +135,7 @@ async fn main(spawner: Spawner) -> ! {
 	);
 
 	#[cfg(feature = "cardputer")]
-	let (model, mut ui) = {
+	{
 		let pins = cardputer::Pins {
 			spi: peripherals.SPI2,
 			sck: peripherals.GPIO36,
@@ -150,13 +156,15 @@ async fn main(spawner: Spawner) -> ! {
 			gpio6: peripherals.GPIO6,
 			gpio7: peripherals.GPIO7,
 		};
-		let (model, screen) = cardputer::start(&spawner, pins);
-		(model, ui::Ui::new(screen, settings.clone(), &node))
-	};
+		ui::start(
+			peripherals.CPU_CTRL,
+			peripherals.FROM_CPU_INTR1,
+			pins,
+			settings.clone(),
+		);
+	}
 	#[cfg(feature = "cardputer")]
-	let model_name = model.name();
-	#[cfg(not(feature = "cardputer"))]
-	let model_name = CHIP;
+	let mut next_status = Instant::now();
 
 	let mut frame = alloc::vec![0u8; FRAME_LEN];
 	let mut stream: Option<StreamId> = None;
@@ -193,7 +201,7 @@ async fn main(spawner: Spawner) -> ! {
 		.min(next_save);
 		#[cfg(feature = "cardputer")]
 		{
-			wake = wake.min(ui.wake_at());
+			wake = wake.min(next_status);
 		}
 		if backlogged {
 			// Try again soon, once the radio or TCP task has caught up.
@@ -216,14 +224,24 @@ async fn main(spawner: Spawner) -> ! {
 			Either4::Third(message) => handle_uplink(&mut node, &mut stream, message),
 			Either4::Fourth(Either::First(lost)) => node.frame_lost(lost.mac, &lost.frame),
 			#[cfg(feature = "cardputer")]
-			Either4::Fourth(Either::Second(input)) => {
-				if let ui::Input::Networks(_) = &input
-					&& !bridge
-				{
+			Either4::Fourth(Either::Second(Either::First(command))) => {
+				carry_out(command, &mut node, &mut overlay, &mut store);
+			}
+			#[cfg(feature = "cardputer")]
+			Either4::Fourth(Either::Second(Either::Second(networks))) => {
+				if !bridge {
 					// Scanning hops channels, so return to the mesh's.
 					let _ = manager.set_channel(settings.channel);
 				}
-				ui.handle_input(input);
+				let networks = networks
+					.into_iter()
+					.map(|network| WifiNetwork {
+						ssid: network.ssid,
+						signal: network.signal,
+						secured: network.secured,
+					})
+					.collect();
+				let _ = ui::TO_UI.try_send(ui::ToUi::Networks(networks));
 			}
 			#[cfg(not(feature = "cardputer"))]
 			Either4::Fourth(Either::Second(never)) => match never {},
@@ -238,7 +256,7 @@ async fn main(spawner: Spawner) -> ! {
 		}
 		let board = BoardInfo {
 			name: settings.name.clone(),
-			model: model_name.into(),
+			model: model_name().into(),
 			uptime: core::time::Duration::from_micros(Instant::now().as_micros()),
 			free_heap: Some(esp_alloc::HEAP.free()),
 		};
@@ -246,15 +264,19 @@ async fn main(spawner: Spawner) -> ! {
 
 		#[cfg(feature = "cardputer")]
 		{
+			// If the UI falls behind, it misses some updates rather than
+			// holding up the network.
 			while let Some(event) = overlay.poll_event() {
-				ui.handle_event(event);
+				let _ = ui::TO_UI.try_send(ui::ToUi::Event(event));
 			}
 			while let Some((key, info)) = node.poll_nodeinfo() {
-				ui.handle_nodeinfo(key, info);
+				let _ = ui::TO_UI.try_send(ui::ToUi::NodeInfo(key, info));
 			}
-			let uplink = uplink_state(bridge, &node, stream);
-			for command in ui.update(&node, &board, uplink) {
-				carry_out(command, &mut node, &mut overlay, &mut store);
+			if Instant::now() >= next_status {
+				let uplink = uplink_state(bridge, &node, stream);
+				let status = Status::from_node(&node, &board, uplink);
+				let _ = ui::TO_UI.try_send(ui::ToUi::Status(status));
+				next_status = Instant::now() + STATUS_INTERVAL;
 			}
 		}
 		#[cfg(not(feature = "cardputer"))]
@@ -278,9 +300,20 @@ async fn main(spawner: Spawner) -> ! {
 	}
 }
 
+/// A command from the UI, or the results of a scan it asked for.
 #[cfg(feature = "cardputer")]
-async fn next_ui_input() -> ui::Input {
-	ui::next_input().await
+async fn next_ui_input() -> Either<Command, Vec<uplink::ScannedNetwork>> {
+	select(ui::FROM_UI.receive(), uplink::SCAN_RESULTS.receive()).await
+}
+
+#[cfg(feature = "cardputer")]
+fn model_name() -> &'static str {
+	ui::model_name()
+}
+
+#[cfg(not(feature = "cardputer"))]
+fn model_name() -> &'static str {
+	CHIP
 }
 
 /// Without a UI there is no input, so this never finishes.
