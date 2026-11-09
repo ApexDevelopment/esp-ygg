@@ -1,0 +1,81 @@
+[package]
+name = "esp-ygg"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "Yggdrasil over ESP-NOW firmware for ESP32 chips"
+license-file = "../LICENSE"
+publish = false
+
+[dependencies]
+embassy-executor = { version = "0.10.0", features = ["log"] }
+embassy-futures = "0.1.2"
+embassy-net = { version = "0.9.1", features = ["dhcpv4", "log", "medium-ethernet", "tcp"] }
+embassy-sync = "0.8.0"
+embassy-time = { version = "0.5.0", features = ["log"] }
+embedded-io-async = "0.7.0"
+esp-alloc = "0.11.0"
+esp-backtrace = { version = "0.20.0", features = ["panic-handler", "println"] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["log-04"] }
+esp-hal = { version = "~1.2.2", features = ["log-04", "unstable"] }
+esp-println = { version = "0.18.0", features = ["log-04"] }
+esp-radio = { version = "1.0.0-beta.1", features = ["esp-alloc", "esp-now", "log-04", "unstable", "wifi"] }
+esp-rtos = { version = "0.4.0", features = ["embassy", "esp-alloc", "esp-radio", "log-04"] }
+esp-storage = "0.10.0"
+log = "0.4.35"
+petrified = { path = "../../petrified", version = "0.1.0", default-features = false, features = ["fast"] }
+serde_json = { version = "1.0.154", default-features = false, features = ["alloc"] }
+static_cell = "2.1.1"
+yggdrasil-espnow = { path = "../node" }
+
+[features]
+default = ["esp32s3"]
+esp32s3 = [
+	"esp-alloc/esp32s3",
+	"esp-backtrace/esp32s3",
+	"esp-bootloader-esp-idf/esp32s3",
+	"esp-hal/esp32s3",
+	"esp-println/esp32s3",
+	"esp-radio/esp32s3",
+	"esp-rtos/esp32s3",
+	"esp-storage/esp32s3",
+]
+esp32c3 = [
+	"esp-alloc/esp32c3",
+	"esp-backtrace/esp32c3",
+	"esp-bootloader-esp-idf/esp32c3",
+	"esp-hal/esp32c3",
+	"esp-println/esp32c3",
+	"esp-radio/esp32c3",
+	"esp-rtos/esp32c3",
+	"esp-storage/esp32c3",
+]
+esp32c6 = [
+	"esp-alloc/esp32c6",
+	"esp-backtrace/esp32c6",
+	"esp-bootloader-esp-idf/esp32c6",
+	"esp-hal/esp32c6",
+	"esp-println/esp32c6",
+	"esp-radio/esp32c6",
+	"esp-rtos/esp32c6",
+	"esp-storage/esp32c6",
+]
+esp32 = [
+	"esp-alloc/esp32",
+	"esp-backtrace/esp32",
+	"esp-bootloader-esp-idf/esp32",
+	"esp-hal/esp32",
+	"esp-println/esp32",
+	"esp-radio/esp32",
+	"esp-rtos/esp32",
+	"esp-storage/esp32",
+]
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+lto = "fat"
+opt-level = "s"
