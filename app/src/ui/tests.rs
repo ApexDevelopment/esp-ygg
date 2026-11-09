@@ -56,6 +56,22 @@ fn press(app: &mut App, keys: &[Key]) {
 	}
 }
 
+/// Opens a screen from the home menu by its name.
+fn open(app: &mut App, name: &str) {
+	let index = MENU
+		.iter()
+		.position(|(label, _)| *label == name)
+		.expect("no such menu item");
+	press(app, &[Key::Escape, Key::Escape]);
+	for _ in 0..MENU.len() {
+		app.handle_key(Key::Up);
+	}
+	for _ in 0..index {
+		app.handle_key(Key::Down);
+	}
+	app.handle_key(Key::Enter);
+}
+
 fn type_text(app: &mut App, text: &str) {
 	for character in text.chars() {
 		app.handle_key(Key::Char(character));
@@ -129,7 +145,7 @@ fn names_nodes_from_their_nodeinfo_and_retries_lookups() {
 fn sends_console_messages_to_the_console_port() {
 	let mut app = App::new(Settings::new(), at(0));
 	app.set_status(status(&[], &[]));
-	press(&mut app, &[Key::Down, Key::Down, Key::Down, Key::Enter]);
+	open(&mut app, "Console");
 	type_text(&mut app, "200::1");
 	press(&mut app, &[Key::Enter]);
 	type_text(&mut app, "hello");
@@ -158,10 +174,8 @@ fn counts_unread_messages_on_the_home_screen() {
 		data: b"ping?".to_vec(),
 	});
 	assert!(screen(&app).join("\n").contains("Console (1 new)"));
-	press(
-		&mut app,
-		&[Key::Down, Key::Down, Key::Down, Key::Enter, Key::Escape],
-	);
+	open(&mut app, "Console");
+	press(&mut app, &[Key::Escape]);
 	assert!(!screen(&app).join("\n").contains("new"));
 }
 
@@ -169,17 +183,7 @@ fn counts_unread_messages_on_the_home_screen() {
 fn edits_and_saves_bridge_settings() {
 	let mut app = App::new(Settings::new(), at(0));
 	app.set_status(status(&[], &[]));
-	press(
-		&mut app,
-		&[
-			Key::Up,
-			Key::Down,
-			Key::Down,
-			Key::Down,
-			Key::Down,
-			Key::Enter,
-		],
-	);
+	open(&mut app, "Settings");
 	// Name
 	press(&mut app, &[Key::Enter]);
 	type_text(&mut app, "kitchen");
@@ -225,7 +229,7 @@ fn edits_and_saves_bridge_settings() {
 	press(&mut app, &[Key::Enter]);
 	assert!(screen(&app).join("\n").contains("UTC-05:00"));
 	press(&mut app, &[Key::Down, Key::Enter]);
-	assert!(screen(&app).join("\n").contains("Web page off"));
+	assert!(screen(&app).join("\n").contains("Status pages off"));
 	press(&mut app, &[Key::Down, Key::Enter]);
 	let expected = Settings {
 		name: "kitchen".into(),
@@ -275,7 +279,7 @@ fn shows_signal_and_loss_for_each_neighbor() {
 		loss: None,
 	});
 	app.set_status(status);
-	press(&mut app, &[Key::Down, Key::Enter]);
+	open(&mut app, "Radio");
 	app.tick(at(1));
 	app.handle_nodeinfo(named, Some(br#"{"name":"kitchen"}"#.to_vec()));
 	let shown = screen(&app).join("\n");
@@ -307,7 +311,7 @@ fn typing_replaces_a_field_and_backspace_edits_it() {
 	settings.channel = 11;
 	let mut app = App::new(settings, at(0));
 	app.set_status(status(&[], &[]));
-	let settings = [Key::Down, Key::Down, Key::Down, Key::Down, Key::Enter];
+	open(&mut app, "Settings");
 	let channel = [
 		Key::Down,
 		Key::Down,
@@ -316,17 +320,61 @@ fn typing_replaces_a_field_and_backspace_edits_it() {
 		Key::Down,
 		Key::Enter,
 	];
-	press(&mut app, &settings);
 	press(&mut app, &channel);
 	type_text(&mut app, "6");
 	press(&mut app, &[Key::Enter]);
-	assert!(screen(&app).join("\n").contains("Channel  6"));
+	assert!(screen(&app).join("\n").contains("Channel      6"));
 	press(&mut app, &[Key::Enter, Key::Backspace]);
 	type_text(&mut app, "3");
 	press(&mut app, &[Key::Enter]);
-	assert!(screen(&app).join("\n").contains("Channel  3"));
+	assert!(screen(&app).join("\n").contains("Channel      3"));
 	press(&mut app, &[Key::Enter, Key::Backspace, Key::Backspace]);
 	type_text(&mut app, "12");
 	press(&mut app, &[Key::Enter]);
-	assert!(screen(&app).join("\n").contains("Channel  12"));
+	assert!(screen(&app).join("\n").contains("Channel      12"));
+}
+
+#[test]
+fn browses_gopher_menus_and_goes_back() {
+	let mut app = App::new(Settings::new(), at(0));
+	app.set_status(status(&[], &[]));
+	open(&mut app, "Gopher");
+	type_text(&mut app, "200::1");
+	press(&mut app, &[Key::Enter]);
+	let server = SocketAddrV6::new("200::1".parse().unwrap(), 70, 0, 0);
+	assert_eq!(
+		commands(&mut app),
+		[Command::Fetch(server, b"\r\n".to_vec())]
+	);
+
+	// The menu names its own server, as menus usually do.
+	let menu = "iWelcome to the board\t\terror.host\t1\r\n\
+		0About\t/about.txt\tboard.local\t70\r\n\
+		1Phlog\t/phlog\tboard.local\t70\r\n\
+		1Elsewhere\t\tother.example\t70\r\n.\r\n";
+	app.handle_event(Event::Fetched {
+		data: menu.as_bytes().to_vec(),
+	});
+	assert!(screen(&app).join("\n").contains("Welcome to the board"));
+
+	press(&mut app, &[Key::Enter]);
+	assert_eq!(
+		commands(&mut app),
+		[Command::Fetch(server, b"/about.txt\r\n".to_vec())]
+	);
+	app.handle_event(Event::Fetched {
+		data: b"Made of Rust.\r\n.\r\n".to_vec(),
+	});
+	assert!(screen(&app).join("\n").contains("Made of Rust."));
+
+	press(&mut app, &[Key::Escape, Key::Down, Key::Down, Key::Enter]);
+	assert!(commands(&mut app).is_empty());
+	assert!(
+		screen(&app)
+			.join("\n")
+			.contains("Can't look up other.example")
+	);
+	press(&mut app, &[Key::Escape]);
+	// Out of history, so back to the home screen.
+	assert_eq!(screen(&app)[0].trim(), "esp-ygg");
 }

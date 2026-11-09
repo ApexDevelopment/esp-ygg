@@ -7,9 +7,10 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListItem, ListState, Paragraph, Wrap};
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
+use super::gopher::Content;
 use super::{App, ConsoleFocus, FIELDS, Field, Lookup, MENU, Screen, TextInput, Uplink};
 use crate::time::{DateTime, format_offset};
 
@@ -31,6 +32,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 		Screen::Network => draw_network(frame, body, app),
 		Screen::Node(key) => draw_node(frame, body, app, key),
 		Screen::Radio => draw_radio(frame, body, app),
+		Screen::Gopher => draw_gopher(frame, body, app),
 		Screen::Ping => draw_ping(frame, body, app),
 		Screen::Console => draw_console(frame, body, app),
 		Screen::Settings => draw_settings(frame, body, app),
@@ -48,6 +50,7 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 		Screen::Home => "",
 		Screen::Network | Screen::Node(_) => "Network",
 		Screen::Radio => "Radio",
+		Screen::Gopher => "Gopher",
 		Screen::Ping => "Ping",
 		Screen::Console => "Console",
 		Screen::Settings => "Settings",
@@ -94,6 +97,12 @@ fn hints(app: &App) -> &'static str {
 		Screen::Network => "↑↓ select  enter open  esc back",
 		Screen::Node(_) => "p ping  m message  esc back",
 		Screen::Radio => "esc back",
+		Screen::Gopher if app.gopher.search.is_some() => "type a search  enter go",
+		Screen::Gopher if app.gopher.editing => "type an address  enter go",
+		Screen::Gopher => match app.gopher.page.as_ref().map(|page| &page.content) {
+			Some(Content::Text { .. }) => "↑↓ scroll  g address  esc back",
+			_ => "enter open  g address  esc back",
+		},
 		Screen::Ping if app.pinging => "enter stop  esc back",
 		Screen::Ping => "type an address  enter start",
 		Screen::Console => "tab switch field  enter send",
@@ -205,6 +214,64 @@ fn draw_node(frame: &mut Frame, area: Rect, app: &App, key: yggdrasil_espnow::Pu
 		_ => lines.push(Line::styled(" Asking for nodeinfo…", DIM)),
 	}
 	frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn draw_gopher(frame: &mut Frame, area: Rect, app: &App) {
+	let browser = &app.gopher;
+	let [top, status, body] = Layout::vertical([
+		Constraint::Length(1),
+		Constraint::Length(1),
+		Constraint::Fill(1),
+	])
+	.areas(area);
+	let top_line = match (&browser.search, &browser.page) {
+		(Some((_, _, query)), _) => field_line("search", query, true),
+		(None, Some(page)) if !browser.editing => {
+			Line::styled(format!(" {}", visible_end(&page.url.to_string(), 38)), DIM)
+		}
+		_ => field_line("go", &browser.address, browser.editing),
+	};
+	frame.render_widget(Paragraph::new(top_line), top);
+	let status_line = if let Some(error) = &browser.error {
+		Line::styled(format!(" {error}"), Style::new().fg(Color::Yellow))
+	} else if browser.is_loading() {
+		Line::styled(" Loading…", DIM)
+	} else {
+		Line::raw("")
+	};
+	frame.render_widget(Paragraph::new(status_line), status);
+	let Some(page) = &browser.page else {
+		return;
+	};
+	match &page.content {
+		Content::Text { text, scroll } => {
+			let text = Paragraph::new(text.as_str())
+				.wrap(Wrap { trim: false })
+				.scroll((*scroll, 0));
+			frame.render_widget(text, body);
+		}
+		Content::Menu { items, selected } => {
+			let lines: Vec<ListItem> = items
+				.iter()
+				.map(|item| {
+					let text = match item.kind {
+						'1' => format!("{}/", item.text),
+						'7' => format!("{}?", item.text),
+						_ => item.text.clone(),
+					};
+					let style = if item.is_link() && item.is_supported() {
+						Style::new()
+					} else {
+						DIM
+					};
+					ListItem::new(Line::styled(text, style))
+				})
+				.collect();
+			let list = List::new(lines).highlight_style(SELECTED);
+			let mut state = ListState::default().with_selected(Some(*selected));
+			frame.render_stateful_widget(list, body, &mut state);
+		}
+	}
 }
 
 fn draw_radio(frame: &mut Frame, area: Rect, app: &App) {
@@ -349,14 +416,14 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App) {
 					"Time zone",
 					format!("UTC{}", format_offset(draft.utc_offset)),
 				),
-				Field::StatusPage => ("Web page", on_off(draft.status_page)),
+				Field::StatusPage => ("Status pages", on_off(draft.status_page)),
 				Field::Save => ("Save and restart", String::new()),
 			};
 			let selected = index == app.settings_selected;
 			if let (true, Some((editing, input))) = (selected, &app.editing)
 				&& editing == field
 			{
-				let text = visible_end(&input.display(), 29);
+				let text = visible_end(&input.display(), 25);
 				// The old value shows as selected until typing replaces it.
 				let value = if input.replaceable {
 					Span::styled(text, SELECTED)
@@ -366,9 +433,9 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App) {
 						Style::new().add_modifier(Modifier::BOLD),
 					)
 				};
-				return Line::from(Vec::from([Span::raw(format!(" {label:<9}")), value]));
+				return Line::from(Vec::from([Span::raw(format!(" {label:<13}")), value]));
 			}
-			let text = format!(" {label:<9}{value}");
+			let text = format!(" {label:<13}{value}");
 			let style = if selected { SELECTED } else { Style::new() };
 			Line::styled(pad(&text, area.width), style)
 		})

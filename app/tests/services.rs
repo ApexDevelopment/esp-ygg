@@ -253,3 +253,38 @@ fn time_spreads_from_board_to_board() {
 	let expected = reference + now.saturating_duration_since(start).as_micros() as u64;
 	assert_eq!(overlays[0].1.unix_micros(now), Some(expected));
 }
+
+/// Fetches from board 0 with board 1's overlay, and returns the outcome.
+fn fetch_with_overlay(port: u16, request: &[u8]) -> Event {
+	let (mut radio, mut overlays) = mesh(2, &[0, 1]);
+	let server = SocketAddrV6::new(address(&radio, 0), port, 0, 0);
+	let now = radio.nodes[1].now();
+	overlays[1].1.fetch(server, request.to_vec(), now).unwrap();
+	wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(30),
+		|_, overlays| overlays[1].1.poll_event(),
+	)
+	.expect("the fetch never finished")
+}
+
+#[test]
+fn boards_serve_a_gopher_menu_linking_their_peers() {
+	let Event::Fetched { data } = fetch_with_overlay(esp_ygg_app::gopher::PORT, b"\r\n") else {
+		panic!("the fetch failed");
+	};
+	let items = esp_ygg_app::gopher::parse_menu(&data);
+	assert_eq!(items[0].text, "Test <board>");
+	let peer = items
+		.iter()
+		.find(|item| item.kind == '1')
+		.expect("no peer link");
+	assert_eq!(peer.port, 70);
+	assert!(peer.url().address().is_some());
+}
+
+#[test]
+fn fetching_from_a_closed_port_fails() {
+	assert_eq!(fetch_with_overlay(7, b"\r\n"), Event::FetchFailed);
+}

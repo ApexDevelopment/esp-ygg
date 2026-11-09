@@ -122,6 +122,9 @@ fn carry_out(command: Command, radio: &mut Radio, overlay: &mut Overlay, app: &m
 			let _ = overlay.send_datagram(to, &data);
 		}
 		Command::RequestNodeInfo(key) => radio.nodes[0].request_nodeinfo(key),
+		Command::Fetch(to, request) => {
+			let _ = overlay.fetch(to, request, radio.nodes[0].now());
+		}
 		Command::ScanWifi => app.set_networks(vec![
 			WifiNetwork {
 				ssid: "PHOTON".into(),

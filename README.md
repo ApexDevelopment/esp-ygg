@@ -7,6 +7,7 @@ Each board is a full Yggdrasil node with its own key and address. Boards in radi
 Every board runs a few services on its Yggdrasil address:
 
 - an HTTP status page on port 80, with its address, uptime, memory and peers
+- a Gopher menu on port 70 with the same facts, linking to its peers' menus
 - a UDP console on port 4242 that shows text it receives and sends text back
 - the time over NTP on UDP port 123, once it knows it
 - replies to pings, `yggdrasilctl getNodeInfo` and the `debug_remoteGet*` requests
@@ -52,8 +53,9 @@ On a Cardputer, the home screen shows the board's address and how many nodes it 
 - Network lists every node the board knows, direct peers first, named from their nodeinfo. Open one to see its details, then press `p` to ping it or `m` to send it a console message.
 - Radio lists ESP-NOW neighbors with their recent signal strength and the share of frames sent to them that went unacknowledged, for finding where boards still reach each other.
 - Ping sends a ping every second to an address you type or pick, and shows each round trip.
+- Gopher browses Gopher menus and text, starting from an address you type. Links to a board's peers make it easy to hop across the mesh. Yggdrasil has no standard way to look up names, so links work when they use an address or the name of the server they came from.
 - Console shows text received on UDP port 4242 and sends what you type, to an address or `[address]:port`.
-- Settings changes the name, bridging, WiFi network, password, peer, channel and time zone, and turns the status page on or off. Saving restarts the board to apply them.
+- Settings changes the name, bridging, WiFi network, password, peer, channel and time zone, and turns the status pages on or off. Saving restarts the board to apply them.
 
 Once the board knows the time, the title bar shows it. A bridged board gets the time from `pool.ntp.org`, and other boards ask their peers over Yggdrasil, so it spreads through the mesh. The time zone is a fixed offset from UTC, so it needs changing by hand for daylight saving time.
 
@@ -73,7 +75,7 @@ A Cardputer stores the settings chosen in its interface in flash. Until then, an
 | `ESP_YGG_WIFI_SSID` | none | WiFi network to join for a TCP peering |
 | `ESP_YGG_WIFI_PASSWORD` | none | Its WPA2 password. Leave unset for an open network. |
 | `ESP_YGG_PEER` | none | Address of the node to peer with over TCP, as an IPv4 address and port |
-| `ESP_YGG_STATUS_PAGE` | `on` | Set to `off` to close port 80 |
+| `ESP_YGG_STATUS_PAGE` | `on` | Set to `off` to close the HTTP and Gopher ports |
 
 A board peers over TCP only when both `ESP_YGG_WIFI_SSID` and `ESP_YGG_PEER` are set. For example:
 
@@ -93,6 +95,7 @@ From a computer whose Yggdrasil node peers with a board, directly or through oth
 ping <board address>
 yggdrasilctl getNodeInfo key=<board public key>
 curl http://[<board address>]/
+curl gopher://[<board address>]/
 nc -6u <board address> 4242
 ```
 

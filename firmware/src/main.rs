@@ -370,6 +370,11 @@ fn carry_out(
 			}
 		}
 		Command::RequestNodeInfo(key) => node.request_nodeinfo(key),
+		Command::Fetch(to, request) => {
+			if let Err(error) = overlay.fetch(to, request, node.now()) {
+				warn!("Fetching from {to} failed: {error:?}");
+			}
+		}
 		Command::ScanWifi => {
 			let _ = uplink::SCANS.try_send(());
 		}

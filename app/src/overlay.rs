@@ -14,6 +14,7 @@ use smoltcp::wire::{Icmpv6Packet, Icmpv6Repr, IpAddress, IpEndpoint, IpListenEnd
 use yggdrasil_espnow::{Instant, Node, Platform};
 
 use crate::device::{MTU, Queues, interface};
+use crate::gopher;
 use crate::http::{self, BoardInfo};
 use crate::sntp;
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
@@ -44,7 +45,11 @@ impl Clock {
 	}
 }
 
-const HTTP_SOCKETS: usize = 2;
+/// Local ports for connections this board opens.
+const EPHEMERAL_PORTS: core::ops::Range<u16> = 49152..65535;
+/// How long a fetch may take, and how much of a response is kept.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+const MAX_FETCH: usize = 32 * 1024;
 const PING_DATA: &[u8] = b"esp-ygg ping";
 
 /// Something a service wants the user to see.
@@ -63,6 +68,12 @@ pub enum Event {
 		target: Ipv6Addr,
 		sequence: u16,
 	},
+	/// The response to [`Overlay::fetch`], up to its size limit.
+	Fetched {
+		data: Vec<u8>,
+	},
+	/// The server could not be reached, or did not answer in time.
+	FetchFailed,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -73,11 +84,37 @@ pub enum SendError {
 	Busy,
 }
 
-struct HttpConnection {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Protocol {
+	Http,
+	Gopher,
+}
+
+impl Protocol {
+	fn port(self) -> u16 {
+		match self {
+			Protocol::Http => HTTP_PORT,
+			Protocol::Gopher => gopher::PORT,
+		}
+	}
+}
+
+/// One connection a status server can take at a time.
+struct ServerConnection {
+	protocol: Protocol,
 	socket: SocketHandle,
 	request: Vec<u8>,
 	response: Vec<u8>,
 	sent: usize,
+}
+
+/// A request to another server, and what has come back so far.
+struct Fetch {
+	request: Vec<u8>,
+	sent: bool,
+	connected: bool,
+	response: Vec<u8>,
+	started: Instant,
 }
 
 pub struct Overlay {
@@ -85,7 +122,10 @@ pub struct Overlay {
 	interface: Interface,
 	device: Queues,
 	sockets: SocketSet<'static>,
-	http: Vec<HttpConnection>,
+	servers: Vec<ServerConnection>,
+	client: SocketHandle,
+	fetch: Option<Fetch>,
+	next_local_port: u16,
 	console: SocketHandle,
 	ping: SocketHandle,
 	ping_ident: u16,
@@ -101,20 +141,26 @@ pub struct Overlay {
 
 impl Overlay {
 	/// `random_seed` should differ between boots, for TCP sequence numbers.
-	/// Without `status_page`, port 80 is closed.
-	pub fn new<P: Platform>(node: &Node<P>, random_seed: u64, status_page: bool) -> Self {
+	/// Without `status_pages`, the HTTP and Gopher ports are closed.
+	pub fn new<P: Platform>(node: &Node<P>, random_seed: u64, status_pages: bool) -> Self {
 		let mut device = Queues::default();
 		let now = to_smoltcp(node.now());
 		let interface = interface(&node.address(), &mut device, random_seed, now);
 		let mut sockets = SocketSet::new(Vec::new());
-		let http_sockets = if status_page { HTTP_SOCKETS } else { 0 };
-		let http = (0..http_sockets)
-			.map(|_| {
+		let protocols: &[Protocol] = if status_pages {
+			&[Protocol::Http, Protocol::Http, Protocol::Gopher]
+		} else {
+			&[]
+		};
+		let servers = protocols
+			.iter()
+			.map(|&protocol| {
 				let socket = tcp::Socket::new(
 					tcp::SocketBuffer::new(vec![0; http::MAX_REQUEST]),
 					tcp::SocketBuffer::new(vec![0; 4096]),
 				);
-				HttpConnection {
+				ServerConnection {
+					protocol,
 					socket: sockets.add(socket),
 					request: Vec::new(),
 					response: Vec::new(),
@@ -122,6 +168,10 @@ impl Overlay {
 				}
 			})
 			.collect();
+		let client = sockets.add(tcp::Socket::new(
+			tcp::SocketBuffer::new(vec![0; 4096]),
+			tcp::SocketBuffer::new(vec![0; 1024]),
+		));
 		let mut console = udp::Socket::new(
 			udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 8], vec![0; 4 * MTU]),
 			udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 8], vec![0; 4 * MTU]),
@@ -151,7 +201,10 @@ impl Overlay {
 			address: Ipv6Addr::from(node.address().0),
 			interface,
 			device,
-			http,
+			servers,
+			client,
+			fetch: None,
+			next_local_port: EPHEMERAL_PORTS.start + (random_seed as u16 % 1000),
 			console: sockets.add(console),
 			time: sockets.add(time),
 			ping: sockets.add(ping),
@@ -175,7 +228,8 @@ impl Overlay {
 		let now = node.now();
 		self.interface
 			.poll(to_smoltcp(now), &mut self.device, &mut self.sockets);
-		self.serve_http(node, board);
+		self.serve(node, board);
+		self.progress_fetch(now);
 		self.receive_datagrams();
 		self.receive_pings(now);
 		self.expire_pings(now);
@@ -199,6 +253,11 @@ impl Overlay {
 			.into_iter()
 			.chain(pings)
 			.chain([self.next_time_request])
+			.chain(
+				self.fetch
+					.as_ref()
+					.map(|fetch| fetch.started + FETCH_TIMEOUT),
+			)
 			.min()
 	}
 
@@ -315,14 +374,86 @@ impl Overlay {
 		}
 	}
 
-	fn serve_http<P: Platform>(&mut self, node: &Node<P>, board: &BoardInfo) {
-		for connection in &mut self.http {
+	/// Fetches from a TCP server: sends `request`, then collects everything
+	/// until the server closes the connection, as Gopher does. The result
+	/// arrives as an [`Event`]. A new fetch replaces one in progress.
+	pub fn fetch(
+		&mut self,
+		to: SocketAddrV6,
+		request: Vec<u8>,
+		now: Instant,
+	) -> Result<(), SendError> {
+		let socket = self.sockets.get_mut::<tcp::Socket>(self.client);
+		socket.abort();
+		let local_port = self.next_local_port;
+		self.next_local_port = local_port
+			.checked_add(1)
+			.filter(|port| EPHEMERAL_PORTS.contains(port))
+			.unwrap_or(EPHEMERAL_PORTS.start);
+		let remote = IpEndpoint::new(IpAddress::Ipv6(*to.ip()), to.port());
+		socket
+			.connect(self.interface.context(), remote, local_port)
+			.map_err(|_| SendError::Busy)?;
+		self.fetch = Some(Fetch {
+			request,
+			sent: false,
+			connected: false,
+			response: Vec::new(),
+			started: now,
+		});
+		Ok(())
+	}
+
+	fn progress_fetch(&mut self, now: Instant) {
+		let Some(fetch) = &mut self.fetch else {
+			return;
+		};
+		let socket = self.sockets.get_mut::<tcp::Socket>(self.client);
+		if socket.may_send() {
+			fetch.connected = true;
+			if !fetch.sent && socket.send_slice(&fetch.request) == Ok(fetch.request.len()) {
+				fetch.sent = true;
+			}
+		}
+		while socket.can_recv() && fetch.response.len() < MAX_FETCH {
+			let room = MAX_FETCH - fetch.response.len();
+			let _ = socket.recv(|data| {
+				let taken = data.len().min(room);
+				fetch.response.extend_from_slice(&data[..taken]);
+				(taken, ())
+			});
+		}
+		let finished = !socket.is_open() || (fetch.sent && !socket.may_recv());
+		let full = fetch.response.len() >= MAX_FETCH;
+		let timed_out = now >= fetch.started + FETCH_TIMEOUT;
+		if !(finished || full || timed_out) {
+			return;
+		}
+		if finished {
+			socket.close();
+		} else {
+			socket.abort();
+		}
+		let fetch = self.fetch.take().expect("checked above");
+		let event = if fetch.connected && (finished || full) {
+			Event::Fetched {
+				data: fetch.response,
+			}
+		} else {
+			Event::FetchFailed
+		};
+		self.events.push_back(event);
+	}
+
+	fn serve<P: Platform>(&mut self, node: &Node<P>, board: &BoardInfo) {
+		for connection in &mut self.servers {
 			let socket = self.sockets.get_mut::<tcp::Socket>(connection.socket);
 			if !socket.is_open() {
 				connection.request.clear();
 				connection.response.clear();
 				connection.sent = 0;
-				let _ = socket.listen(IpListenEndpoint::from(HTTP_PORT));
+				let port = connection.protocol.port();
+				let _ = socket.listen(IpListenEndpoint::from(port));
 				continue;
 			}
 			if connection.response.is_empty() {
@@ -330,9 +461,15 @@ impl Overlay {
 					connection.request.extend_from_slice(data);
 					(data.len(), ())
 				});
-				if http::is_complete(&connection.request) {
-					connection.response = http::respond(&connection.request, node, board);
-				}
+				connection.response = match connection.protocol {
+					Protocol::Http if http::is_complete(&connection.request) => {
+						http::respond(&connection.request, node, board)
+					}
+					Protocol::Gopher if gopher_request_complete(&connection.request) => {
+						gopher_response(&connection.request, node, board)
+					}
+					_ => Vec::new(),
+				};
 			}
 			if connection.sent < connection.response.len() {
 				if let Ok(sent) = socket.send_slice(&connection.response[connection.sent..]) {
@@ -416,4 +553,29 @@ fn to_smoltcp(instant: Instant) -> smoltcp::time::Instant {
 
 fn from_smoltcp(instant: smoltcp::time::Instant) -> Instant {
 	Instant::from_duration(Duration::from_micros(instant.total_micros().max(0) as u64))
+}
+
+fn gopher_request_complete(request: &[u8]) -> bool {
+	request.contains(&b'\n') || request.len() >= http::MAX_REQUEST
+}
+
+/// The board's Gopher menu for an empty selector, and an error otherwise.
+fn gopher_response<P: Platform>(request: &[u8], node: &Node<P>, board: &BoardInfo) -> Vec<u8> {
+	let selector = request
+		.split(|&byte| byte == b'\r' || byte == b'\n')
+		.next()
+		.unwrap_or_default();
+	if !selector.is_empty() && selector != b"/" {
+		let mut response = gopher::menu_line('3', "Not found", "", "error.host", 1).into_bytes();
+		response.extend_from_slice(b".\r\n");
+		return response;
+	}
+	let peers: Vec<Ipv6Addr> = node
+		.network()
+		.debug()
+		.get_peers()
+		.into_iter()
+		.map(|peer| Ipv6Addr::from(addr_for_key(&peer.key).0))
+		.collect();
+	gopher::status_menu(&http::summary(node, board), &peers)
 }

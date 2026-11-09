@@ -124,6 +124,34 @@ fn status_page<P: Platform>(node: &Node<P>, board: &BoardInfo) -> String {
 	page
 }
 
+/// The board's facts as plain lines, for the Gopher menu.
+pub fn summary<P: Platform>(node: &Node<P>, board: &BoardInfo) -> Vec<String> {
+	let mut lines = Vec::new();
+	lines.push(if board.name.is_empty() {
+		String::from("esp-ygg")
+	} else {
+		board.name.clone()
+	});
+	lines.push(String::new());
+	lines.push(format!("Address  {}", Ipv6Addr::from(node.address().0)));
+	if !board.model.is_empty() {
+		lines.push(format!("Board    {}", board.model));
+	}
+	if let Some(time) = board.time {
+		let now = crate::time::DateTime::from_unix((time / 1_000_000) as i64, 0);
+		lines.push(format!("Time     {} UTC", now.date_and_clock()));
+	}
+	lines.push(format!("Uptime   {}", uptime(board.uptime)));
+	if let Some(free) = board.free_heap {
+		lines.push(format!("Memory   {} KB free", free / 1024));
+	}
+	lines.push(format!(
+		"Known    {} nodes",
+		node.network().debug().get_tree().len()
+	));
+	lines
+}
+
 fn row(page: &mut String, label: &str, value: &str) {
 	let _ = writeln!(page, "<tr><td>{label}</td><td>{value}</td></tr>");
 }

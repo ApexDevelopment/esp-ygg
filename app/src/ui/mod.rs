@@ -3,6 +3,7 @@
 //! with Ratatui. Another renderer could replace [`draw`] without touching
 //! the rest.
 
+mod gopher;
 mod input;
 pub mod keyboard;
 mod view;
@@ -52,6 +53,8 @@ pub enum Command {
 	Ping(Ipv6Addr),
 	SendDatagram(SocketAddrV6, Vec<u8>),
 	RequestNodeInfo(PublicKey),
+	/// Send a request to a TCP server and collect its whole response.
+	Fetch(SocketAddrV6, Vec<u8>),
 	ScanWifi,
 	/// Store these settings and restart to apply them.
 	Save(Settings),
@@ -152,6 +155,7 @@ enum Screen {
 	Radio,
 	Ping,
 	Console,
+	Gopher,
 	Settings,
 	Networks,
 }
@@ -187,11 +191,12 @@ enum ConsoleFocus {
 	Message,
 }
 
-const MENU: [(&str, Screen); 5] = [
+const MENU: [(&str, Screen); 6] = [
 	("Network", Screen::Network),
 	("Radio", Screen::Radio),
 	("Ping", Screen::Ping),
 	("Console", Screen::Console),
+	("Gopher", Screen::Gopher),
 	("Settings", Screen::Settings),
 ];
 
@@ -220,6 +225,8 @@ pub struct App {
 	console_focus: ConsoleFocus,
 	console_log: VecDeque<String>,
 	unread: usize,
+
+	gopher: gopher::Browser,
 
 	saved: Settings,
 	draft: Settings,
@@ -252,6 +259,7 @@ impl App {
 			console_focus: ConsoleFocus::Target,
 			console_log: VecDeque::new(),
 			unread: 0,
+			gopher: gopher::Browser::new(),
 			draft: settings.clone(),
 			saved: settings,
 			settings_selected: 0,
@@ -316,6 +324,8 @@ impl App {
 					self.log_ping(format!("#{sequence}  timed out"));
 				}
 			}
+			Event::Fetched { data } => self.gopher.fetched(&data),
+			Event::FetchFailed => self.gopher.failed(),
 			Event::Datagram { from, data } => {
 				let text = String::from_utf8_lossy(&data);
 				let line = format!(
@@ -364,6 +374,14 @@ impl App {
 			Screen::Console => self.console_key(key),
 			Screen::Settings => self.settings_key(key),
 			Screen::Networks => self.networks_key(key),
+			Screen::Gopher => {
+				let mut commands = Vec::new();
+				let outcome = self.gopher.handle_key(key, &mut commands);
+				self.commands.extend(commands);
+				if let gopher::Outcome::Leave = outcome {
+					self.screen = Screen::Home;
+				}
+			}
 		}
 	}
 

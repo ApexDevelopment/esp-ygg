@@ -6,6 +6,7 @@
 extern crate alloc;
 
 pub mod device;
+pub mod gopher;
 pub mod http;
 mod overlay;
 pub mod settings;
