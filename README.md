@@ -12,8 +12,6 @@ It has been tested on two ESP32-S3 boards (M5Stack Cardputers), one acting as a 
 
 `node` is the Yggdrasil node itself, as a `no_std` library that does no I/O. It builds and runs on a desktop, which is how it is tested. `firmware` wraps it for the ESP32 using esp-hal, esp-radio and Embassy.
 
-The node depends on `petrified`, `yggdrasil-rs` and `espnow-reliable` through relative paths, so clone those next to this repository.
-
 ## Building and flashing
 
 The ESP32-S3 and the original ESP32 use Xtensa cores, which need Espressif's Rust toolchain. Install it once with `espup`, then load its environment in each shell you build from:

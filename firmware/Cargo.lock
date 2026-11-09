@@ -1342,6 +1342,8 @@ dependencies = [
 [[package]]
 name = "espnow-reliable"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dd976af477e9e3a67e23c7b32f3ccd29f0de75b4664f9259e416ba9a488d36e"
 
 [[package]]
 name = "fiat-crypto"
@@ -1711,6 +1713,8 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "petrified"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "584a76c71ee0ac857d3c0c468c8082996c9343a0f214ab920bd33d73ca987c42"
 dependencies = [
  "curve25519-dalek",
  "ed25519-dalek",
@@ -2514,6 +2518,8 @@ dependencies = [
 [[package]]
 name = "yggdrasil-proto"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e09713305ce633ac25dfd823bb924898fe2cfee5a5ab0a505117ad8bcb605a5"
 dependencies = [
  "blake2b_simd",
  "hex",
