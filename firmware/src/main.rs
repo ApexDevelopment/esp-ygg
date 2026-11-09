@@ -13,7 +13,7 @@ use core::net::Ipv6Addr;
 use embassy_executor::Spawner;
 use embassy_futures::select::{Either3, select3};
 use embassy_net::StackResources;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Instant, Timer, with_timeout};
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::rng::Rng;
@@ -35,6 +35,8 @@ esp_bootloader_esp_idf::esp_app_desc!();
 const DEFAULT_CHANNEL: u8 = 1;
 /// ESP-NOW keeps a peer list of its own, with room for this many.
 const MAX_ESPNOW_PEERS: usize = 20;
+const SEND_TIMEOUT: Duration = Duration::from_millis(100);
+const STALL_WARNING: Duration = Duration::from_millis(500);
 
 #[cfg(feature = "esp32s3")]
 const CHIP: &str = "esp32s3";
@@ -114,6 +116,7 @@ async fn main(spawner: Spawner) -> ! {
 	let mut stream: Option<StreamId> = None;
 	let mut next_save = Instant::now() + Duration::from_secs(SAVE_INTERVAL_SECS);
 	loop {
+		let started = Instant::now();
 		while let Some((destination, len)) = node.poll_transmit(&mut frame) {
 			let mac = match destination {
 				Destination::Broadcast => BROADCAST_ADDRESS,
@@ -122,8 +125,11 @@ async fn main(spawner: Spawner) -> ! {
 					mac
 				}
 			};
-			// Lost frames are resent by the link layer.
-			let _ = sender.send_async(&mac, &frame[..len]).await;
+			// Lost frames are resent by the link layer, so only a stuck send matters.
+			let send = sender.send_async(&mac, &frame[..len]);
+			if with_timeout(SEND_TIMEOUT, send).await.is_err() {
+				warn!("ESP-NOW send to {} timed out", MacDisplay(&mac));
+			}
 		}
 		let backlogged = flush_stream(&mut node, &mut stream);
 
@@ -136,12 +142,27 @@ async fn main(spawner: Spawner) -> ! {
 			// Try again soon, once the TCP task has caught up.
 			wake = wake.min(Instant::now() + Duration::from_millis(5));
 		}
-		match select3(receiver.receive_async(), Timer::at(wake), TO_NODE.receive()).await {
+		let waited = Instant::now();
+		let event = select3(receiver.receive_async(), Timer::at(wake), TO_NODE.receive()).await;
+		let woke = Instant::now();
+		match event {
 			Either3::First(received) => {
 				node.handle_frame(received.info.src_address, received.data())
 			}
-			Either3::Second(()) => node.handle_timeout(),
+			Either3::Second(()) => {}
 			Either3::Third(message) => handle_uplink(&mut node, &mut stream, message),
+		}
+		// Whatever woke the loop, run expired timers, or a steady stream of
+		// frames would starve them.
+		if node
+			.poll_timeout()
+			.is_some_and(|deadline| to_embassy(deadline) <= Instant::now())
+		{
+			node.handle_timeout();
+		}
+		let busy = (waited - started) + (Instant::now() - woke);
+		if busy > STALL_WARNING {
+			warn!("Main loop was busy for {} ms", busy.as_millis());
 		}
 		if Instant::now() >= next_save {
 			store.save_time(unix_base + Instant::now().as_secs());
@@ -266,5 +287,14 @@ struct Hex<'a>(&'a [u8]);
 impl core::fmt::Display for Hex<'_> {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		self.0.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
+	}
+}
+
+struct MacDisplay<'a>(&'a Mac);
+
+impl core::fmt::Display for MacDisplay<'_> {
+	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+		let [a, b, c, d, e, g] = self.0;
+		write!(f, "{a:02x}:{b:02x}:{c:02x}:{d:02x}:{e:02x}:{g:02x}")
 	}
 }
