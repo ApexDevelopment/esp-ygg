@@ -288,3 +288,29 @@ fn boards_serve_a_gopher_menu_linking_their_peers() {
 fn fetching_from_a_closed_port_fails() {
 	assert_eq!(fetch_with_overlay(7, b"\r\n"), Event::FetchFailed);
 }
+
+#[test]
+fn streams_carry_data_both_ways() {
+	let (mut radio, mut overlays) = mesh(2, &[0, 1]);
+	let server = SocketAddrV6::new(address(&radio, 0), esp_ygg_app::gopher::PORT, 0, 0);
+	overlays[1].1.open_stream(server).unwrap();
+	let mut received = Vec::new();
+	let closed = wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(30),
+		|_, overlays| {
+			while let Some(event) = overlays[1].1.poll_event() {
+				match event {
+					Event::StreamOpened => overlays[1].1.stream_send(b"\r\n").unwrap(),
+					Event::StreamData { data } => received.extend(data),
+					Event::StreamClosed => return Some(()),
+					_ => {}
+				}
+			}
+			None
+		},
+	);
+	assert!(closed.is_some(), "the stream never closed");
+	assert!(String::from_utf8_lossy(&received).contains("Test <board>"));
+}

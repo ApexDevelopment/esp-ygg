@@ -15,7 +15,7 @@ smoltcp = { version = "0.13.1", default-features = false, features = ["alloc", "
 yggdrasil-espnow = { path = "../node" }
 
 [features]
-default = ["ui", "http", "gopher", "console", "ntp"]
+default = ["ui", "http", "gopher", "console", "ntp", "irc"]
 # The on-device interface. Boards without a screen can leave it out.
 ui = ["dep:ratatui"]
 # Services, each of which costs memory while the board runs
@@ -23,6 +23,7 @@ http = []
 gopher = []
 console = []
 ntp = []
+irc = []
 
 [dev-dependencies]
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }

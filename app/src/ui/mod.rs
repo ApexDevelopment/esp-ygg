@@ -5,6 +5,7 @@
 
 mod gopher;
 mod input;
+mod irc;
 pub mod keyboard;
 mod view;
 
@@ -55,6 +56,10 @@ pub enum Command {
 	RequestNodeInfo(PublicKey),
 	/// Send a request to a TCP server and collect its whole response.
 	Fetch(SocketAddrV6, Vec<u8>),
+	/// Open a lasting TCP connection, send on it, and close it.
+	OpenStream(SocketAddrV6),
+	StreamSend(Vec<u8>),
+	CloseStream,
 	ScanWifi,
 	/// Store these settings and restart to apply them.
 	Save(Settings),
@@ -157,6 +162,8 @@ enum Screen {
 	Console,
 	#[cfg_attr(not(feature = "gopher"), allow(dead_code))]
 	Gopher,
+	#[cfg_attr(not(feature = "irc"), allow(dead_code))]
+	Irc,
 	Settings,
 	Networks,
 }
@@ -204,6 +211,8 @@ const MENU: &[(&str, Screen)] = &[
 	("Ping", Screen::Ping),
 	#[cfg(feature = "console")]
 	("Console", Screen::Console),
+	#[cfg(feature = "irc")]
+	("IRC", Screen::Irc),
 	#[cfg(feature = "gopher")]
 	("Gopher", Screen::Gopher),
 	("Settings", Screen::Settings),
@@ -236,6 +245,7 @@ pub struct App {
 	unread: usize,
 
 	gopher: gopher::Browser,
+	irc: irc::Client,
 
 	saved: Settings,
 	draft: Settings,
@@ -269,6 +279,7 @@ impl App {
 			console_log: VecDeque::new(),
 			unread: 0,
 			gopher: gopher::Browser::new(),
+			irc: irc::Client::new(&default_nick(&settings.name)),
 			draft: settings.clone(),
 			saved: settings,
 			settings_selected: 0,
@@ -335,6 +346,18 @@ impl App {
 			}
 			Event::Fetched { data } => self.gopher.fetched(&data),
 			Event::FetchFailed => self.gopher.failed(),
+			Event::StreamOpened => {
+				let mut commands = Vec::new();
+				self.irc.opened(&mut commands);
+				self.commands.extend(commands);
+			}
+			Event::StreamData { data } => {
+				let mut commands = Vec::new();
+				let viewing = self.screen == Screen::Irc;
+				self.irc.received(&data, viewing, &mut commands);
+				self.commands.extend(commands);
+			}
+			Event::StreamClosed => self.irc.closed(),
 			Event::Datagram { from, data } => {
 				let text = String::from_utf8_lossy(&data);
 				let line = format!(
@@ -383,6 +406,14 @@ impl App {
 			Screen::Console => self.console_key(key),
 			Screen::Settings => self.settings_key(key),
 			Screen::Networks => self.networks_key(key),
+			Screen::Irc => {
+				let mut commands = Vec::new();
+				let outcome = self.irc.handle_key(key, &mut commands);
+				self.commands.extend(commands);
+				if let irc::Outcome::Leave = outcome {
+					self.screen = Screen::Home;
+				}
+			}
 			Screen::Gopher => {
 				let mut commands = Vec::new();
 				let outcome = self.gopher.handle_key(key, &mut commands);
@@ -406,6 +437,9 @@ impl App {
 	fn open(&mut self, screen: Screen) {
 		if screen == Screen::Console {
 			self.unread = 0;
+		}
+		if screen == Screen::Irc {
+			self.irc.mark_read();
 		}
 		if screen == Screen::Settings {
 			self.draft = self.saved.clone();
@@ -695,6 +729,20 @@ impl App {
 			.find(|(key, _)| Ipv6Addr::from(addr_for_key(key).0) == *address)
 			.and_then(|(key, _)| self.name_of(key))
 			.map_or_else(|| address.to_string(), String::from)
+	}
+}
+
+/// A nick from the board's name, keeping only what IRC allows.
+fn default_nick(name: &str) -> String {
+	let nick: String = name
+		.chars()
+		.filter(|character| character.is_ascii_alphanumeric() || "-_[]{}\\|^`".contains(*character))
+		.take(16)
+		.collect();
+	if nick.starts_with(|character: char| character.is_ascii_alphabetic()) {
+		nick
+	} else {
+		String::from("esp-ygg")
 	}
 }
 

@@ -125,6 +125,13 @@ fn carry_out(command: Command, radio: &mut Radio, overlay: &mut Overlay, app: &m
 		Command::Fetch(to, request) => {
 			let _ = overlay.fetch(to, request, radio.nodes[0].now());
 		}
+		Command::OpenStream(to) => {
+			let _ = overlay.open_stream(to);
+		}
+		Command::StreamSend(data) => {
+			let _ = overlay.stream_send(&data);
+		}
+		Command::CloseStream => overlay.close_stream(),
 		Command::ScanWifi => app.set_networks(vec![
 			WifiNetwork {
 				ssid: "PHOTON".into(),

@@ -56,6 +56,7 @@ Each service costs memory while the board runs, so the firmware can be built wit
 | `gopher` | Gopher menu, and the Gopher screen |
 | `console` | UDP console, and the Console screen |
 | `ntp` | Time over NTP, and the clock |
+| `irc` | The IRC screen |
 
 To pick some, turn off the defaults and list what you want, along with the board. For example, a Cardputer with only the console:
 
@@ -73,6 +74,7 @@ On a Cardputer, the home screen shows the board's address and how many nodes it 
 - Radio lists ESP-NOW neighbors with their recent signal strength and the share of frames sent to them that went unacknowledged, for finding where boards still reach each other.
 - Ping sends a ping every second to an address you type or pick, and shows each round trip.
 - Gopher browses Gopher menus and text, starting from an address you type. Links to a board's peers make it easy to hop across the mesh. Yggdrasil has no standard way to look up names, so links work when they use an address or the name of the server they came from.
+- IRC connects to an IRC server over Yggdrasil and joins a channel. Each channel and private conversation gets its own buffer, and Tab moves between them. The usual commands work, such as `/join`, `/part`, `/msg`, `/me`, `/nick` and `/quit`. Leaving the screen keeps the connection, and the home menu counts new lines.
 - Console shows text received on UDP port 4242 and sends what you type, to an address or `[address]:port`.
 - Settings changes the name, bridging, WiFi network, password, peer, channel and time zone, and turns the status pages on or off. Saving restarts the board to apply them.
 

@@ -378,3 +378,73 @@ fn browses_gopher_menus_and_goes_back() {
 	// Out of history, so back to the home screen.
 	assert_eq!(screen(&app)[0].trim(), "esp-ygg");
 }
+
+fn irc_line(app: &mut App, line: &str) {
+	let mut data = line.as_bytes().to_vec();
+	data.extend_from_slice(b"\r\n");
+	app.handle_event(Event::StreamData { data });
+}
+
+fn sent_lines(app: &mut App) -> Vec<String> {
+	commands(app)
+		.into_iter()
+		.filter_map(|command| match command {
+			Command::StreamSend(line) => Some(String::from_utf8(line).unwrap()),
+			_ => None,
+		})
+		.collect()
+}
+
+#[test]
+fn chats_on_irc() {
+	let mut app = App::new(Settings::new(), at(0));
+	app.set_status(status(&[], &[]));
+	open(&mut app, "IRC");
+	type_text(&mut app, "200::5");
+	press(&mut app, &[Key::Enter, Key::Enter, Key::Enter]);
+	let server = SocketAddrV6::new("200::5".parse().unwrap(), 6667, 0, 0);
+	assert_eq!(commands(&mut app), [Command::OpenStream(server)]);
+
+	app.handle_event(Event::StreamOpened);
+	assert_eq!(
+		sent_lines(&mut app),
+		["NICK esp-ygg\r\n", "USER esp-ygg 0 * :esp-ygg\r\n"]
+	);
+	irc_line(
+		&mut app,
+		":irc.test 433 * esp-ygg :Nickname is already in use",
+	);
+	assert_eq!(sent_lines(&mut app), ["NICK esp-ygg_\r\n"]);
+	irc_line(&mut app, ":irc.test 001 esp-ygg_ :Welcome to the mesh");
+	assert_eq!(sent_lines(&mut app), ["JOIN #esp-ygg\r\n"]);
+	irc_line(&mut app, ":esp-ygg_!u@200::1 JOIN #esp-ygg");
+	irc_line(&mut app, "PING :irc.test");
+	assert_eq!(sent_lines(&mut app), ["PONG :irc.test\r\n"]);
+
+	irc_line(
+		&mut app,
+		":ada!a@200::2 PRIVMSG #esp-ygg :hello from the desktop",
+	);
+	type_text(&mut app, "hi there");
+	press(&mut app, &[Key::Enter]);
+	type_text(&mut app, "/me waves");
+	press(&mut app, &[Key::Enter]);
+	assert_eq!(
+		sent_lines(&mut app),
+		[
+			"PRIVMSG #esp-ygg :hi there\r\n",
+			"PRIVMSG #esp-ygg :\u{1}ACTION waves\u{1}\r\n"
+		]
+	);
+	let shown = screen(&app).join("\n");
+	assert!(shown.contains("#esp-ygg as esp-ygg_"), "{shown}");
+	assert!(shown.contains("<ada> hello from the desktop"), "{shown}");
+	assert!(shown.contains("* esp-ygg_ waves"), "{shown}");
+
+	// A private message gets its own buffer, counted as unread.
+	irc_line(&mut app, ":bob!b@200::3 PRIVMSG esp-ygg_ :psst");
+	assert!(screen(&app)[1].contains("bob(1)"), "{}", screen(&app)[1]);
+	press(&mut app, &[Key::Escape]);
+	irc_line(&mut app, ":ada!a@200::2 PRIVMSG #esp-ygg :still there?");
+	assert!(screen(&app).join("\n").contains("IRC (2 new)"));
+}

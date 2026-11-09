@@ -11,6 +11,7 @@ use ratatui::widgets::{List, ListItem, ListState, Paragraph, Wrap};
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
 use super::gopher::Content;
+use super::irc::Phase as IrcPhase;
 use super::{App, ConsoleFocus, FIELDS, Field, Lookup, MENU, Screen, TextInput, Uplink};
 use crate::time::{DateTime, format_offset};
 
@@ -33,6 +34,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 		Screen::Node(key) => draw_node(frame, body, app, key),
 		Screen::Radio => draw_radio(frame, body, app),
 		Screen::Gopher => draw_gopher(frame, body, app),
+		Screen::Irc => draw_irc(frame, body, app),
 		Screen::Ping => draw_ping(frame, body, app),
 		Screen::Console => draw_console(frame, body, app),
 		Screen::Settings => draw_settings(frame, body, app),
@@ -51,6 +53,7 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 		Screen::Network | Screen::Node(_) => "Network",
 		Screen::Radio => "Radio",
 		Screen::Gopher => "Gopher",
+		Screen::Irc => "IRC",
 		Screen::Ping => "Ping",
 		Screen::Console => "Console",
 		Screen::Settings => "Settings",
@@ -97,6 +100,8 @@ fn hints(app: &App) -> &'static str {
 		Screen::Network => "↑↓ select  enter open  esc back",
 		Screen::Node(_) => "p ping  m message  esc back",
 		Screen::Radio => "esc back",
+		Screen::Irc if app.irc.phase == IrcPhase::Setup => "↑↓ field  enter connect  esc back",
+		Screen::Irc => "tab buffer  ↑↓ scroll  esc leave",
 		Screen::Gopher if app.gopher.search.is_some() => "type a search  enter go",
 		Screen::Gopher if app.gopher.editing => "type an address  enter go",
 		Screen::Gopher => match app.gopher.page.as_ref().map(|page| &page.content) {
@@ -141,8 +146,13 @@ fn draw_home(frame: &mut Frame, area: Rect, app: &App) {
 	lines.push(Line::raw(""));
 	for (index, (label, screen)) in MENU.iter().enumerate() {
 		let mut text = format!(" {label}");
-		if *screen == Screen::Console && app.unread > 0 {
-			text.push_str(&format!(" ({} new)", app.unread));
+		let unread = match screen {
+			Screen::Console => app.unread,
+			Screen::Irc => app.irc.unread(),
+			_ => 0,
+		};
+		if unread > 0 {
+			text.push_str(&format!(" ({unread} new)"));
 		}
 		let style = if index == app.menu {
 			SELECTED
@@ -214,6 +224,105 @@ fn draw_node(frame: &mut Frame, area: Rect, app: &App, key: yggdrasil_espnow::Pu
 		_ => lines.push(Line::styled(" Asking for nodeinfo…", DIM)),
 	}
 	frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn draw_irc(frame: &mut Frame, area: Rect, app: &App) {
+	let client = &app.irc;
+	if client.phase == IrcPhase::Setup {
+		let mut lines = Vec::new();
+		for (index, label) in ["server", "nick", "join"].iter().enumerate() {
+			lines.push(field_line(
+				label,
+				&client.form[index],
+				index == client.field,
+			));
+		}
+		if let Some(error) = &client.error {
+			lines.push(Line::raw(""));
+			lines.push(Line::styled(
+				format!(" {error}"),
+				Style::new().fg(Color::Yellow),
+			));
+		}
+		frame.render_widget(Paragraph::new(lines), area);
+		return;
+	}
+	let [header, log, input] = Layout::vertical([
+		Constraint::Length(1),
+		Constraint::Fill(1),
+		Constraint::Length(1),
+	])
+	.areas(area);
+	let buffer = &client.buffers[client.current];
+	let mut spans = Vec::from([Span::styled(
+		format!(" {}", buffer.name),
+		Style::new().fg(ACCENT),
+	)]);
+	if client.phase == IrcPhase::Connecting {
+		spans.push(Span::styled(" connecting…", DIM));
+	} else {
+		spans.push(Span::styled(format!(" as {}", client.nick), DIM));
+	}
+	for other in client.buffers.iter().filter(|other| other.unread > 0) {
+		spans.push(Span::raw(format!(" {}({})", other.name, other.unread)));
+	}
+	frame.render_widget(Paragraph::new(Line::from(spans)), header);
+	let width = usize::from(log.width.saturating_sub(1)).max(1);
+	let wrapped: Vec<String> = buffer
+		.lines
+		.iter()
+		.flat_map(|line| wrap(line, width))
+		.collect();
+	let height = usize::from(log.height);
+	let end = wrapped
+		.len()
+		.saturating_sub(client.scroll.min(wrapped.len().saturating_sub(height)));
+	let start = end.saturating_sub(height);
+	let lines: Vec<Line> = wrapped[start..end]
+		.iter()
+		.map(|line| Line::raw(format!(" {line}")))
+		.collect();
+	frame.render_widget(Paragraph::new(lines), log);
+	frame.render_widget(Paragraph::new(field_line(">", &client.input, true)), input);
+}
+
+/// Breaks `text` into lines of at most `width` characters, at spaces where
+/// it can.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+	let mut lines = Vec::new();
+	let mut line = String::new();
+	for word in text.split(' ') {
+		let mut word = word;
+		loop {
+			let used = line.chars().count();
+			let needed = word.chars().count() + usize::from(used > 0);
+			if used + needed <= width {
+				if used > 0 {
+					line.push(' ');
+				}
+				line.push_str(word);
+				break;
+			}
+			if used > 0 {
+				lines.push(core::mem::take(&mut line));
+				continue;
+			}
+			// A word longer than a line is split.
+			let split = word
+				.char_indices()
+				.nth(width)
+				.map_or(word.len(), |(index, _)| index);
+			lines.push(word[..split].into());
+			word = &word[split..];
+			if word.is_empty() {
+				break;
+			}
+		}
+	}
+	if !line.is_empty() || lines.is_empty() {
+		lines.push(line);
+	}
+	lines
 }
 
 fn draw_gopher(frame: &mut Frame, area: Rect, app: &App) {
@@ -511,5 +620,17 @@ impl core::fmt::Display for Hex<'_> {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		self.0.iter().try_for_each(|byte| write!(f, "{byte:02x}"))?;
 		f.write_str("…")
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::wrap;
+
+	#[test]
+	fn wraps_at_spaces_and_splits_long_words() {
+		assert_eq!(wrap("one two three", 7), ["one two", "three"]);
+		assert_eq!(wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
+		assert_eq!(wrap("", 4), [""]);
 	}
 }
