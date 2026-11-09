@@ -112,25 +112,39 @@ impl Radio {
 
 	fn transmit(&mut self, from: usize) {
 		let mut buf = [0u8; FRAME_LEN];
-		while let Some((destination, len)) = self.nodes[from].poll_transmit(&mut buf) {
-			self.sent += 1;
-			if self
-				.loss_every
-				.is_some_and(|every| self.sent.is_multiple_of(every))
-			{
-				continue;
-			}
-			let arrival = self.now_micros() + LATENCY_MICROS;
-			for to in 0..self.nodes.len() {
-				let addressed = match destination {
-					Destination::Broadcast => true,
-					Destination::Unicast(mac) => mac == self.macs[to],
-				};
-				if addressed && self.in_range[from][to] {
-					let key = (arrival, self.sent * 64 + to as u64);
-					self.air
-						.insert(key, (to, self.macs[from], buf[..len].to_vec()));
+		loop {
+			let mut lost = Vec::new();
+			while let Some((destination, len)) = self.nodes[from].poll_transmit(&mut buf) {
+				self.sent += 1;
+				let dropped = self
+					.loss_every
+					.is_some_and(|every| self.sent.is_multiple_of(every));
+				let arrival = self.now_micros() + LATENCY_MICROS;
+				let mut arrived = false;
+				for to in 0..self.nodes.len() {
+					let addressed = match destination {
+						Destination::Broadcast => true,
+						Destination::Unicast(mac) => mac == self.macs[to],
+					};
+					if addressed && self.in_range[from][to] && !dropped {
+						let key = (arrival, self.sent * 64 + to as u64);
+						self.air
+							.insert(key, (to, self.macs[from], buf[..len].to_vec()));
+						arrived = true;
+					}
 				}
+				// ESP-NOW reports unicast frames that were not acknowledged.
+				if let Destination::Unicast(mac) = destination
+					&& !arrived
+				{
+					lost.push((mac, buf[..len].to_vec()));
+				}
+			}
+			if lost.is_empty() {
+				return;
+			}
+			for (mac, frame) in lost {
+				self.nodes[from].frame_lost(mac, &frame);
 			}
 		}
 	}

@@ -20,24 +20,39 @@ pub struct Outgoing {
 }
 
 pub static OUTBOX: Channel<CriticalSectionRawMutex, Outgoing, 16> = Channel::new();
+/// Unicast frames that did not get through, for the node to resend sooner.
+pub static LOST: Channel<CriticalSectionRawMutex, Outgoing, 8> = Channel::new();
 
 #[embassy_executor::task]
 pub async fn sender(mut sender: EspNowSender) {
 	let mut stats = SendStats::new();
 	loop {
 		let outgoing = OUTBOX.receive().await;
-		// Lost frames are resent by the link layer, so failures are only counted.
 		let send = sender.send_async(&outgoing.mac, &outgoing.frame);
-		match with_timeout(SEND_TIMEOUT, send).await {
-			Ok(Ok(())) => {}
+		let lost = match with_timeout(SEND_TIMEOUT, send).await {
+			Ok(Ok(())) => false,
 			// Broadcasts are never acknowledged, so they never fail this way.
-			Ok(Err(EspNowError::SendFailed)) => stats.unacknowledged += 1,
-			Ok(Err(_)) => stats.refused += 1,
-			Err(_) => stats.timed_out += 1,
-		}
+			Ok(Err(EspNowError::SendFailed)) => {
+				stats.unacknowledged += 1;
+				true
+			}
+			Ok(Err(_)) => {
+				stats.refused += 1;
+				true
+			}
+			// It may yet arrive, so leave it to the link's timer.
+			Err(_) => {
+				stats.timed_out += 1;
+				false
+			}
+		};
 		stats.sent += 1;
 		stats.min_free_heap = stats.min_free_heap.min(esp_alloc::HEAP.free());
 		stats.report_if_due();
+		if lost {
+			// If the node is behind, its timer will resend the frame anyway.
+			let _ = LOST.try_send(outgoing);
+		}
 	}
 }
 

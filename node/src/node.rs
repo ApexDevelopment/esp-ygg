@@ -247,6 +247,18 @@ impl<P: Platform> Node<P> {
 		frame
 	}
 
+	/// Tells the node that a unicast frame from [`Node::poll_transmit`] was
+	/// not acknowledged, so it can be resent sooner. Call
+	/// [`Node::poll_transmit`] afterwards.
+	pub fn frame_lost(&mut self, to: Mac, frame: &[u8]) {
+		let now = self.now();
+		if let Some(Frame::Link(bytes)) = Frame::decode(frame)
+			&& let Some(neighbor) = self.neighbors.get_mut(&to)
+		{
+			neighbor.link.frame_lost(bytes, link_time(now));
+		}
+	}
+
 	/// When [`Node::handle_timeout`] should next be called. The time may have
 	/// passed already.
 	pub fn poll_timeout(&self) -> Option<Instant> {

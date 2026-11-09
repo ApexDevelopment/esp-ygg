@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use core::net::Ipv6Addr;
 
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either3, select3};
+use embassy_futures::select::{Either4, select4};
 use embassy_net::StackResources;
 use embassy_time::{Duration, Instant, Timer};
 use esp_backtrace as _;
@@ -147,14 +147,21 @@ async fn main(spawner: Spawner) -> ! {
 			wake = wake.min(Instant::now() + Duration::from_millis(5));
 		}
 		let waited = Instant::now();
-		let event = select3(receiver.receive_async(), Timer::at(wake), TO_NODE.receive()).await;
+		let event = select4(
+			receiver.receive_async(),
+			Timer::at(wake),
+			TO_NODE.receive(),
+			radio::LOST.receive(),
+		)
+		.await;
 		let woke = Instant::now();
 		match event {
-			Either3::First(received) => {
+			Either4::First(received) => {
 				node.handle_frame(received.info.src_address, received.data())
 			}
-			Either3::Second(()) => {}
-			Either3::Third(message) => handle_uplink(&mut node, &mut stream, message),
+			Either4::Second(()) => {}
+			Either4::Third(message) => handle_uplink(&mut node, &mut stream, message),
+			Either4::Fourth(lost) => node.frame_lost(lost.mac, &lost.frame),
 		}
 		// Whatever woke the loop, run expired timers, or a steady stream of
 		// frames would starve them.
