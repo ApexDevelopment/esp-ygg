@@ -111,13 +111,15 @@ async fn main(spawner: Spawner) -> ! {
 			esp_radio::wifi::Interface::station(),
 			embassy_net::Config::dhcpv4(Default::default()),
 			{
-				static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
+				// DHCP, DNS, the TCP peering and NTP
+				static RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
 				RESOURCES.init(StackResources::new())
 			},
 			u64::from(rng.random()) << 32 | u64::from(rng.random()),
 		);
 		spawner.spawn(uplink::network(runner).expect("spawning the network task"));
 		spawner.spawn(uplink::tcp(stack, peer).expect("spawning the TCP task"));
+		spawner.spawn(uplink::ntp(stack).expect("spawning the NTP task"));
 		info!("Peering with {peer} over WiFi network {}", settings.ssid);
 	}
 
@@ -256,11 +258,16 @@ async fn main(spawner: Spawner) -> ! {
 		{
 			node.handle_timeout();
 		}
+		if let Some((unix_micros, stratum, received)) = uplink::WIFI_TIME.try_take() {
+			let since = (Instant::now() - received).as_micros();
+			overlay.set_time(unix_micros + since, stratum.saturating_add(1), node.now());
+		}
 		let board = BoardInfo {
 			name: settings.name.clone(),
 			model: model_name().into(),
 			uptime: core::time::Duration::from_micros(Instant::now().as_micros()),
 			free_heap: Some(esp_alloc::HEAP.free()),
+			time: overlay.unix_micros(node.now()),
 		};
 		overlay.poll(&mut node, &board);
 

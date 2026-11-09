@@ -16,6 +16,7 @@ fn board() -> BoardInfo {
 		model: "Simulated".into(),
 		uptime: Duration::from_secs(90),
 		free_heap: Some(100 * 1024),
+		time: None,
 	}
 }
 
@@ -226,4 +227,29 @@ fn pings_to_nobody_time_out() {
 #[test]
 fn the_status_page_can_be_turned_off() {
 	assert_eq!(fetch_from("/", false), "");
+}
+
+#[test]
+fn time_spreads_from_board_to_board() {
+	let (mut radio, mut overlays) = mesh(3, &[0, 1, 2]);
+	let start = radio.nodes[0].now();
+	let reference = 1_800_000_000_000_000;
+	overlays[0].1.set_time(reference, 2, start);
+	let synced = wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(120),
+		|radio, overlays| {
+			let now = radio.nodes[2].now();
+			overlays[2].1.unix_micros(now).map(|time| (time, now))
+		},
+	);
+	let (time, now) = synced.expect("the far board never learned the time");
+	let expected = reference + now.saturating_duration_since(start).as_micros() as u64;
+	// Each hop adds the time a reply takes to arrive.
+	assert!(time.abs_diff(expected) < 50_000, "{time} vs {expected}");
+	// The source keeps its own time rather than taking a neighbor's.
+	let now = radio.nodes[0].now();
+	let expected = reference + now.saturating_duration_since(start).as_micros() as u64;
+	assert_eq!(overlays[0].1.unix_micros(now), Some(expected));
 }

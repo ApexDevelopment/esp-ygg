@@ -20,6 +20,7 @@ use yggdrasil_espnow::{Instant, Mac, Node, Platform, PublicKey};
 use crate::BoardInfo;
 use crate::overlay::{CONSOLE_PORT, Event};
 use crate::settings::Settings;
+use crate::time::{format_offset, parse_offset};
 pub use input::TextInput;
 pub use view::draw;
 
@@ -163,17 +164,19 @@ enum Field {
 	Password,
 	Peer,
 	Channel,
+	TimeZone,
 	StatusPage,
 	Save,
 }
 
-const FIELDS: [Field; 8] = [
+const FIELDS: [Field; 9] = [
 	Field::Name,
 	Field::Bridge,
 	Field::Network,
 	Field::Password,
 	Field::Peer,
 	Field::Channel,
+	Field::TimeZone,
 	Field::StatusPage,
 	Field::Save,
 ];
@@ -526,6 +529,7 @@ impl App {
 			Field::Password => TextInput::secret(&self.draft.password, 63),
 			Field::Peer => TextInput::new(&self.draft.peer, 21),
 			Field::Channel => TextInput::new(&self.draft.channel.to_string(), 2),
+			Field::TimeZone => TextInput::new(&format_offset(self.draft.utc_offset), 6),
 			Field::Bridge => {
 				self.draft.bridge = !self.draft.bridge;
 				return;
@@ -565,6 +569,10 @@ impl App {
 					self.notice = Some("Use an IPv4 address and port".into());
 				}
 			}
+			Field::TimeZone => match parse_offset(&text) {
+				Some(offset) => self.draft.utc_offset = offset,
+				None => self.notice = Some("Use an offset from UTC, like -05:00".into()),
+			},
 			Field::Channel => match text.parse::<u8>() {
 				Ok(channel @ 1..=13) => self.draft.channel = channel,
 				_ => self.notice = Some("Channels go from 1 to 13".into()),

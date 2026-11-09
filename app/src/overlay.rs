@@ -15,12 +15,34 @@ use yggdrasil_espnow::{Instant, Node, Platform};
 
 use crate::device::{MTU, Queues, interface};
 use crate::http::{self, BoardInfo};
+use crate::sntp;
+use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
 pub const HTTP_PORT: u16 = 80;
 /// The port the UDP console listens on.
 pub const CONSOLE_PORT: u16 = 4242;
 /// How long to wait for a ping reply.
 pub const PING_TIMEOUT: Duration = Duration::from_secs(5);
+/// How often to ask peers for the time while the board does not know it.
+const TIME_REQUEST_INTERVAL: Duration = Duration::from_secs(30);
+const TIME_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a synced time is trusted before asking again.
+const RESYNC_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+/// The wall-clock time as of a moment on the board's own clock.
+#[derive(Clone, Copy, Debug)]
+struct Clock {
+	unix_micros: u64,
+	synced: Instant,
+	stratum: u8,
+}
+
+impl Clock {
+	fn at(&self, now: Instant) -> u64 {
+		let elapsed = now.saturating_duration_since(self.synced).as_micros();
+		self.unix_micros + u64::try_from(elapsed).unwrap_or(u64::MAX)
+	}
+}
 
 const HTTP_SOCKETS: usize = 2;
 const PING_DATA: &[u8] = b"esp-ygg ping";
@@ -70,6 +92,11 @@ pub struct Overlay {
 	next_sequence: u16,
 	pings: BTreeMap<u16, (Ipv6Addr, Instant)>,
 	events: VecDeque<Event>,
+	time: SocketHandle,
+	clock: Option<Clock>,
+	/// When each time server was last asked, so only replies we asked for count.
+	time_requests: BTreeMap<Ipv6Addr, Instant>,
+	next_time_request: Instant,
 }
 
 impl Overlay {
@@ -107,6 +134,17 @@ impl Overlay {
 			icmp::PacketBuffer::new(vec![icmp::PacketMetadata::EMPTY; 8], vec![0; 1024]),
 			icmp::PacketBuffer::new(vec![icmp::PacketMetadata::EMPTY; 8], vec![0; 1024]),
 		);
+		let mut time = udp::Socket::new(
+			udp::PacketBuffer::new(
+				vec![udp::PacketMetadata::EMPTY; 4],
+				vec![0; 4 * sntp::MESSAGE_LEN],
+			),
+			udp::PacketBuffer::new(
+				vec![udp::PacketMetadata::EMPTY; 8],
+				vec![0; 8 * sntp::MESSAGE_LEN],
+			),
+		);
+		time.bind(sntp::PORT).expect("binding the time port");
 		ping.bind(icmp::Endpoint::Ident(ping_ident))
 			.expect("binding the ping socket");
 		Overlay {
@@ -115,12 +153,16 @@ impl Overlay {
 			device,
 			http,
 			console: sockets.add(console),
+			time: sockets.add(time),
 			ping: sockets.add(ping),
 			sockets,
 			ping_ident,
 			next_sequence: 0,
 			pings: BTreeMap::new(),
 			events: VecDeque::new(),
+			clock: None,
+			time_requests: BTreeMap::new(),
+			next_time_request: node.now(),
 		}
 	}
 
@@ -137,6 +179,7 @@ impl Overlay {
 		self.receive_datagrams();
 		self.receive_pings(now);
 		self.expire_pings(now);
+		self.keep_time(node, now);
 		// Send whatever the services just queued.
 		self.interface
 			.poll(to_smoltcp(now), &mut self.device, &mut self.sockets);
@@ -152,7 +195,11 @@ impl Overlay {
 			.poll_at(to_smoltcp(now), &self.sockets)
 			.map(from_smoltcp);
 		let pings = self.pings.values().map(|(_, sent)| *sent + PING_TIMEOUT);
-		stack.into_iter().chain(pings).min()
+		stack
+			.into_iter()
+			.chain(pings)
+			.chain([self.next_time_request])
+			.min()
 	}
 
 	pub fn poll_event(&mut self) -> Option<Event> {
@@ -196,6 +243,76 @@ impl Overlay {
 		self.pings.insert(sequence, (target, now));
 		self.next_sequence = sequence.wrapping_add(1);
 		Ok(sequence)
+	}
+
+	/// Microseconds since the Unix epoch, once the board knows the time.
+	pub fn unix_micros(&self, now: Instant) -> Option<u64> {
+		self.clock.map(|clock| clock.at(now))
+	}
+
+	/// Sets the time from a source `stratum` steps from a reference clock,
+	/// such as an NTP server reached over WiFi, unless a closer source
+	/// already set it recently.
+	pub fn set_time(&mut self, unix_micros: u64, stratum: u8, now: Instant) {
+		let replace = self.clock.is_none_or(|clock| {
+			stratum < clock.stratum
+				|| now.saturating_duration_since(clock.synced) >= RESYNC_INTERVAL
+		});
+		if replace {
+			self.clock = Some(Clock {
+				unix_micros,
+				synced: now,
+				stratum,
+			});
+		}
+	}
+
+	/// Answers time requests once the board knows the time, and asks its
+	/// direct peers until it does, then once in a while.
+	fn keep_time<P: Platform>(&mut self, node: &Node<P>, now: Instant) {
+		let socket = self.sockets.get_mut::<udp::Socket>(self.time);
+		let mut replies = Vec::new();
+		while let Ok((message, meta)) = socket.recv() {
+			#[allow(irrefutable_let_patterns)]
+			let IpAddress::Ipv6(from) = meta.endpoint.addr else {
+				continue;
+			};
+			match sntp::parse(message) {
+				Some(sntp::Message::Request) => {
+					if let Some(clock) = self.clock {
+						let reply = sntp::reply(message, clock.at(now), clock.stratum);
+						let _ = socket.send_slice(&reply, meta.endpoint);
+					}
+				}
+				Some(sntp::Message::Reply(reply)) => replies.push((from, reply)),
+				None => {}
+			}
+		}
+		for (from, reply) in replies {
+			let asked = self
+				.time_requests
+				.remove(&from)
+				.is_some_and(|sent| now.saturating_duration_since(sent) < TIME_REQUEST_TIMEOUT);
+			if asked && reply.stratum < 15 {
+				self.set_time(reply.unix_micros, reply.stratum + 1, now);
+			}
+		}
+		let synced_recently = self
+			.clock
+			.is_some_and(|clock| now.saturating_duration_since(clock.synced) < RESYNC_INTERVAL);
+		if synced_recently || now < self.next_time_request {
+			return;
+		}
+		self.next_time_request = now + TIME_REQUEST_INTERVAL;
+		self.time_requests.clear();
+		let socket = self.sockets.get_mut::<udp::Socket>(self.time);
+		for peer in node.network().debug().get_peers() {
+			let address = Ipv6Addr::from(addr_for_key(&peer.key).0);
+			let endpoint = IpEndpoint::new(IpAddress::Ipv6(address), sntp::PORT);
+			if socket.send_slice(&sntp::request(), endpoint).is_ok() {
+				self.time_requests.insert(address, now);
+			}
+		}
 	}
 
 	fn serve_http<P: Platform>(&mut self, node: &Node<P>, board: &BoardInfo) {

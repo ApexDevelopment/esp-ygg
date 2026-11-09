@@ -205,16 +205,28 @@ fn edits_and_saves_bridge_settings() {
 	type_text(&mut app, "secret");
 	press(&mut app, &[Key::Enter]);
 	assert!(screen(&app).join("\n").contains("••••••"));
-	press(
-		&mut app,
-		&[Key::Down, Key::Down, Key::Down, Key::Down, Key::Enter],
-	);
+	let to_save = [
+		Key::Down,
+		Key::Down,
+		Key::Down,
+		Key::Down,
+		Key::Down,
+		Key::Enter,
+	];
+	press(&mut app, &to_save);
 	assert!(commands(&mut app).is_empty());
 	assert!(screen(&app).join("\n").contains("needs a network and peer"));
-	// Peer, the status page off, then save
-	press(&mut app, &[Key::Up, Key::Up, Key::Up, Key::Enter]);
+	// Peer, a time zone, the status page off, then save
+	press(&mut app, &[Key::Up, Key::Up, Key::Up, Key::Up, Key::Enter]);
 	type_text(&mut app, "192.168.1.176:9001");
 	press(&mut app, &[Key::Enter, Key::Down, Key::Down, Key::Enter]);
+	for _ in 0..6 {
+		press(&mut app, &[Key::Backspace]);
+	}
+	type_text(&mut app, "-5");
+	press(&mut app, &[Key::Enter]);
+	assert!(screen(&app).join("\n").contains("UTC-05:00"));
+	press(&mut app, &[Key::Down, Key::Enter]);
 	assert!(screen(&app).join("\n").contains("Web page off"));
 	press(&mut app, &[Key::Down, Key::Enter]);
 	let expected = Settings {
@@ -225,6 +237,7 @@ fn edits_and_saves_bridge_settings() {
 		peer: "192.168.1.176:9001".into(),
 		channel: 1,
 		status_page: false,
+		utc_offset: -300,
 	};
 	assert_eq!(commands(&mut app), [Command::Save(expected)]);
 }
@@ -275,4 +288,17 @@ fn shows_signal_and_loss_for_each_neighbor() {
 	assert!(shown.contains("▮▮▮▮  -81 dBm"), "{shown}");
 	assert!(shown.contains("28:84:85:76:2d:64"), "{shown}");
 	assert!(shown.contains("linking"), "{shown}");
+}
+
+#[test]
+fn shows_the_local_time_once_known() {
+	let mut settings = Settings::new();
+	settings.utc_offset = -300;
+	let mut app = App::new(settings, at(0));
+	let mut status = status(&[], &[]);
+	assert!(!screen(&app)[0].contains(':'));
+	// 2026-11-09 18:30 UTC
+	status.board.time = Some(1_794_249_000_000_000);
+	app.set_status(status);
+	assert!(screen(&app)[0].contains("13:30"), "{}", screen(&app)[0]);
 }

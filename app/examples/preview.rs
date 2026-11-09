@@ -30,6 +30,11 @@ fn main() -> io::Result<()> {
 	let mut overlays: Vec<Overlay> = (0..BOARDS.len())
 		.map(|index| Overlay::new(&radio.nodes[index], index as u64 + 1, true))
 		.collect();
+	// The first board knows the time, as a bridged board would from NTP.
+	let since_epoch = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.unwrap_or_default();
+	overlays[0].set_time(since_epoch.as_micros() as u64, 2, radio.nodes[0].now());
 	let mut settings = Settings::new();
 	settings.name = BOARDS[0].into();
 	let mut app = App::new(settings, radio.nodes[0].now());
@@ -61,7 +66,8 @@ fn run(
 		radio.set_clock(started.elapsed().as_micros() as u64);
 		radio.step();
 		for (index, overlay) in overlays.iter_mut().enumerate() {
-			let board = board_info(index, started);
+			let time = overlay.unix_micros(radio.nodes[index].now());
+			let board = board_info(index, started, time);
 			overlay.poll(&mut radio.nodes[index], &board);
 		}
 		echo_datagrams(&mut overlays[2]);
@@ -72,7 +78,9 @@ fn run(
 			app.handle_nodeinfo(key, info);
 		}
 		if last_status.elapsed() >= Duration::from_millis(500) {
-			let status = Status::from_node(&radio.nodes[0], &board_info(0, started), Uplink::Off);
+			let time = overlays[0].unix_micros(radio.nodes[0].now());
+			let status =
+				Status::from_node(&radio.nodes[0], &board_info(0, started, time), Uplink::Off);
 			app.set_status(status);
 			last_status = WallClock::now();
 		}
@@ -95,12 +103,13 @@ fn run(
 	}
 }
 
-fn board_info(index: usize, started: WallClock) -> BoardInfo {
+fn board_info(index: usize, started: WallClock, time: Option<u64>) -> BoardInfo {
 	BoardInfo {
 		name: BOARDS[index].into(),
 		model: "Simulated board".into(),
 		uptime: started.elapsed(),
 		free_heap: None,
+		time,
 	}
 }
 

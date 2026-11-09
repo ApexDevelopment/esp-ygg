@@ -11,6 +11,7 @@ use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
 use super::{App, ConsoleFocus, FIELDS, Field, Lookup, MENU, Screen, TextInput, Uplink};
+use crate::time::{DateTime, format_offset};
 
 const ACCENT: Color = Color::Green;
 const DIM: Style = Style::new().fg(Color::DarkGray);
@@ -66,12 +67,17 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 		.status
 		.as_ref()
 		.map_or(Uplink::Off, |status| status.uplink);
-	let right = match uplink {
+	let mut right = String::from(match uplink {
 		Uplink::Off => "",
 		Uplink::JoiningWifi => "joining WiFi ",
 		Uplink::Connecting => "bridging… ",
 		Uplink::Connected => "bridged ",
-	};
+	});
+	if let Some(time) = app.status.as_ref().and_then(|status| status.board.time) {
+		let local = DateTime::from_unix((time / 1_000_000) as i64, app.saved.utc_offset);
+		right.push_str(&local.clock());
+		right.push(' ');
+	}
 	let style = Style::new().fg(Color::Black).bg(ACCENT);
 	let [left_area, right_area] = Layout::horizontal([
 		Constraint::Fill(1),
@@ -79,7 +85,7 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 	])
 	.areas(area);
 	frame.render_widget(Paragraph::new(left).style(style), left_area);
-	frame.render_widget(Paragraph::new(right).style(style), right_area);
+	frame.render_widget(Paragraph::new(right.as_str()).style(style), right_area);
 }
 
 fn hints(app: &App) -> &'static str {
@@ -339,6 +345,10 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App) {
 				Field::Password => ("Password", "•".repeat(draft.password.chars().count())),
 				Field::Peer => ("Peer", draft.peer.clone()),
 				Field::Channel => ("Channel", draft.channel.to_string()),
+				Field::TimeZone => (
+					"Time zone",
+					format!("UTC{}", format_offset(draft.utc_offset)),
+				),
 				Field::StatusPage => ("Web page", on_off(draft.status_page)),
 				Field::Save => ("Save and restart", String::new()),
 			};

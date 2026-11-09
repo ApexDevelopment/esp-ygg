@@ -22,6 +22,8 @@ pub struct Settings {
 	pub channel: u8,
 	/// Whether to serve the HTTP status page.
 	pub status_page: bool,
+	/// The local time zone, in minutes east of UTC.
+	pub utc_offset: i16,
 }
 
 impl Settings {
@@ -46,6 +48,7 @@ impl Settings {
 			bytes.extend_from_slice(text);
 		}
 		bytes.push(u8::from(self.status_page));
+		bytes.extend_from_slice(&self.utc_offset.to_le_bytes());
 		bytes
 	}
 
@@ -68,8 +71,11 @@ impl Settings {
 			peer,
 			bridge: bridge == 1,
 			channel,
-			// Settings saved before this field existed end here.
+			// Settings saved before these fields existed end early.
 			status_page: rest.first().is_none_or(|&byte| byte == 1),
+			utc_offset: rest
+				.get(1..3)
+				.map_or(0, |bytes| i16::from_le_bytes([bytes[0], bytes[1]])),
 		})
 	}
 }
@@ -88,6 +94,7 @@ mod tests {
 			peer: "192.168.1.176:9001".into(),
 			channel: 6,
 			status_page: false,
+			utc_offset: -300,
 		};
 		assert_eq!(Settings::decode(&settings.encode()), Some(settings));
 	}
@@ -95,7 +102,7 @@ mod tests {
 	#[test]
 	fn reads_settings_saved_before_the_status_page_option() {
 		let mut old = Settings::new().encode();
-		old.pop();
+		old.truncate(old.len() - 3);
 		assert_eq!(Settings::decode(&old), Some(Settings::new()));
 	}
 
@@ -104,7 +111,7 @@ mod tests {
 		assert_eq!(Settings::decode(&[]), None);
 		assert_eq!(Settings::decode(&[0xff; 64]), None);
 		let mut truncated = Settings::new().encode();
-		truncated.truncate(truncated.len() - 2);
+		truncated.truncate(truncated.len() - 4);
 		assert_eq!(Settings::decode(&truncated), None);
 	}
 

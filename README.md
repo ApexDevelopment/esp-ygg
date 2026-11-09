@@ -8,6 +8,7 @@ Every board runs a few services on its Yggdrasil address:
 
 - an HTTP status page on port 80, with its address, uptime, memory and peers
 - a UDP console on port 4242 that shows text it receives and sends text back
+- the time over NTP on UDP port 123, once it knows it
 - replies to pings, `yggdrasilctl getNodeInfo` and the `debug_remoteGet*` requests
 
 On an M5Stack Cardputer or Cardputer ADV, the screen and keyboard give an interface for browsing the network, pinging nodes, using the console and changing settings.
@@ -52,7 +53,9 @@ On a Cardputer, the home screen shows the board's address and how many nodes it 
 - Radio lists ESP-NOW neighbors with their recent signal strength and the share of frames sent to them that went unacknowledged, for finding where boards still reach each other.
 - Ping sends a ping every second to an address you type or pick, and shows each round trip.
 - Console shows text received on UDP port 4242 and sends what you type, to an address or `[address]:port`.
-- Settings changes the name, bridging, WiFi network, password, peer and channel, and turns the status page on or off. Saving restarts the board to apply them.
+- Settings changes the name, bridging, WiFi network, password, peer, channel and time zone, and turns the status page on or off. Saving restarts the board to apply them.
+
+Once the board knows the time, the title bar shows it. A bridged board gets the time from `pool.ntp.org`, and other boards ask their peers over Yggdrasil, so it spreads through the mesh. The time zone is a fixed offset from UTC, so it needs changing by hand for daylight saving time.
 
 The arrow keys are Fn with `;` `.` `,` and `/`, and Escape is Fn with `` ` ``. In lists, the same keys work without Fn.
 

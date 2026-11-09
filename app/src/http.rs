@@ -22,6 +22,8 @@ pub struct BoardInfo {
 	pub model: String,
 	pub uptime: Duration,
 	pub free_heap: Option<usize>,
+	/// Microseconds since the Unix epoch, once the board knows the time.
+	pub time: Option<u64>,
 }
 
 /// Whether `request` holds a complete header.
@@ -91,6 +93,10 @@ fn status_page<P: Platform>(node: &Node<P>, board: &BoardInfo) -> String {
 	);
 	if !board.model.is_empty() {
 		row(&mut page, "Board", &escape(&board.model));
+	}
+	if let Some(time) = board.time {
+		let now = crate::time::DateTime::from_unix((time / 1_000_000) as i64, 0);
+		row(&mut page, "Time", &format!("{} UTC", now.date_and_clock()));
 	}
 	row(&mut page, "Uptime", &uptime(board.uptime));
 	if let Some(free) = board.free_heap {

@@ -9,6 +9,8 @@ pub mod device;
 pub mod http;
 mod overlay;
 pub mod settings;
+pub mod sntp;
+pub mod time;
 #[cfg(feature = "ui")]
 pub mod ui;
 
