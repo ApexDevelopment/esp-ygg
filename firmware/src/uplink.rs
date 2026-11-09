@@ -4,8 +4,10 @@
 //! The TCP connection runs in its own task and exchanges bytes with the node
 //! through channels, so a slow connection never holds up the radio.
 
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::net::SocketAddrV4;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_futures::select::{Either, select};
 use embassy_net::tcp::TcpSocket;
@@ -14,8 +16,10 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use embedded_io_async::Write;
+use esp_radio::wifi::scan::ScanConfig;
 use esp_radio::wifi::{
-	AuthenticationMethodConfig, Config, Interface, WifiController, sta::StationConfig,
+	AuthenticationMethod, AuthenticationMethodConfig, Config, Interface, WifiController,
+	sta::StationConfig,
 };
 use log::{info, warn};
 
@@ -37,54 +41,82 @@ pub enum ToSocket {
 pub static TO_NODE: Channel<CriticalSectionRawMutex, ToNode, 8> = Channel::new();
 pub static TO_SOCKET: Channel<CriticalSectionRawMutex, ToSocket, 8> = Channel::new();
 
-pub struct Settings {
-	pub ssid: &'static str,
-	pub password: &'static str,
-	pub peer: SocketAddrV4,
+/// Set while the board is connected to a WiFi network.
+pub static WIFI_UP: AtomicBool = AtomicBool::new(false);
+/// Asks the WiFi task to scan for networks.
+pub static SCANS: Channel<CriticalSectionRawMutex, (), 1> = Channel::new();
+pub static SCAN_RESULTS: Channel<CriticalSectionRawMutex, Vec<ScannedNetwork>, 1> = Channel::new();
+
+// Only boards with a UI ask for scans.
+#[cfg_attr(not(feature = "cardputer"), allow(dead_code))]
+pub struct ScannedNetwork {
+	pub ssid: String,
+	pub signal: i8,
+	pub secured: bool,
 }
 
-/// The uplink settings given at build time, if any.
-pub fn settings() -> Option<Settings> {
-	let ssid = option_env!("ESP_YGG_WIFI_SSID")?;
-	let peer = option_env!("ESP_YGG_PEER")?;
-	let Ok(peer) = peer.parse() else {
-		panic!("ESP_YGG_PEER must be an IPv4 address and port, like 192.168.1.10:9001");
-	};
-	Some(Settings {
-		ssid,
-		password: option_env!("ESP_YGG_WIFI_PASSWORD").unwrap_or(""),
-		peer,
-	})
-}
-
-pub fn station_config(settings: &Settings) -> Config {
-	let auth = if settings.password.is_empty() {
+pub fn station_config(ssid: &str, password: &str) -> Option<Config> {
+	let auth = if password.is_empty() {
 		AuthenticationMethodConfig::Open
 	} else {
-		AuthenticationMethodConfig::Wpa2Personal(
-			settings.password.try_into().expect("password too long"),
-		)
+		AuthenticationMethodConfig::Wpa2Personal(password.try_into().ok()?)
 	};
-	Config::Station(
+	Some(Config::Station(
 		StationConfig::default()
-			.with_ssid(settings.ssid.try_into().expect("SSID too long"))
+			.with_ssid(ssid.try_into().ok()?)
 			.with_authentication(auth),
-	)
+	))
 }
 
+/// Owns the WiFi controller: keeps the board on its network when bridging,
+/// and scans for networks when asked.
 #[embassy_executor::task]
-pub async fn wifi(mut controller: WifiController<'static>) {
+pub async fn wifi(mut controller: WifiController<'static>, bridge: bool) {
 	loop {
+		if !bridge {
+			SCANS.receive().await;
+			scan(&mut controller).await;
+			continue;
+		}
 		match controller.connect_async().await {
 			Ok(_) => {
 				info!("WiFi connected");
-				let _ = controller.wait_for_disconnect_async().await;
+				WIFI_UP.store(true, Ordering::Relaxed);
+				loop {
+					match select(controller.wait_for_disconnect_async(), SCANS.receive()).await {
+						Either::First(_) => break,
+						Either::Second(()) => scan(&mut controller).await,
+					}
+				}
+				WIFI_UP.store(false, Ordering::Relaxed);
 				warn!("WiFi disconnected");
 			}
 			Err(error) => warn!("WiFi connection failed: {error:?}"),
 		}
-		Timer::after(RETRY_DELAY).await;
+		if let Either::Second(()) = select(Timer::after(RETRY_DELAY), SCANS.receive()).await {
+			scan(&mut controller).await;
+		}
 	}
+}
+
+async fn scan(controller: &mut WifiController<'static>) {
+	let config = ScanConfig::default().with_max(20);
+	let networks = match controller.scan_async(&config).await {
+		Ok(found) => found
+			.into_iter()
+			.filter(|network| !network.ssid.is_empty())
+			.map(|network| ScannedNetwork {
+				ssid: network.ssid.as_str().into(),
+				signal: network.signal_strength,
+				secured: !matches!(network.auth_method, None | Some(AuthenticationMethod::None)),
+			})
+			.collect(),
+		Err(error) => {
+			warn!("WiFi scan failed: {error:?}");
+			Vec::new()
+		}
+	};
+	let _ = SCAN_RESULTS.try_send(networks);
 }
 
 #[embassy_executor::task]

@@ -3,16 +3,20 @@
 
 extern crate alloc;
 
+#[cfg(feature = "cardputer")]
+mod cardputer;
 mod platform;
 mod radio;
 mod storage;
+#[cfg(feature = "cardputer")]
+mod ui;
 mod uplink;
 
 use alloc::vec::Vec;
 use core::net::Ipv6Addr;
 
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either4, select4};
+use embassy_futures::select::{Either, Either4, select, select4};
 use embassy_net::StackResources;
 use embassy_time::{Duration, Instant, Timer};
 use esp_backtrace as _;
@@ -22,6 +26,9 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_radio::esp_now::{BROADCAST_ADDRESS, EspNowManager, EspNowWifiInterface, PeerInfo};
 use esp_radio::wifi::{ControllerConfig, WifiController};
 use esp_storage::FlashStorage;
+#[cfg(feature = "cardputer")]
+use esp_ygg_app::ui::{Command, Uplink};
+use esp_ygg_app::{BoardInfo, Overlay, Settings};
 use log::{info, warn};
 use static_cell::StaticCell;
 use yggdrasil_espnow::yggdrasil_proto::requests::{BuildInfo, build_nodeinfo};
@@ -60,32 +67,40 @@ async fn main(spawner: Spawner) -> ! {
 	let timg0 = TimerGroup::new(peripherals.TIMG0);
 	esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
-	let uplink = uplink::settings();
+	// The random number generator is only truly random once the radio runs,
+	// so the identity is read or created after WiFi starts.
+	let flash = FlashStorage::new(peripherals.FLASH);
+	let mut settings_store = storage::Flash::new(flash);
+	let settings = settings_store
+		.settings()
+		.unwrap_or_else(build_time_settings);
+	let station = settings
+		.bridge
+		.then(|| uplink::station_config(&settings.ssid, &settings.password))
+		.flatten();
+	let bridge = station.is_some() && settings.can_bridge();
 	let mut controller_config = ControllerConfig::default();
-	if let Some(settings) = &uplink {
-		controller_config = controller_config.with_initial_config(uplink::station_config(settings));
+	if let (true, Some(station)) = (bridge, station) {
+		controller_config = controller_config.with_initial_config(station);
 	}
 	let controller =
 		WifiController::new(peripherals.WIFI, controller_config).expect("starting WiFi");
-	// The radio is running now, so the random number generator is truly random.
 	let rng = Rng::new();
-	let (mut store, unix_base) = Store::open(FlashStorage::new(peripherals.FLASH), &rng);
+	let (mut store, unix_base) = settings_store.open(&rng);
 
 	let esp_now = controller.esp_now();
 	info!("ESP-NOW version {}", esp_now.version().unwrap_or(0));
-	if uplink.is_none() {
-		let channel = option_env!("ESP_YGG_CHANNEL")
-			.and_then(|channel| channel.parse().ok())
-			.unwrap_or(DEFAULT_CHANNEL);
+	if !bridge {
 		esp_now
-			.set_channel(channel)
+			.set_channel(settings.channel)
 			.expect("setting the WiFi channel");
-		info!("Using WiFi channel {channel}");
+		info!("Using WiFi channel {}", settings.channel);
 	}
 	let (manager, sender, mut receiver) = esp_now.split();
 	spawner.spawn(radio::sender(sender).expect("spawning the radio task"));
-
-	if let Some(settings) = uplink {
+	spawner.spawn(uplink::wifi(controller, bridge).expect("spawning the WiFi task"));
+	if bridge {
+		let peer = settings.peer.parse().expect("checked by can_bridge");
 		let (stack, runner) = embassy_net::new(
 			esp_radio::wifi::Interface::station(),
 			embassy_net::Config::dhcpv4(Default::default()),
@@ -95,23 +110,53 @@ async fn main(spawner: Spawner) -> ! {
 			},
 			u64::from(rng.random()) << 32 | u64::from(rng.random()),
 		);
-		spawner.spawn(uplink::wifi(controller).expect("spawning the WiFi task"));
 		spawner.spawn(uplink::network(runner).expect("spawning the network task"));
-		spawner.spawn(uplink::tcp(stack, settings.peer).expect("spawning the TCP task"));
-		info!(
-			"Peering with {} over WiFi network {}",
-			settings.peer, settings.ssid
-		);
-	} else {
-		// ESP-NOW keeps the radio running on its own.
-		drop(controller);
+		spawner.spawn(uplink::tcp(stack, peer).expect("spawning the TCP task"));
+		info!("Peering with {peer} over WiFi network {}", settings.ssid);
 	}
 
-	let mut node = Node::new(node_config(&store), EspPlatform::new(rng, unix_base))
-		.expect("starting the Yggdrasil node");
+	let mut node = Node::new(
+		node_config(&store, &settings),
+		EspPlatform::new(rng, unix_base),
+	)
+	.expect("starting the Yggdrasil node");
 	info!("Public key: {}", Hex(&node.public_key().0));
 	info!("Address: {}", Ipv6Addr::from(node.address().0));
 	info!("Subnet: {}/64", Ipv6Addr::from(subnet_prefix(&node)));
+	let mut overlay = Overlay::new(
+		&node,
+		u64::from(rng.random()) << 32 | u64::from(rng.random()),
+	);
+
+	#[cfg(feature = "cardputer")]
+	let (model, mut ui) = {
+		let pins = cardputer::Pins {
+			spi: peripherals.SPI2,
+			sck: peripherals.GPIO36,
+			mosi: peripherals.GPIO35,
+			cs: peripherals.GPIO37,
+			dc: peripherals.GPIO34,
+			reset: peripherals.GPIO33,
+			backlight: peripherals.GPIO38,
+			i2c: peripherals.I2C0,
+			gpio8: peripherals.GPIO8,
+			gpio9: peripherals.GPIO9,
+			gpio11: peripherals.GPIO11,
+			gpio13: peripherals.GPIO13,
+			gpio15: peripherals.GPIO15,
+			gpio3: peripherals.GPIO3,
+			gpio4: peripherals.GPIO4,
+			gpio5: peripherals.GPIO5,
+			gpio6: peripherals.GPIO6,
+			gpio7: peripherals.GPIO7,
+		};
+		let (model, screen) = cardputer::start(&spawner, pins);
+		(model, ui::Ui::new(screen, settings.clone(), &node))
+	};
+	#[cfg(feature = "cardputer")]
+	let model_name = model.name();
+	#[cfg(not(feature = "cardputer"))]
+	let model_name = CHIP;
 
 	let mut frame = alloc::vec![0u8; FRAME_LEN];
 	let mut stream: Option<StreamId> = None;
@@ -137,11 +182,19 @@ async fn main(spawner: Spawner) -> ! {
 		}
 		let backlogged = flush_stream(&mut node, &mut stream) || radio::OUTBOX.is_full();
 
-		let mut wake = node
-			.poll_timeout()
-			.map(to_embassy)
-			.unwrap_or_else(|| Instant::now() + Duration::from_secs(1))
-			.min(next_save);
+		let mut wake = [
+			node.poll_timeout().map(to_embassy),
+			overlay.poll_at(node.now()).map(to_embassy),
+		]
+		.into_iter()
+		.flatten()
+		.min()
+		.unwrap_or_else(|| Instant::now() + Duration::from_secs(1))
+		.min(next_save);
+		#[cfg(feature = "cardputer")]
+		{
+			wake = wake.min(ui.wake_at());
+		}
 		if backlogged {
 			// Try again soon, once the radio or TCP task has caught up.
 			wake = wake.min(Instant::now() + Duration::from_millis(5));
@@ -151,7 +204,7 @@ async fn main(spawner: Spawner) -> ! {
 			receiver.receive_async(),
 			Timer::at(wake),
 			TO_NODE.receive(),
-			radio::LOST.receive(),
+			select(radio::LOST.receive(), next_ui_input()),
 		)
 		.await;
 		let woke = Instant::now();
@@ -161,7 +214,19 @@ async fn main(spawner: Spawner) -> ! {
 			}
 			Either4::Second(()) => {}
 			Either4::Third(message) => handle_uplink(&mut node, &mut stream, message),
-			Either4::Fourth(lost) => node.frame_lost(lost.mac, &lost.frame),
+			Either4::Fourth(Either::First(lost)) => node.frame_lost(lost.mac, &lost.frame),
+			#[cfg(feature = "cardputer")]
+			Either4::Fourth(Either::Second(input)) => {
+				if let ui::Input::Networks(_) = &input
+					&& !bridge
+				{
+					// Scanning hops channels, so return to the mesh's.
+					let _ = manager.set_channel(settings.channel);
+				}
+				ui.handle_input(input);
+			}
+			#[cfg(not(feature = "cardputer"))]
+			Either4::Fourth(Either::Second(never)) => match never {},
 		}
 		// Whatever woke the loop, run expired timers, or a steady stream of
 		// frames would starve them.
@@ -171,6 +236,37 @@ async fn main(spawner: Spawner) -> ! {
 		{
 			node.handle_timeout();
 		}
+		let board = BoardInfo {
+			name: settings.name.clone(),
+			model: model_name.into(),
+			uptime: core::time::Duration::from_micros(Instant::now().as_micros()),
+			free_heap: Some(esp_alloc::HEAP.free()),
+		};
+		overlay.poll(&mut node, &board);
+
+		#[cfg(feature = "cardputer")]
+		{
+			while let Some(event) = overlay.poll_event() {
+				ui.handle_event(event);
+			}
+			while let Some((key, info)) = node.poll_nodeinfo() {
+				ui.handle_nodeinfo(key, info);
+			}
+			let uplink = uplink_state(bridge, &node, stream);
+			for command in ui.update(&node, &board, uplink) {
+				carry_out(command, &mut node, &mut overlay, &mut store);
+			}
+		}
+		#[cfg(not(feature = "cardputer"))]
+		while let Some(event) = overlay.poll_event() {
+			if let esp_ygg_app::Event::Datagram { from, data } = event {
+				info!(
+					"Console message from {from}: {}",
+					alloc::string::String::from_utf8_lossy(&data).trim_end()
+				);
+			}
+		}
+
 		let busy = (waited - started) + (Instant::now() - woke);
 		if busy > STALL_WARNING {
 			warn!("Main loop was busy for {} ms", busy.as_millis());
@@ -182,12 +278,79 @@ async fn main(spawner: Spawner) -> ! {
 	}
 }
 
-fn node_config(store: &Store) -> Config {
+#[cfg(feature = "cardputer")]
+async fn next_ui_input() -> ui::Input {
+	ui::next_input().await
+}
+
+/// Without a UI there is no input, so this never finishes.
+#[cfg(not(feature = "cardputer"))]
+async fn next_ui_input() -> core::convert::Infallible {
+	core::future::pending().await
+}
+
+#[cfg(feature = "cardputer")]
+fn uplink_state(bridge: bool, node: &Node<EspPlatform>, stream: Option<StreamId>) -> Uplink {
+	if !bridge {
+		Uplink::Off
+	} else if !uplink::WIFI_UP.load(core::sync::atomic::Ordering::Relaxed) {
+		Uplink::JoiningWifi
+	} else if stream.is_some_and(|id| node.stream_key(id).is_some()) {
+		Uplink::Connected
+	} else {
+		Uplink::Connecting
+	}
+}
+
+#[cfg(feature = "cardputer")]
+fn carry_out(
+	command: Command,
+	node: &mut Node<EspPlatform>,
+	overlay: &mut Overlay,
+	store: &mut Store,
+) {
+	match command {
+		Command::Ping(target) => {
+			let _ = overlay.ping(target, node.now());
+		}
+		Command::SendDatagram(to, data) => {
+			if let Err(error) = overlay.send_datagram(to, &data) {
+				warn!("Sending to {to} failed: {error:?}");
+			}
+		}
+		Command::RequestNodeInfo(key) => node.request_nodeinfo(key),
+		Command::ScanWifi => {
+			let _ = uplink::SCANS.try_send(());
+		}
+		Command::Save(settings) => {
+			store.save_settings(&settings);
+			info!("Settings saved, restarting");
+			esp_hal::system::software_reset();
+		}
+	}
+}
+
+/// Settings from environment variables at build time, used until the user
+/// saves some on the device.
+fn build_time_settings() -> Settings {
+	let mut settings = Settings::new();
+	settings.name = option_env!("ESP_YGG_NAME").unwrap_or("").into();
+	settings.ssid = option_env!("ESP_YGG_WIFI_SSID").unwrap_or("").into();
+	settings.password = option_env!("ESP_YGG_WIFI_PASSWORD").unwrap_or("").into();
+	settings.peer = option_env!("ESP_YGG_PEER").unwrap_or("").into();
+	settings.bridge = settings.can_bridge();
+	settings.channel = option_env!("ESP_YGG_CHANNEL")
+		.and_then(|channel| channel.parse().ok())
+		.unwrap_or(DEFAULT_CHANNEL);
+	settings
+}
+
+fn node_config(store: &Store, settings: &Settings) -> Config {
 	let mut config = Config::new(PrivateKey::from_seed(store.seed()));
 	config.password = option_env!("ESP_YGG_PASSWORD").unwrap_or("").into();
 	let mut given = serde_json::Map::new();
-	if let Some(name) = option_env!("ESP_YGG_NAME") {
-		given.insert("name".into(), name.into());
+	if !settings.name.is_empty() {
+		given.insert("name".into(), settings.name.clone().into());
 	}
 	let build = BuildInfo {
 		name: "esp-ygg",
