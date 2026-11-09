@@ -41,3 +41,23 @@ fn reroutes_when_a_neighbor_moves_away() {
 	radio.disconnect(0, 1);
 	assert!(radio.ping(0, 2, Duration::from_secs(60)));
 }
+
+#[test]
+fn asks_a_distant_node_for_its_nodeinfo() {
+	let mut radio = Radio::line(3);
+	assert!(radio.run_until(Duration::from_secs(20), |radio| radio.all_peered()));
+	let target = radio.nodes[2].public_key();
+	radio.nodes[0].request_nodeinfo(target);
+	let mut answer = None;
+	assert!(radio.run_until(Duration::from_secs(60), |radio| {
+		while let Some((key, info)) = radio.nodes[0].poll_nodeinfo() {
+			assert_eq!(key, target);
+			match info {
+				Some(info) => answer = Some(info),
+				None => radio.nodes[0].request_nodeinfo(target),
+			}
+		}
+		answer.is_some()
+	}));
+	assert_eq!(answer.unwrap(), b"{}");
+}

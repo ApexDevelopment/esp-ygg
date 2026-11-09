@@ -127,6 +127,8 @@ pub struct Node<P> {
 	cooldown: BTreeMap<Mac, Instant>,
 	streams: BTreeMap<StreamId, StreamEntry>,
 	next_stream: u32,
+	pending: requests::Pending<()>,
+	answers: VecDeque<(PublicKey, Option<Vec<u8>>)>,
 }
 
 impl<P: Platform + Clone + Send + 'static> Node<P> {
@@ -163,6 +165,8 @@ impl<P: Platform + Clone + Send + 'static> Node<P> {
 			cooldown: BTreeMap::new(),
 			streams: BTreeMap::new(),
 			next_stream: 0,
+			pending: requests::Pending::default(),
+			answers: VecDeque::new(),
 		})
 	}
 }
@@ -276,12 +280,16 @@ impl<P: Platform> Node<P> {
 			.values()
 			.filter(|entry| entry.stream.is_handshaking())
 			.map(|entry| entry.opened + HANDSHAKE_TIMEOUT);
-		[self.conn.poll_timeout(), Some(self.beacon_at)]
-			.into_iter()
-			.flatten()
-			.chain(neighbors)
-			.chain(streams)
-			.min()
+		[
+			self.conn.poll_timeout(),
+			Some(self.beacon_at),
+			self.pending.next_deadline(),
+		]
+		.into_iter()
+		.flatten()
+		.chain(neighbors)
+		.chain(streams)
+		.min()
 	}
 
 	/// Runs expired timers. Call [`Node::poll_transmit`] afterwards.
@@ -319,6 +327,9 @@ impl<P: Platform> Node<P> {
 			}
 		}
 		self.cooldown.retain(|_, until| *until > now);
+		for (_, key, ()) in self.pending.expire(now) {
+			self.answers.push_back((key, None));
+		}
 		self.process();
 	}
 
@@ -388,6 +399,23 @@ impl<P: Platform> Node<P> {
 		let result = self.route_ipv6(packet);
 		self.process();
 		result
+	}
+
+	/// Asks another node for its nodeinfo. The answer, or `None` if none came
+	/// within a few seconds, arrives through [`Node::poll_nodeinfo`]. The
+	/// first request to a node often goes unanswered while the session to it
+	/// is set up, so ask again on a timeout.
+	pub fn request_nodeinfo(&mut self, key: PublicKey) {
+		let request = requests::Request::NodeInfo;
+		self.pending.insert(request, key, self.now(), ());
+		let _ = self.conn.write_to(&request.packet(), &key);
+		self.process();
+	}
+
+	/// Takes the next answer to [`Node::request_nodeinfo`]: the node's
+	/// nodeinfo JSON, or `None` if it did not answer in time.
+	pub fn poll_nodeinfo(&mut self) -> Option<(PublicKey, Option<Vec<u8>>)> {
+		self.answers.pop_front()
 	}
 
 	/// Takes the next IPv6 packet addressed to this node that the node did
@@ -548,10 +576,16 @@ impl<P: Platform> Node<P> {
 				Some((&TYPE_SESSION_TRAFFIC, ip)) => self.handle_ipv6(from, ip, now),
 				Some((&TYPE_SESSION_PROTO, body)) => {
 					let view = View(&self.conn);
-					if let requests::Incoming::Reply(reply) =
-						requests::handle(body, &self.nodeinfo, &view)
-					{
-						let _ = self.conn.write_to(&reply, &from);
+					match requests::handle(body, &self.nodeinfo, &view) {
+						requests::Incoming::Reply(reply) => {
+							let _ = self.conn.write_to(&reply, &from);
+						}
+						requests::Incoming::Response { request, data } => {
+							if self.pending.complete(request, &from).is_some() {
+								self.answers.push_back((from, Some(data)));
+							}
+						}
+						requests::Incoming::Ignored => {}
 					}
 				}
 				_ => {}
