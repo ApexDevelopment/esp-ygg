@@ -15,10 +15,11 @@ smoltcp = { version = "0.13.1", default-features = false, features = ["alloc", "
 yggdrasil-espnow = { path = "../node" }
 
 [features]
-default = ["ui", "http", "gopher", "console", "ntp", "irc"]
+default = ["ui", "http", "console", "ntp"]
 # The on-device interface. Boards without a screen can leave it out.
 ui = ["dep:ratatui"]
-# Services, each of which costs memory while the board runs
+# Services, each of which costs memory while the board runs. Gopher and
+# IRC are larger, so they are off by default.
 http = []
 gopher = []
 console = []
@@ -26,6 +27,8 @@ ntp = []
 irc = []
 
 [dev-dependencies]
+# Turns on every service for this crate's own tests
+esp-ygg-app = { path = ".", features = ["gopher", "irc"] }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 smoltcp = { version = "0.13.1", default-features = false, features = ["alloc", "medium-ip", "proto-ipv6", "socket-tcp"] }
 yggdrasil-espnow = { path = "../node", features = ["sim"] }

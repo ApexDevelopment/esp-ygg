@@ -555,6 +555,7 @@ dependencies = [
 name = "esp-ygg-app"
 version = "0.1.0"
 dependencies = [
+ "esp-ygg-app",
  "log",
  "ratatui",
  "serde_json",

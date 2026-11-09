@@ -22,9 +22,9 @@ rustflags = ["-C", "force-frame-pointers"]
 [alias]
 s3 = "run --release"
 cardputer = "run --release --features cardputer"
-c3 = "run --release --no-default-features --features esp32c3,services --target riscv32imc-unknown-none-elf"
-c6 = "run --release --no-default-features --features esp32c6,services --target riscv32imac-unknown-none-elf"
-esp32 = "run --release --no-default-features --features esp32,services --target xtensa-esp32-none-elf"
+c3 = "run --release --no-default-features --features esp32c3,standard --target riscv32imc-unknown-none-elf"
+c6 = "run --release --no-default-features --features esp32c6,standard --target riscv32imac-unknown-none-elf"
+esp32 = "run --release --no-default-features --features esp32,standard --target xtensa-esp32-none-elf"
 
 [env]
 ESP_LOG = "info"

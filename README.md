@@ -46,25 +46,31 @@ On boards that use the ESP32-S3's built-in USB port, the reset after flashing so
 
 On first boot, the board creates a private key and saves it in the flash `nvs` partition. It keeps that key across reflashing. To give a board a new identity, erase its flash with `espflash erase-flash`.
 
-## Leaving out services
+## Choosing services
 
-Each service costs memory while the board runs, so the firmware can be built without some of them. They are Cargo features, all on by default:
+Each service costs memory while the board runs, so the firmware can be built with or without each one. They are Cargo features:
 
-| Feature | Service |
-|---|---|
-| `http` | HTTP status page |
-| `gopher` | Gopher menu, and the Gopher screen |
-| `console` | UDP console, and the Console screen |
-| `ntp` | Time over NTP, and the clock |
-| `irc` | The IRC screen |
+| Feature | Service | Default |
+|---|---|---|
+| `http` | HTTP status page | on |
+| `console` | UDP console, and the Console screen | on |
+| `ntp` | Time over NTP, and the clock | on |
+| `gopher` | Gopher menu, and the Gopher screen | off |
+| `irc` | The IRC screen | off |
 
-To pick some, turn off the defaults and list what you want, along with the board. For example, a Cardputer with only the console:
+To add the larger ones, list them along with the board:
+
+```sh
+cargo run --release --features cardputer,gopher,irc
+```
+
+To leave out default ones too, turn off the defaults and list everything you want. For example, a Cardputer with only the console:
 
 ```sh
 cargo run --release --no-default-features --features cardputer,console
 ```
 
-On a Cardputer ADV acting as a gateway, leaving out Gopher, the console and NTP frees about 23 KB of the roughly 70 KB that is otherwise left.
+On a Cardputer ADV acting as a gateway with every service but IRC, leaving out Gopher, the console and NTP freed about 23 KB of the roughly 70 KB that was otherwise left.
 
 ## On-device interface
 

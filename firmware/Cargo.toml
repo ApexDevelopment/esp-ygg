@@ -34,10 +34,10 @@ static_cell = "2.1.1"
 yggdrasil-espnow = { path = "../node" }
 
 [features]
-default = ["esp32s3", "services"]
-# Every service. Leave some out to save memory, for example with
-# --no-default-features --features cardputer,console
-services = ["http", "gopher", "console", "ntp", "irc"]
+default = ["esp32s3", "standard"]
+# The small services every board runs unless built without them. Gopher and
+# IRC are larger; add them with, for example, --features cardputer,gopher,irc
+standard = ["http", "console", "ntp"]
 http = ["esp-ygg-app/http"]
 gopher = ["esp-ygg-app/gopher"]
 console = ["esp-ygg-app/console"]
