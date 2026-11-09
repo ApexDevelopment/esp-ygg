@@ -82,15 +82,15 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 
 fn hints(app: &App) -> &'static str {
 	match app.screen {
-		Screen::Home => "↑↓ select  ⏎ open",
-		Screen::Network => "↑↓ select  ⏎ open  esc back",
+		Screen::Home => "↑↓ select  enter open",
+		Screen::Network => "↑↓ select  enter open  esc back",
 		Screen::Node(_) => "p ping  m message  esc back",
-		Screen::Ping if app.pinging => "⏎ stop  esc back",
-		Screen::Ping => "type an address  ⏎ start",
-		Screen::Console => "tab switch field  ⏎ send",
-		Screen::Settings if app.editing.is_some() => "⏎ done  esc cancel",
-		Screen::Settings => "↑↓ select  ⏎ change",
-		Screen::Networks => "⏎ choose  r rescan  esc back",
+		Screen::Ping if app.pinging => "enter stop  esc back",
+		Screen::Ping => "type an address  enter start",
+		Screen::Console => "tab switch field  enter send",
+		Screen::Settings if app.editing.is_some() => "enter done  esc cancel",
+		Screen::Settings => "↑↓ select  enter change",
+		Screen::Networks => "enter choose  r rescan  esc back",
 	}
 }
 
