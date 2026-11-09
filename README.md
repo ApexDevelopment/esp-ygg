@@ -6,7 +6,7 @@ Each board is a full Yggdrasil node with its own key and address. Boards in radi
 
 A board answers pings to its address and responds to `yggdrasilctl getNodeInfo` and the `debug_remoteGet*` requests. It does not run an IP stack beyond that.
 
-This has been tested in simulation only, not yet on hardware.
+It has been tested on two ESP32-S3 boards (M5Stack Cardputers), one acting as a gateway to a yggdrasil-rs node over WiFi. The other chips build but have not been tried.
 
 ## Layout
 
@@ -34,6 +34,8 @@ cargo esp32  # original ESP32
 ```
 
 Each builds a release image, flashes it with espflash and opens the serial monitor. The log shows the board's public key and address on startup.
+
+On boards that use the ESP32-S3's built-in USB port, the reset after flashing sometimes leaves the chip waiting for another download, and the monitor shows `waiting for download`. Press the board's reset button to start the firmware. If the board has a button on GPIO0, such as the Cardputer's G0, do not hold it while resetting.
 
 On first boot, the board creates a private key and saves it in the flash `nvs` partition. It keeps that key across reflashing. To give a board a new identity, erase its flash with `espflash erase-flash`.
 
@@ -69,7 +71,9 @@ ping <board address>
 yggdrasilctl getNodeInfo key=<board public key>
 ```
 
-The first request after the boards come up can take several seconds while routes form.
+The first request after the boards come up can take several seconds while routes form. After that, a ping across a gateway and one ESP-NOW hop typically takes 30 to 70 ms.
+
+Radio trouble shows up in the serial log. Every 10 seconds in which some ESP-NOW sends failed, the board logs how many were sent, refused by the radio, not acknowledged, or not reported on in time, along with the lowest free heap. A few failures are normal and are resent.
 
 ## Limits
 
