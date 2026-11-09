@@ -219,6 +219,7 @@ async fn main(spawner: Spawner) -> ! {
 		let woke = Instant::now();
 		match event {
 			Either4::First(received) => {
+				radio::record_signal(received.info.src_address, received.info.rx_control.rssi);
 				node.handle_frame(received.info.src_address, received.data())
 			}
 			Either4::Second(()) => {}
@@ -275,7 +276,16 @@ async fn main(spawner: Spawner) -> ! {
 			}
 			if Instant::now() >= next_status {
 				let uplink = uplink_state(bridge, &node, stream);
-				let status = Status::from_node(&node, &board, uplink);
+				let mut status = Status::from_node(&node, &board, uplink);
+				for neighbor in &mut status.neighbors {
+					(neighbor.signal, neighbor.loss) = radio::quality(&neighbor.mac);
+				}
+				let macs: Vec<Mac> = status
+					.neighbors
+					.iter()
+					.map(|neighbor| neighbor.mac)
+					.collect();
+				radio::forget_others(&macs);
 				let _ = ui::TO_UI.try_send(ui::ToUi::Status(status));
 				next_status = Instant::now() + STATUS_INTERVAL;
 			}

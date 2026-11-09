@@ -29,6 +29,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 		Screen::Home => draw_home(frame, body, app),
 		Screen::Network => draw_network(frame, body, app),
 		Screen::Node(key) => draw_node(frame, body, app, key),
+		Screen::Radio => draw_radio(frame, body, app),
 		Screen::Ping => draw_ping(frame, body, app),
 		Screen::Console => draw_console(frame, body, app),
 		Screen::Settings => draw_settings(frame, body, app),
@@ -45,6 +46,7 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 	let screen = match app.screen {
 		Screen::Home => "",
 		Screen::Network | Screen::Node(_) => "Network",
+		Screen::Radio => "Radio",
 		Screen::Ping => "Ping",
 		Screen::Console => "Console",
 		Screen::Settings => "Settings",
@@ -85,6 +87,7 @@ fn hints(app: &App) -> &'static str {
 		Screen::Home => "↑↓ select  enter open",
 		Screen::Network => "↑↓ select  enter open  esc back",
 		Screen::Node(_) => "p ping  m message  esc back",
+		Screen::Radio => "esc back",
 		Screen::Ping if app.pinging => "enter stop  esc back",
 		Screen::Ping => "type an address  enter start",
 		Screen::Console => "tab switch field  enter send",
@@ -102,7 +105,11 @@ fn draw_home(frame: &mut Frame, area: Rect, app: &App) {
 			lines.push(Line::styled(
 				format!(
 					" {} neighbors  {} peers  {} known",
-					status.neighbors,
+					status
+						.neighbors
+						.iter()
+						.filter(|neighbor| neighbor.key.is_some())
+						.count(),
 					status.peers.len(),
 					status.known.len()
 				),
@@ -192,6 +199,76 @@ fn draw_node(frame: &mut Frame, area: Rect, app: &App, key: yggdrasil_espnow::Pu
 		_ => lines.push(Line::styled(" Asking for nodeinfo…", DIM)),
 	}
 	frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn draw_radio(frame: &mut Frame, area: Rect, app: &App) {
+	let neighbors = app
+		.status
+		.as_ref()
+		.map(|status| status.neighbors.as_slice())
+		.unwrap_or_default();
+	if neighbors.is_empty() {
+		frame.render_widget(
+			Paragraph::new(Line::styled(" No ESP-NOW neighbors", DIM)),
+			area,
+		);
+		return;
+	}
+	let lines: Vec<Line> = neighbors
+		.iter()
+		.map(|neighbor| {
+			let label = match neighbor.key {
+				Some(key) => app
+					.name_of(&key)
+					.map(String::from)
+					.unwrap_or_else(|| Ipv6Addr::from(addr_for_key(&key).0).to_string()),
+				None => mac_text(&neighbor.mac),
+			};
+			let label = format!(" {:<17} ", truncate(&label, 17));
+			let mut spans = Vec::from([Span::raw(label)]);
+			match neighbor.signal {
+				Some(signal) => {
+					let bars = signal_bars(signal);
+					spans.push(Span::styled("▮".repeat(bars), Style::new().fg(ACCENT)));
+					spans.push(Span::styled("▮".repeat(4 - bars), DIM));
+					spans.push(Span::raw(format!(" {signal:>4} dBm")));
+				}
+				None => spans.push(Span::styled("    no signal", DIM)),
+			}
+			if neighbor.key.is_none() {
+				spans.push(Span::styled(" linking", DIM));
+			} else if let Some(loss) = neighbor.loss {
+				spans.push(Span::raw(format!(" {loss:>3}%")));
+			}
+			Line::from(spans)
+		})
+		.collect();
+	frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// Four bars for a strong signal, none for one about to drop out.
+fn signal_bars(dbm: i8) -> usize {
+	match dbm {
+		-55.. => 4,
+		-65.. => 3,
+		-75.. => 2,
+		-85.. => 1,
+		_ => 0,
+	}
+}
+
+fn mac_text(mac: &[u8; 6]) -> String {
+	let [a, b, c, d, e, f] = mac;
+	format!("{a:02x}:{b:02x}:{c:02x}:{d:02x}:{e:02x}:{f:02x}")
+}
+
+fn truncate(text: &str, width: usize) -> String {
+	if text.chars().count() <= width {
+		return text.into();
+	}
+	let mut short: String = text.chars().take(width - 1).collect();
+	short.push('…');
+	short
 }
 
 fn draw_ping(frame: &mut Frame, area: Rect, app: &App) {

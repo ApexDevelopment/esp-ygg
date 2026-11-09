@@ -15,7 +15,7 @@ use core::net::{Ipv6Addr, SocketAddrV6};
 use core::time::Duration;
 
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
-use yggdrasil_espnow::{Instant, Node, Platform, PublicKey};
+use yggdrasil_espnow::{Instant, Mac, Node, Platform, PublicKey};
 
 use crate::BoardInfo;
 use crate::overlay::{CONSOLE_PORT, Event};
@@ -71,8 +71,8 @@ pub enum Uplink {
 pub struct Status {
 	pub address: Ipv6Addr,
 	pub public_key: PublicKey,
-	/// ESP-NOW neighbors that finished the handshake.
-	pub neighbors: usize,
+	/// ESP-NOW neighbors, including ones still connecting.
+	pub neighbors: Vec<Neighbor>,
 	/// Every direct peer, over ESP-NOW or the bridge.
 	pub peers: Vec<PublicKey>,
 	/// Every node in this node's view of the network.
@@ -88,7 +88,15 @@ impl Status {
 		Status {
 			address: Ipv6Addr::from(node.address().0),
 			public_key: own,
-			neighbors: node.neighbors().filter(|(_, key)| key.is_some()).count(),
+			neighbors: node
+				.neighbors()
+				.map(|(mac, key)| Neighbor {
+					mac,
+					key,
+					signal: None,
+					loss: None,
+				})
+				.collect(),
 			peers: debug.get_peers().into_iter().map(|peer| peer.key).collect(),
 			known: debug
 				.get_tree()
@@ -100,6 +108,18 @@ impl Status {
 			board: board.clone(),
 		}
 	}
+}
+
+/// An ESP-NOW neighbor and how well the radio reaches it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Neighbor {
+	pub mac: Mac,
+	/// Known once the Yggdrasil handshake is done.
+	pub key: Option<PublicKey>,
+	/// Recent average signal strength of its frames, in dBm.
+	pub signal: Option<i8>,
+	/// Recent share of frames sent to it that went unacknowledged, in percent.
+	pub loss: Option<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -128,6 +148,7 @@ enum Screen {
 	Home,
 	Network,
 	Node(PublicKey),
+	Radio,
 	Ping,
 	Console,
 	Settings,
@@ -163,8 +184,9 @@ enum ConsoleFocus {
 	Message,
 }
 
-const MENU: [(&str, Screen); 4] = [
+const MENU: [(&str, Screen); 5] = [
 	("Network", Screen::Network),
+	("Radio", Screen::Radio),
 	("Ping", Screen::Ping),
 	("Console", Screen::Console),
 	("Settings", Screen::Settings),
@@ -265,7 +287,10 @@ impl App {
 			self.last_ping = Some(now);
 			self.ping_sent += 1;
 		}
-		if matches!(self.screen, Screen::Network | Screen::Node(_)) {
+		if matches!(
+			self.screen,
+			Screen::Network | Screen::Node(_) | Screen::Radio
+		) {
 			self.start_lookups();
 		}
 	}
@@ -327,6 +352,11 @@ impl App {
 			Screen::Home => self.home_key(key),
 			Screen::Network => self.network_key(key),
 			Screen::Node(node) => self.node_key(node, key),
+			Screen::Radio => {
+				if matches!(navigation(key), Some(Key::Escape | Key::Left)) {
+					self.screen = Screen::Home;
+				}
+			}
 			Screen::Ping => self.ping_key(key),
 			Screen::Console => self.console_key(key),
 			Screen::Settings => self.settings_key(key),
@@ -595,6 +625,12 @@ impl App {
 			.count();
 		let wanted: Vec<PublicKey> = match self.screen {
 			Screen::Node(node) => Vec::from([node]),
+			Screen::Radio => self
+				.status
+				.iter()
+				.flat_map(|status| &status.neighbors)
+				.filter_map(|neighbor| neighbor.key)
+				.collect(),
 			_ => self.nodes(),
 		};
 		let new: Vec<PublicKey> = wanted

@@ -29,7 +29,16 @@ fn status(peers: &[PublicKey], known: &[PublicKey]) -> Status {
 	Status {
 		address: address(&own),
 		public_key: own,
-		neighbors: peers.len(),
+		neighbors: peers
+			.iter()
+			.enumerate()
+			.map(|(index, key)| Neighbor {
+				mac: [2, 0, 0, 0, 0, index as u8],
+				key: Some(*key),
+				signal: None,
+				loss: None,
+			})
+			.collect(),
 		peers: peers.to_vec(),
 		known: known.to_vec(),
 		uplink: Uplink::Off,
@@ -120,7 +129,7 @@ fn names_nodes_from_their_nodeinfo_and_retries_lookups() {
 fn sends_console_messages_to_the_console_port() {
 	let mut app = App::new(Settings::new(), at(0));
 	app.set_status(status(&[], &[]));
-	press(&mut app, &[Key::Down, Key::Down, Key::Enter]);
+	press(&mut app, &[Key::Down, Key::Down, Key::Down, Key::Enter]);
 	type_text(&mut app, "200::1");
 	press(&mut app, &[Key::Enter]);
 	type_text(&mut app, "hello");
@@ -149,7 +158,10 @@ fn counts_unread_messages_on_the_home_screen() {
 		data: b"ping?".to_vec(),
 	});
 	assert!(screen(&app).join("\n").contains("Console (1 new)"));
-	press(&mut app, &[Key::Down, Key::Down, Key::Enter, Key::Escape]);
+	press(
+		&mut app,
+		&[Key::Down, Key::Down, Key::Down, Key::Enter, Key::Escape],
+	);
 	assert!(!screen(&app).join("\n").contains("new"));
 }
 
@@ -159,7 +171,14 @@ fn edits_and_saves_bridge_settings() {
 	app.set_status(status(&[], &[]));
 	press(
 		&mut app,
-		&[Key::Up, Key::Down, Key::Down, Key::Down, Key::Enter],
+		&[
+			Key::Up,
+			Key::Down,
+			Key::Down,
+			Key::Down,
+			Key::Down,
+			Key::Enter,
+		],
 	);
 	// Name
 	press(&mut app, &[Key::Enter]);
@@ -228,4 +247,32 @@ fn draws_every_screen_within_the_display() {
 		let shown = screen(&app);
 		assert_eq!(shown.len(), 13);
 	}
+}
+
+#[test]
+fn shows_signal_and_loss_for_each_neighbor() {
+	let mut app = App::new(Settings::new(), at(0));
+	let (named, unnamed) = (key(2), key(3));
+	let mut status = status(&[named, unnamed], &[named, unnamed]);
+	status.neighbors[0].signal = Some(-48);
+	status.neighbors[0].loss = Some(3);
+	status.neighbors[1].signal = Some(-81);
+	status.neighbors.push(Neighbor {
+		mac: [0x28, 0x84, 0x85, 0x76, 0x2d, 0x64],
+		key: None,
+		signal: Some(-70),
+		loss: None,
+	});
+	app.set_status(status);
+	press(&mut app, &[Key::Down, Key::Enter]);
+	app.tick(at(1));
+	app.handle_nodeinfo(named, Some(br#"{"name":"kitchen"}"#.to_vec()));
+	let shown = screen(&app).join("\n");
+	assert!(
+		shown.contains("kitchen           ▮▮▮▮  -48 dBm   3%"),
+		"{shown}"
+	);
+	assert!(shown.contains("▮▮▮▮  -81 dBm"), "{shown}");
+	assert!(shown.contains("28:84:85:76:2d:64"), "{shown}");
+	assert!(shown.contains("linking"), "{shown}");
 }
