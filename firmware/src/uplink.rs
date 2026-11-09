@@ -101,6 +101,9 @@ pub async fn tcp(stack: Stack<'static>, peer: SocketAddrV4) {
 		let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
 		socket.set_timeout(Some(Duration::from_secs(30)));
 		socket.set_keep_alive(Some(Duration::from_secs(10)));
+		// Small writes such as keepalives must not wait behind unacknowledged
+		// data, or a lost ACK can hold them past the peer's 3 s timeout.
+		socket.set_nagle_enabled(false);
 		if let Err(error) = socket.connect(peer).await {
 			warn!("Connecting to {peer} failed: {error:?}");
 			Timer::after(RETRY_DELAY).await;
