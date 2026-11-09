@@ -142,16 +142,18 @@ enum Field {
 	Password,
 	Peer,
 	Channel,
+	StatusPage,
 	Save,
 }
 
-const FIELDS: [Field; 7] = [
+const FIELDS: [Field; 8] = [
 	Field::Name,
 	Field::Bridge,
 	Field::Network,
 	Field::Password,
 	Field::Peer,
 	Field::Channel,
+	Field::StatusPage,
 	Field::Save,
 ];
 
@@ -498,6 +500,10 @@ impl App {
 				self.draft.bridge = !self.draft.bridge;
 				return;
 			}
+			Field::StatusPage => {
+				self.draft.status_page = !self.draft.status_page;
+				return;
+			}
 			Field::Network => {
 				self.networks = None;
 				self.commands.push_back(Command::ScanWifi);
@@ -533,7 +539,7 @@ impl App {
 				Ok(channel @ 1..=13) => self.draft.channel = channel,
 				_ => self.notice = Some("Channels go from 1 to 13".into()),
 			},
-			Field::Bridge | Field::Network | Field::Save => {}
+			Field::Bridge | Field::StatusPage | Field::Network | Field::Save => {}
 		}
 	}
 

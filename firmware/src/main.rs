@@ -132,6 +132,7 @@ async fn main(spawner: Spawner) -> ! {
 	let mut overlay = Overlay::new(
 		&node,
 		u64::from(rng.random()) << 32 | u64::from(rng.random()),
+		settings.status_page,
 	);
 
 	#[cfg(feature = "cardputer")]
@@ -372,6 +373,7 @@ fn build_time_settings() -> Settings {
 	settings.password = option_env!("ESP_YGG_WIFI_PASSWORD").unwrap_or("").into();
 	settings.peer = option_env!("ESP_YGG_PEER").unwrap_or("").into();
 	settings.bridge = settings.can_bridge();
+	settings.status_page = option_env!("ESP_YGG_STATUS_PAGE") != Some("off");
 	settings.channel = option_env!("ESP_YGG_CHANNEL")
 		.and_then(|channel| channel.parse().ok())
 		.unwrap_or(DEFAULT_CHANNEL);

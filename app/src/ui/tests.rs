@@ -186,13 +186,18 @@ fn edits_and_saves_bridge_settings() {
 	type_text(&mut app, "secret");
 	press(&mut app, &[Key::Enter]);
 	assert!(screen(&app).join("\n").contains("••••••"));
-	press(&mut app, &[Key::Down, Key::Down, Key::Down, Key::Enter]);
+	press(
+		&mut app,
+		&[Key::Down, Key::Down, Key::Down, Key::Down, Key::Enter],
+	);
 	assert!(commands(&mut app).is_empty());
 	assert!(screen(&app).join("\n").contains("needs a network and peer"));
-	// Peer, then save
-	press(&mut app, &[Key::Up, Key::Up, Key::Enter]);
+	// Peer, the status page off, then save
+	press(&mut app, &[Key::Up, Key::Up, Key::Up, Key::Enter]);
 	type_text(&mut app, "192.168.1.176:9001");
 	press(&mut app, &[Key::Enter, Key::Down, Key::Down, Key::Enter]);
+	assert!(screen(&app).join("\n").contains("Web page off"));
+	press(&mut app, &[Key::Down, Key::Enter]);
 	let expected = Settings {
 		name: "kitchen".into(),
 		bridge: true,
@@ -200,6 +205,7 @@ fn edits_and_saves_bridge_settings() {
 		password: "secret".into(),
 		peer: "192.168.1.176:9001".into(),
 		channel: 1,
+		status_page: false,
 	};
 	assert_eq!(commands(&mut app), [Command::Save(expected)]);
 }

@@ -1,8 +1,9 @@
-const SETTINGS: [&str; 6] = [
+const SETTINGS: [&str; 7] = [
 	"ESP_YGG_CHANNEL",
 	"ESP_YGG_NAME",
 	"ESP_YGG_PASSWORD",
 	"ESP_YGG_PEER",
+	"ESP_YGG_STATUS_PAGE",
 	"ESP_YGG_WIFI_SSID",
 	"ESP_YGG_WIFI_PASSWORD",
 ];

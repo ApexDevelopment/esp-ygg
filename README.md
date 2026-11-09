@@ -51,7 +51,7 @@ On a Cardputer, the home screen shows the board's address and how many nodes it 
 - Network lists every node the board knows, direct peers first, named from their nodeinfo. Open one to see its details, then press `p` to ping it or `m` to send it a console message.
 - Ping sends a ping every second to an address you type or pick, and shows each round trip.
 - Console shows text received on UDP port 4242 and sends what you type, to an address or `[address]:port`.
-- Settings changes the name, bridging, WiFi network, password, peer and channel. Saving restarts the board to apply them.
+- Settings changes the name, bridging, WiFi network, password, peer and channel, and turns the status page on or off. Saving restarts the board to apply them.
 
 The arrow keys are Fn with `;` `.` `,` and `/`, and Escape is Fn with `` ` ``. In lists, the same keys work without Fn.
 
@@ -69,6 +69,7 @@ A Cardputer stores the settings chosen in its interface in flash. Until then, an
 | `ESP_YGG_WIFI_SSID` | none | WiFi network to join for a TCP peering |
 | `ESP_YGG_WIFI_PASSWORD` | none | Its WPA2 password. Leave unset for an open network. |
 | `ESP_YGG_PEER` | none | Address of the node to peer with over TCP, as an IPv4 address and port |
+| `ESP_YGG_STATUS_PAGE` | `on` | Set to `off` to close port 80 |
 
 A board peers over TCP only when both `ESP_YGG_WIFI_SSID` and `ESP_YGG_PEER` are set. For example:
 

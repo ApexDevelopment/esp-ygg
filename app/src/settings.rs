@@ -20,12 +20,15 @@ pub struct Settings {
 	/// The WiFi channel for ESP-NOW when not bridging. When bridging, the
 	/// access point decides.
 	pub channel: u8,
+	/// Whether to serve the HTTP status page.
+	pub status_page: bool,
 }
 
 impl Settings {
 	pub fn new() -> Self {
 		Settings {
 			channel: 1,
+			status_page: true,
 			..Settings::default()
 		}
 	}
@@ -42,6 +45,7 @@ impl Settings {
 			bytes.push(text.len() as u8);
 			bytes.extend_from_slice(text);
 		}
+		bytes.push(u8::from(self.status_page));
 		bytes
 	}
 
@@ -56,13 +60,16 @@ impl Settings {
 			rest = after;
 			String::from_utf8(field.to_vec()).ok()
 		};
+		let (name, ssid, password, peer) = (text()?, text()?, text()?, text()?);
 		Some(Settings {
-			name: text()?,
-			ssid: text()?,
-			password: text()?,
-			peer: text()?,
+			name,
+			ssid,
+			password,
+			peer,
 			bridge: bridge == 1,
 			channel,
+			// Settings saved before this field existed end here.
+			status_page: rest.first().is_none_or(|&byte| byte == 1),
 		})
 	}
 }
@@ -80,8 +87,16 @@ mod tests {
 			password: "correct horse".into(),
 			peer: "192.168.1.176:9001".into(),
 			channel: 6,
+			status_page: false,
 		};
 		assert_eq!(Settings::decode(&settings.encode()), Some(settings));
+	}
+
+	#[test]
+	fn reads_settings_saved_before_the_status_page_option() {
+		let mut old = Settings::new().encode();
+		old.pop();
+		assert_eq!(Settings::decode(&old), Some(Settings::new()));
 	}
 
 	#[test]
@@ -89,7 +104,7 @@ mod tests {
 		assert_eq!(Settings::decode(&[]), None);
 		assert_eq!(Settings::decode(&[0xff; 64]), None);
 		let mut truncated = Settings::new().encode();
-		truncated.pop();
+		truncated.truncate(truncated.len() - 2);
 		assert_eq!(Settings::decode(&truncated), None);
 	}
 

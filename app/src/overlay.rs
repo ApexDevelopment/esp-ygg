@@ -74,12 +74,14 @@ pub struct Overlay {
 
 impl Overlay {
 	/// `random_seed` should differ between boots, for TCP sequence numbers.
-	pub fn new<P: Platform>(node: &Node<P>, random_seed: u64) -> Self {
+	/// Without `status_page`, port 80 is closed.
+	pub fn new<P: Platform>(node: &Node<P>, random_seed: u64, status_page: bool) -> Self {
 		let mut device = Queues::default();
 		let now = to_smoltcp(node.now());
 		let interface = interface(&node.address(), &mut device, random_seed, now);
 		let mut sockets = SocketSet::new(Vec::new());
-		let http = (0..HTTP_SOCKETS)
+		let http_sockets = if status_page { HTTP_SOCKETS } else { 0 };
+		let http = (0..http_sockets)
 			.map(|_| {
 				let socket = tcp::Socket::new(
 					tcp::SocketBuffer::new(vec![0; http::MAX_REQUEST]),

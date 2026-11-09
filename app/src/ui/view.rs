@@ -257,14 +257,12 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App) {
 		.map(|(index, field)| {
 			let (label, value) = match field {
 				Field::Name => ("Name", draft.name.clone()),
-				Field::Bridge => (
-					"Bridge",
-					String::from(if draft.bridge { "on" } else { "off" }),
-				),
+				Field::Bridge => ("Bridge", on_off(draft.bridge)),
 				Field::Network => ("WiFi", draft.ssid.clone()),
 				Field::Password => ("Password", "•".repeat(draft.password.chars().count())),
 				Field::Peer => ("Peer", draft.peer.clone()),
 				Field::Channel => ("Channel", draft.channel.to_string()),
+				Field::StatusPage => ("Web page", on_off(draft.status_page)),
 				Field::Save => ("Save and restart", String::new()),
 			};
 			let selected = index == app.settings_selected;
@@ -306,6 +304,10 @@ fn draw_networks(frame: &mut Frame, area: Rect, app: &App) {
 	let list = List::new(items).highlight_style(SELECTED);
 	let mut state = ListState::default().with_selected(Some(app.networks_selected));
 	frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn on_off(on: bool) -> String {
+	String::from(if on { "on" } else { "off" })
 }
 
 /// A labelled text field, highlighted with a cursor when focused.

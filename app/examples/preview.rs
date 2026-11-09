@@ -28,7 +28,7 @@ fn main() -> io::Result<()> {
 	radio.connect(0, 1);
 	radio.connect(1, 2);
 	let mut overlays: Vec<Overlay> = (0..BOARDS.len())
-		.map(|index| Overlay::new(&radio.nodes[index], index as u64 + 1))
+		.map(|index| Overlay::new(&radio.nodes[index], index as u64 + 1, true))
 		.collect();
 	let mut settings = Settings::new();
 	settings.name = BOARDS[0].into();

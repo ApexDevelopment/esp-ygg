@@ -25,11 +25,24 @@ fn address(radio: &Radio, index: usize) -> Ipv6Addr {
 
 /// A line of peered boards, with an overlay on each board in `with_overlay`.
 fn mesh(boards: usize, with_overlay: &[usize]) -> (Radio, Vec<(usize, Overlay)>) {
+	mesh_with(boards, with_overlay, true)
+}
+
+fn mesh_with(
+	boards: usize,
+	with_overlay: &[usize],
+	status_page: bool,
+) -> (Radio, Vec<(usize, Overlay)>) {
 	let mut radio = Radio::line(boards);
 	assert!(radio.run_until(Duration::from_secs(20), |radio| radio.all_peered()));
 	let overlays = with_overlay
 		.iter()
-		.map(|&index| (index, Overlay::new(&radio.nodes[index], index as u64 + 1)))
+		.map(|&index| {
+			(
+				index,
+				Overlay::new(&radio.nodes[index], index as u64 + 1, status_page),
+			)
+		})
 		.collect();
 	(radio, overlays)
 }
@@ -113,9 +126,14 @@ fn datagrams_reach_the_console() {
 	assert_eq!(data, b"hello");
 }
 
-/// Fetches `path` from board 0 with a TCP client on board 1.
+/// Fetches `path` from board 0 with a TCP client on board 1. Returns
+/// everything received before the connection closed.
 fn fetch(path: &str) -> String {
-	let (mut radio, mut overlays) = mesh(2, &[0]);
+	fetch_from(path, true)
+}
+
+fn fetch_from(path: &str, status_page: bool) -> String {
+	let (mut radio, mut overlays) = mesh_with(2, &[0], status_page);
 	let server = address(&radio, 0);
 	let mut queues = Queues::default();
 	let now = smoltcp::time::Instant::from_micros(radio.now_micros() as i64);
@@ -159,7 +177,7 @@ fn fetch(path: &str) -> String {
 					})
 					.unwrap();
 			}
-			let finished = sent && !socket.may_recv();
+			let finished = (sent && !socket.may_recv()) || !socket.is_open();
 			interface.poll(now, &mut queues, &mut sockets);
 			while let Some(packet) = queues.outgoing.pop_front() {
 				let _ = radio.nodes[1].send_ipv6(&packet);
@@ -203,4 +221,9 @@ fn pings_to_nobody_time_out() {
 			sequence
 		})
 	);
+}
+
+#[test]
+fn the_status_page_can_be_turned_off() {
+	assert_eq!(fetch_from("/", false), "");
 }
