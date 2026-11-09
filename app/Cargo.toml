@@ -1,0 +1,17 @@
+[package]
+name = "esp-ygg-app"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Services and user interface for esp-ygg boards"
+license-file = "../LICENSE"
+publish = false
+
+[dependencies]
+log = "0.4.35"
+smoltcp = { version = "0.14.0", default-features = false, features = ["alloc", "medium-ip", "proto-ipv6", "socket-icmp", "socket-tcp", "socket-udp"] }
+yggdrasil-espnow = { path = "../node" }
+
+[dev-dependencies]
+smoltcp = { version = "0.14.0", default-features = false, features = ["alloc", "medium-ip", "proto-ipv6", "socket-tcp"] }
+yggdrasil-espnow = { path = "../node", features = ["sim"] }
