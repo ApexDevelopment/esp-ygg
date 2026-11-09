@@ -11,7 +11,7 @@ publish = false
 log = "0.4.35"
 ratatui = { version = "0.30.2", default-features = false, optional = true }
 serde_json = { version = "1.0.154", default-features = false, features = ["alloc"] }
-smoltcp = { version = "0.14.0", default-features = false, features = ["alloc", "medium-ip", "proto-ipv6", "socket-icmp", "socket-tcp", "socket-udp"] }
+smoltcp = { version = "0.13.1", default-features = false, features = ["alloc", "medium-ip", "proto-ipv6", "socket-icmp", "socket-tcp", "socket-udp"] }
 yggdrasil-espnow = { path = "../node" }
 
 [features]
@@ -21,7 +21,7 @@ ui = ["dep:ratatui"]
 
 [dev-dependencies]
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
-smoltcp = { version = "0.14.0", default-features = false, features = ["alloc", "medium-ip", "proto-ipv6", "socket-tcp"] }
+smoltcp = { version = "0.13.1", default-features = false, features = ["alloc", "medium-ip", "proto-ipv6", "socket-tcp"] }
 yggdrasil-espnow = { path = "../node", features = ["sim"] }
 
 [[example]]
