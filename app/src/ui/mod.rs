@@ -4,6 +4,7 @@
 //! the rest.
 
 mod input;
+pub mod keyboard;
 mod view;
 
 use alloc::collections::{BTreeMap, VecDeque};
