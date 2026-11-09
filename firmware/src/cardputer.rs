@@ -26,7 +26,8 @@ use log::info;
 use mipidsi::interface::SpiInterface;
 use mipidsi::models::ST7789;
 use mipidsi::options::{ColorInversion, Orientation, Rotation};
-use mousefood::embedded_graphics::pixelcolor::Rgb565;
+use mousefood::embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use mousefood::embedded_graphics::prelude::DrawTarget;
 use mousefood::{EmbeddedBackend, EmbeddedBackendConfig};
 use ratatui::Terminal;
 use static_cell::StaticCell;
@@ -167,7 +168,7 @@ fn screen(
 	let interface = SpiInterface::new(device, output(dc), BUFFER.init([0; 512]));
 	// The panel is 135x240, mounted sideways at an offset in the
 	// controller's memory, with inverted colors, as M5Stack's M5GFX sets it up.
-	let display = mipidsi::Builder::new(ST7789, interface)
+	let mut display = mipidsi::Builder::new(ST7789, interface)
 		.display_size(135, 240)
 		.display_offset(52, 40)
 		.orientation(Orientation::new().rotate(Rotation::Deg90))
@@ -175,6 +176,9 @@ fn screen(
 		.reset_pin(output(reset))
 		.init(&mut Delay::new())
 		.expect("starting the display");
+	// The panel powers up with random contents, and the terminal only draws
+	// cells that change, so blank cells would never be drawn over.
+	display.clear(Rgb565::BLACK).expect("clearing the display");
 	// The pin stays high once the driver is dropped. On the ADV, it also
 	// powers the RGB LED.
 	let _backlight = Output::new(backlight, Level::High, OutputConfig::default());
