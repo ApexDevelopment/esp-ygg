@@ -1,23 +1,24 @@
 //! What goes on air: beacons that announce a node, and frames of the reliable
 //! link between two neighbors.
 
-use espnow_reliable::{Link, MAX_DATA_LEN_V2};
+use espnow_reliable::{Link, MAX_DATA_LEN_V1};
 use petrified::types::PublicKey;
 
 pub type Mac = [u8; 6];
 
-/// The largest frame [`crate::Node`] sends: the ESP-NOW v2 limit.
-pub const FRAME_LEN: usize = MAX_DATA_LEN_V2;
+/// The largest frame [`crate::Node`] sends. Short frames hold the radio for
+/// less time, which matters when WiFi shares it.
+pub const FRAME_LEN: usize = MAX_DATA_LEN_V1;
 
 /// Changes whenever the frame format does, so mismatched firmware ignores each other.
-pub const BEACON_VERSION: u8 = 1;
+pub const BEACON_VERSION: u8 = 2;
 
 const TAG_BEACON: u8 = b'Y';
 const TAG_LINK: u8 = b'L';
 const BEACON_LEN: usize = 2 + 32;
 
 /// One tag byte comes before every link frame.
-pub(crate) type PeerLink = Link<4, { FRAME_LEN - 1 }>;
+pub(crate) type PeerLink = Link<8, { FRAME_LEN - 1 }>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Destination {

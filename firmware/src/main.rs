@@ -115,6 +115,7 @@ async fn main(spawner: Spawner) -> ! {
 	let mut frame = alloc::vec![0u8; FRAME_LEN];
 	let mut stream: Option<StreamId> = None;
 	let mut next_save = Instant::now() + Duration::from_secs(SAVE_INTERVAL_SECS);
+	let mut stats = SendStats::new();
 	loop {
 		let started = Instant::now();
 		while let Some((destination, len)) = node.poll_transmit(&mut frame) {
@@ -127,9 +128,13 @@ async fn main(spawner: Spawner) -> ! {
 			};
 			// Lost frames are resent by the link layer, so only a stuck send matters.
 			let send = sender.send_async(&mac, &frame[..len]);
-			if with_timeout(SEND_TIMEOUT, send).await.is_err() {
-				warn!("ESP-NOW send to {} timed out", MacDisplay(&mac));
+			match with_timeout(SEND_TIMEOUT, send).await {
+				Ok(Ok(())) => {}
+				// Broadcasts are never acknowledged, so they never fail.
+				Ok(Err(_)) => stats.failed += 1,
+				Err(_) => stats.timed_out += 1,
 			}
+			stats.sent += 1;
 		}
 		let backlogged = flush_stream(&mut node, &mut stream);
 
@@ -164,6 +169,7 @@ async fn main(spawner: Spawner) -> ! {
 		if busy > STALL_WARNING {
 			warn!("Main loop was busy for {} ms", busy.as_millis());
 		}
+		stats.report_if_due();
 		if Instant::now() >= next_save {
 			store.save_time(unix_base + Instant::now().as_secs());
 			next_save = Instant::now() + Duration::from_secs(SAVE_INTERVAL_SECS);
@@ -290,11 +296,40 @@ impl core::fmt::Display for Hex<'_> {
 	}
 }
 
-struct MacDisplay<'a>(&'a Mac);
+/// Counts ESP-NOW sends that went unacknowledged or never finished, and logs
+/// them every so often.
+struct SendStats {
+	sent: u32,
+	failed: u32,
+	timed_out: u32,
+	since: Instant,
+}
 
-impl core::fmt::Display for MacDisplay<'_> {
-	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-		let [a, b, c, d, e, g] = self.0;
-		write!(f, "{a:02x}:{b:02x}:{c:02x}:{d:02x}:{e:02x}:{g:02x}")
+impl SendStats {
+	const PERIOD: Duration = Duration::from_secs(10);
+
+	fn new() -> Self {
+		SendStats {
+			sent: 0,
+			failed: 0,
+			timed_out: 0,
+			since: Instant::now(),
+		}
+	}
+
+	fn report_if_due(&mut self) {
+		if Instant::now() < self.since + Self::PERIOD {
+			return;
+		}
+		if self.failed > 0 || self.timed_out > 0 {
+			warn!(
+				"ESP-NOW sends in the last {} s: {} sent, {} unacknowledged, {} timed out",
+				Self::PERIOD.as_secs(),
+				self.sent,
+				self.failed,
+				self.timed_out
+			);
+		}
+		*self = SendStats::new();
 	}
 }
