@@ -46,6 +46,25 @@ On boards that use the ESP32-S3's built-in USB port, the reset after flashing so
 
 On first boot, the board creates a private key and saves it in the flash `nvs` partition. It keeps that key across reflashing. To give a board a new identity, erase its flash with `espflash erase-flash`.
 
+## Leaving out services
+
+Each service costs memory while the board runs, so the firmware can be built without some of them. They are Cargo features, all on by default:
+
+| Feature | Service |
+|---|---|
+| `http` | HTTP status page |
+| `gopher` | Gopher menu, and the Gopher screen |
+| `console` | UDP console, and the Console screen |
+| `ntp` | Time over NTP, and the clock |
+
+To pick some, turn off the defaults and list what you want, along with the board. For example, a Cardputer with only the console:
+
+```sh
+cargo run --release --no-default-features --features cardputer,console
+```
+
+On a Cardputer ADV acting as a gateway, leaving out Gopher, the console and NTP frees about 23 KB of the roughly 70 KB that is otherwise left.
+
 ## On-device interface
 
 On a Cardputer, the home screen shows the board's address and how many nodes it knows, with a menu below:

@@ -155,6 +155,7 @@ enum Screen {
 	Radio,
 	Ping,
 	Console,
+	#[cfg_attr(not(feature = "gopher"), allow(dead_code))]
 	Gopher,
 	Settings,
 	Networks,
@@ -168,19 +169,24 @@ enum Field {
 	Password,
 	Peer,
 	Channel,
+	#[cfg_attr(not(feature = "ntp"), allow(dead_code))]
 	TimeZone,
+	#[cfg_attr(not(any(feature = "http", feature = "gopher")), allow(dead_code))]
 	StatusPage,
 	Save,
 }
 
-const FIELDS: [Field; 9] = [
+/// The settings, without those for services left out of the build.
+const FIELDS: &[Field] = &[
 	Field::Name,
 	Field::Bridge,
 	Field::Network,
 	Field::Password,
 	Field::Peer,
 	Field::Channel,
+	#[cfg(feature = "ntp")]
 	Field::TimeZone,
+	#[cfg(any(feature = "http", feature = "gopher"))]
 	Field::StatusPage,
 	Field::Save,
 ];
@@ -191,11 +197,14 @@ enum ConsoleFocus {
 	Message,
 }
 
-const MENU: [(&str, Screen); 6] = [
+/// The home menu, without screens for services left out of the build.
+const MENU: &[(&str, Screen)] = &[
 	("Network", Screen::Network),
 	("Radio", Screen::Radio),
 	("Ping", Screen::Ping),
+	#[cfg(feature = "console")]
 	("Console", Screen::Console),
+	#[cfg(feature = "gopher")]
 	("Gopher", Screen::Gopher),
 	("Settings", Screen::Settings),
 ];

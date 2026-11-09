@@ -119,7 +119,9 @@ async fn main(spawner: Spawner) -> ! {
 		);
 		spawner.spawn(uplink::network(runner).expect("spawning the network task"));
 		spawner.spawn(uplink::tcp(stack, peer).expect("spawning the TCP task"));
-		spawner.spawn(uplink::ntp(stack).expect("spawning the NTP task"));
+		if cfg!(feature = "ntp") {
+			spawner.spawn(uplink::ntp(stack).expect("spawning the NTP task"));
+		}
 		info!("Peering with {peer} over WiFi network {}", settings.ssid);
 	}
 

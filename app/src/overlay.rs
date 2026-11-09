@@ -82,6 +82,8 @@ pub enum SendError {
 	TooLarge,
 	/// Too much is already waiting to be sent.
 	Busy,
+	/// The service was left out of this build.
+	Unavailable,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -123,16 +125,16 @@ pub struct Overlay {
 	device: Queues,
 	sockets: SocketSet<'static>,
 	servers: Vec<ServerConnection>,
-	client: SocketHandle,
+	client: Option<SocketHandle>,
 	fetch: Option<Fetch>,
 	next_local_port: u16,
-	console: SocketHandle,
+	console: Option<SocketHandle>,
 	ping: SocketHandle,
 	ping_ident: u16,
 	next_sequence: u16,
 	pings: BTreeMap<u16, (Ipv6Addr, Instant)>,
 	events: VecDeque<Event>,
-	time: SocketHandle,
+	time: Option<SocketHandle>,
 	clock: Option<Clock>,
 	/// When each time server was last asked, so only replies we asked for count.
 	time_requests: BTreeMap<Ipv6Addr, Instant>,
@@ -147,14 +149,16 @@ impl Overlay {
 		let now = to_smoltcp(node.now());
 		let interface = interface(&node.address(), &mut device, random_seed, now);
 		let mut sockets = SocketSet::new(Vec::new());
-		let protocols: &[Protocol] = if status_pages {
-			&[Protocol::Http, Protocol::Http, Protocol::Gopher]
-		} else {
-			&[]
-		};
+		let mut protocols = Vec::new();
+		if status_pages && cfg!(feature = "http") {
+			protocols.extend([Protocol::Http, Protocol::Http]);
+		}
+		if status_pages && cfg!(feature = "gopher") {
+			protocols.push(Protocol::Gopher);
+		}
 		let servers = protocols
-			.iter()
-			.map(|&protocol| {
+			.into_iter()
+			.map(|protocol| {
 				let socket = tcp::Socket::new(
 					tcp::SocketBuffer::new(vec![0; http::MAX_REQUEST]),
 					tcp::SocketBuffer::new(vec![0; 4096]),
@@ -168,33 +172,41 @@ impl Overlay {
 				}
 			})
 			.collect();
-		let client = sockets.add(tcp::Socket::new(
-			tcp::SocketBuffer::new(vec![0; 4096]),
-			tcp::SocketBuffer::new(vec![0; 1024]),
-		));
-		let mut console = udp::Socket::new(
-			udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 8], vec![0; 4 * MTU]),
-			udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 8], vec![0; 4 * MTU]),
-		);
-		console
-			.bind(CONSOLE_PORT)
-			.expect("binding the console port");
+		let client = cfg!(feature = "gopher").then(|| {
+			sockets.add(tcp::Socket::new(
+				tcp::SocketBuffer::new(vec![0; 4096]),
+				tcp::SocketBuffer::new(vec![0; 1024]),
+			))
+		});
+		let console = cfg!(feature = "console").then(|| {
+			let mut console = udp::Socket::new(
+				udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 8], vec![0; 4 * MTU]),
+				udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 8], vec![0; 4 * MTU]),
+			);
+			console
+				.bind(CONSOLE_PORT)
+				.expect("binding the console port");
+			sockets.add(console)
+		});
 		let ping_ident = (random_seed >> 16) as u16;
 		let mut ping = icmp::Socket::new(
 			icmp::PacketBuffer::new(vec![icmp::PacketMetadata::EMPTY; 8], vec![0; 1024]),
 			icmp::PacketBuffer::new(vec![icmp::PacketMetadata::EMPTY; 8], vec![0; 1024]),
 		);
-		let mut time = udp::Socket::new(
-			udp::PacketBuffer::new(
-				vec![udp::PacketMetadata::EMPTY; 4],
-				vec![0; 4 * sntp::MESSAGE_LEN],
-			),
-			udp::PacketBuffer::new(
-				vec![udp::PacketMetadata::EMPTY; 8],
-				vec![0; 8 * sntp::MESSAGE_LEN],
-			),
-		);
-		time.bind(sntp::PORT).expect("binding the time port");
+		let time = cfg!(feature = "ntp").then(|| {
+			let mut time = udp::Socket::new(
+				udp::PacketBuffer::new(
+					vec![udp::PacketMetadata::EMPTY; 4],
+					vec![0; 4 * sntp::MESSAGE_LEN],
+				),
+				udp::PacketBuffer::new(
+					vec![udp::PacketMetadata::EMPTY; 8],
+					vec![0; 8 * sntp::MESSAGE_LEN],
+				),
+			);
+			time.bind(sntp::PORT).expect("binding the time port");
+			sockets.add(time)
+		});
 		ping.bind(icmp::Endpoint::Ident(ping_ident))
 			.expect("binding the ping socket");
 		Overlay {
@@ -205,8 +217,8 @@ impl Overlay {
 			client,
 			fetch: None,
 			next_local_port: EPHEMERAL_PORTS.start + (random_seed as u16 % 1000),
-			console: sockets.add(console),
-			time: sockets.add(time),
+			console,
+			time,
 			ping: sockets.add(ping),
 			sockets,
 			ping_ident,
@@ -268,7 +280,8 @@ impl Overlay {
 	/// Sends `data` to a UDP port. It goes out on the next [`Overlay::poll`].
 	pub fn send_datagram(&mut self, to: SocketAddrV6, data: &[u8]) -> Result<(), SendError> {
 		let endpoint = IpEndpoint::new(IpAddress::Ipv6(*to.ip()), to.port());
-		let console = self.sockets.get_mut::<udp::Socket>(self.console);
+		let handle = self.console.ok_or(SendError::Unavailable)?;
+		let console = self.sockets.get_mut::<udp::Socket>(handle);
 		console
 			.send_slice(data, endpoint)
 			.map_err(|error| match error {
@@ -329,7 +342,10 @@ impl Overlay {
 	/// Answers time requests once the board knows the time, and asks its
 	/// direct peers until it does, then once in a while.
 	fn keep_time<P: Platform>(&mut self, node: &Node<P>, now: Instant) {
-		let socket = self.sockets.get_mut::<udp::Socket>(self.time);
+		let Some(handle) = self.time else {
+			return;
+		};
+		let socket = self.sockets.get_mut::<udp::Socket>(handle);
 		let mut replies = Vec::new();
 		while let Ok((message, meta)) = socket.recv() {
 			#[allow(irrefutable_let_patterns)]
@@ -364,7 +380,7 @@ impl Overlay {
 		}
 		self.next_time_request = now + TIME_REQUEST_INTERVAL;
 		self.time_requests.clear();
-		let socket = self.sockets.get_mut::<udp::Socket>(self.time);
+		let socket = self.sockets.get_mut::<udp::Socket>(handle);
 		for peer in node.network().debug().get_peers() {
 			let address = Ipv6Addr::from(addr_for_key(&peer.key).0);
 			let endpoint = IpEndpoint::new(IpAddress::Ipv6(address), sntp::PORT);
@@ -383,7 +399,8 @@ impl Overlay {
 		request: Vec<u8>,
 		now: Instant,
 	) -> Result<(), SendError> {
-		let socket = self.sockets.get_mut::<tcp::Socket>(self.client);
+		let handle = self.client.ok_or(SendError::Unavailable)?;
+		let socket = self.sockets.get_mut::<tcp::Socket>(handle);
 		socket.abort();
 		let local_port = self.next_local_port;
 		self.next_local_port = local_port
@@ -405,10 +422,10 @@ impl Overlay {
 	}
 
 	fn progress_fetch(&mut self, now: Instant) {
-		let Some(fetch) = &mut self.fetch else {
+		let (Some(fetch), Some(handle)) = (&mut self.fetch, self.client) else {
 			return;
 		};
-		let socket = self.sockets.get_mut::<tcp::Socket>(self.client);
+		let socket = self.sockets.get_mut::<tcp::Socket>(handle);
 		if socket.may_send() {
 			fetch.connected = true;
 			if !fetch.sent && socket.send_slice(&fetch.request) == Ok(fetch.request.len()) {
@@ -483,7 +500,10 @@ impl Overlay {
 	}
 
 	fn receive_datagrams(&mut self) {
-		let console = self.sockets.get_mut::<udp::Socket>(self.console);
+		let Some(handle) = self.console else {
+			return;
+		};
+		let console = self.sockets.get_mut::<udp::Socket>(handle);
 		while let Ok((data, meta)) = console.recv() {
 			// Other builds of smoltcp in the firmware also speak IPv4.
 			#[allow(irrefutable_let_patterns)]
