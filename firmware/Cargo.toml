@@ -23,7 +23,7 @@ esp-radio = { version = "1.0.0-beta.1", features = ["esp-alloc", "esp-now", "log
 esp-rtos = { version = "0.4.0", features = ["embassy", "esp-alloc", "esp-radio", "log-04"] }
 esp-storage = "0.10.0"
 log = "0.4.35"
-petrified = { path = "../../petrified", version = "0.1.0", default-features = false, features = ["fast"] }
+petrified = { path = "../../petrified", version = "0.1.1", default-features = false, features = ["fast"] }
 serde_json = { version = "1.0.154", default-features = false, features = ["alloc"] }
 static_cell = "2.1.1"
 yggdrasil-espnow = { path = "../node" }
