@@ -353,6 +353,7 @@ impl Client {
 	}
 
 	fn log(&mut self, buffer: &str, line: String, viewing: bool) {
+		let line = irc::strip_formatting(&line);
 		let name = if buffer.is_empty() { SERVER } else { buffer };
 		let index = self.buffer_index(name);
 		let entry = &mut self.buffers[index];

@@ -89,6 +89,53 @@ pub fn action_text(text: &str) -> Option<&str> {
 		.map(|rest| rest.trim_end_matches('\u{1}'))
 }
 
+/// Removes the codes IRC uses for bold, color and the like, which the
+/// screen cannot show.
+pub fn strip_formatting(text: &str) -> String {
+	let mut plain = String::with_capacity(text.len());
+	let mut chars = text.chars().peekable();
+	while let Some(character) = chars.next() {
+		match character {
+			// Color: up to two digits, then optionally a comma and two more.
+			'\u{3}' => {
+				skip_while_max(&mut chars, 2, |c| c.is_ascii_digit());
+				if chars.peek() == Some(&',') {
+					let mut ahead = chars.clone();
+					ahead.next();
+					if ahead.peek().is_some_and(char::is_ascii_digit) {
+						chars.next();
+						skip_while_max(&mut chars, 2, |c| c.is_ascii_digit());
+					}
+				}
+			}
+			// Hex color: six digits, then optionally a comma and six more.
+			'\u{4}' => {
+				skip_while_max(&mut chars, 6, |c| c.is_ascii_hexdigit());
+				if chars.peek() == Some(&',') {
+					chars.next();
+					skip_while_max(&mut chars, 6, |c| c.is_ascii_hexdigit());
+				}
+			}
+			'\u{1}' | '\u{2}' | '\u{f}' | '\u{11}' | '\u{16}' | '\u{1d}' | '\u{1e}' | '\u{1f}' => {}
+			other => plain.push(other),
+		}
+	}
+	plain
+}
+
+fn skip_while_max(
+	chars: &mut core::iter::Peekable<core::str::Chars<'_>>,
+	max: usize,
+	keep: impl Fn(&char) -> bool,
+) {
+	for _ in 0..max {
+		if !chars.peek().is_some_and(&keep) {
+			return;
+		}
+		chars.next();
+	}
+}
+
 pub fn is_channel(target: &str) -> bool {
 	target.starts_with(['#', '&', '+', '!'])
 }
@@ -152,6 +199,17 @@ mod tests {
 		let line = String::from_utf8(action("#ygg", "waves")).unwrap();
 		let message = Message::parse(&line).unwrap();
 		assert_eq!(action_text(message.text()), Some("waves"));
+	}
+
+	#[test]
+	fn strips_formatting() {
+		assert_eq!(
+			strip_formatting("\u{2}bold\u{2} and \u{3}4,12red\u{f}!"),
+			"bold and red!"
+		);
+		assert_eq!(strip_formatting("\u{3}1,0 00 \u{3}0,1 01"), " 00  01");
+		assert_eq!(strip_formatting("\u{3}12,x"), ",x");
+		assert_eq!(strip_formatting("\u{4}ff0000red"), "red");
 	}
 
 	#[test]
