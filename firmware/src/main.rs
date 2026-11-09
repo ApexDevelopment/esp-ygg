@@ -54,7 +54,7 @@ async fn main(spawner: Spawner) -> ! {
 	esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
 	// The original ESP32 has less RAM to spare
 	#[cfg(not(feature = "esp32"))]
-	esp_alloc::heap_allocator!(size: 160 * 1024);
+	esp_alloc::heap_allocator!(size: 200 * 1024);
 	#[cfg(feature = "esp32")]
 	esp_alloc::heap_allocator!(size: 120 * 1024);
 	let timg0 = TimerGroup::new(peripherals.TIMG0);

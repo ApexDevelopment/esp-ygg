@@ -440,7 +440,7 @@ impl<P: Platform> Node<P> {
 					neighbor.since = now;
 				}
 				LinkEvent::Reset => {
-					log::info!("ESP-NOW neighbor {} restarted", MacDisplay(&mac));
+					log::info!("ESP-NOW neighbor {} started a new link", MacDisplay(&mac));
 					if let Some(mut stream) = neighbor.stream.take() {
 						stream.close(&mut self.conn);
 					}

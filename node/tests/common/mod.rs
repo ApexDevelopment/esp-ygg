@@ -114,7 +114,10 @@ impl Radio {
 		let mut buf = [0u8; FRAME_LEN];
 		while let Some((destination, len)) = self.nodes[from].poll_transmit(&mut buf) {
 			self.sent += 1;
-			if self.loss_every.is_some_and(|every| self.sent.is_multiple_of(every)) {
+			if self
+				.loss_every
+				.is_some_and(|every| self.sent.is_multiple_of(every))
+			{
 				continue;
 			}
 			let arrival = self.now_micros() + LATENCY_MICROS;

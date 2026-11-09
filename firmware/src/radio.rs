@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, with_timeout};
-use esp_radio::esp_now::EspNowSender;
+use esp_radio::esp_now::{EspNowError, EspNowSender};
 use log::warn;
 use yggdrasil_espnow::Mac;
 
@@ -30,21 +30,25 @@ pub async fn sender(mut sender: EspNowSender) {
 		let send = sender.send_async(&outgoing.mac, &outgoing.frame);
 		match with_timeout(SEND_TIMEOUT, send).await {
 			Ok(Ok(())) => {}
-			// Broadcasts are never acknowledged, so they never fail.
-			Ok(Err(_)) => stats.failed += 1,
+			// Broadcasts are never acknowledged, so they never fail this way.
+			Ok(Err(EspNowError::SendFailed)) => stats.unacknowledged += 1,
+			Ok(Err(_)) => stats.refused += 1,
 			Err(_) => stats.timed_out += 1,
 		}
 		stats.sent += 1;
+		stats.min_free_heap = stats.min_free_heap.min(esp_alloc::HEAP.free());
 		stats.report_if_due();
 	}
 }
 
-/// Counts sends that went unacknowledged or never finished, and logs them
-/// every so often.
+/// Counts sends that the radio refused, that went unacknowledged, or that
+/// never finished, and logs them every so often with the lowest free heap seen.
 struct SendStats {
 	sent: u32,
-	failed: u32,
+	refused: u32,
+	unacknowledged: u32,
 	timed_out: u32,
+	min_free_heap: usize,
 	since: Instant,
 }
 
@@ -52,8 +56,10 @@ impl SendStats {
 	fn new() -> Self {
 		SendStats {
 			sent: 0,
-			failed: 0,
+			refused: 0,
+			unacknowledged: 0,
 			timed_out: 0,
+			min_free_heap: usize::MAX,
 			since: Instant::now(),
 		}
 	}
@@ -62,13 +68,15 @@ impl SendStats {
 		if Instant::now() < self.since + REPORT_PERIOD {
 			return;
 		}
-		if self.failed > 0 || self.timed_out > 0 {
+		if self.refused > 0 || self.unacknowledged > 0 || self.timed_out > 0 {
 			warn!(
-				"ESP-NOW sends in the last {} s: {} sent, {} unacknowledged, {} timed out",
+				"ESP-NOW sends in the last {} s: {} sent, {} refused, {} unacknowledged, {} timed out; lowest free heap {} KB",
 				(Instant::now() - self.since).as_secs(),
 				self.sent,
-				self.failed,
-				self.timed_out
+				self.refused,
+				self.unacknowledged,
+				self.timed_out,
+				self.min_free_heap / 1024
 			);
 		}
 		*self = SendStats::new();
