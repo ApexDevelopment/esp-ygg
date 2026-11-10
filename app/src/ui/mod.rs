@@ -54,6 +54,15 @@ pub enum Key {
 }
 
 /// Something the host should do for the UI.
+/// What the host has been asked to do, oldest first.
+type Commands = VecDeque<Command>;
+
+/// Whether a key keeps an app's screen open.
+enum Outcome {
+	Stay,
+	Leave,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
 	Ping(Ipv6Addr),
@@ -442,40 +451,30 @@ impl App {
 			Event::Fetched { data } => self.gopher.fetched(&data),
 			Event::FetchFailed => self.gopher.failed(),
 			Event::StreamOpened(Stream::Irc) => {
-				let mut commands = Vec::new();
-				self.irc.opened(&mut commands);
-				self.commands.extend(commands);
+				self.irc.opened(&mut self.commands);
 			}
 			Event::StreamData {
 				stream: Stream::Irc,
 				data,
 			} => {
-				let mut commands = Vec::new();
 				let viewing = self.screen == Screen::Irc;
-				self.irc.received(&data, viewing, &mut commands);
-				self.commands.extend(commands);
+				self.irc.received(&data, viewing, &mut self.commands);
 			}
 			Event::StreamClosed(Stream::Irc) => self.irc.closed(),
 			#[cfg(feature = "gemini")]
 			Event::StreamOpened(Stream::Gemini) => {
-				let mut commands = Vec::new();
-				self.gemini.opened(&mut commands);
-				self.commands.extend(commands);
+				self.gemini.opened(&mut self.commands);
 			}
 			#[cfg(feature = "gemini")]
 			Event::StreamData {
 				stream: Stream::Gemini,
 				data,
 			} => {
-				let mut commands = Vec::new();
-				self.gemini.received(&data, &mut commands);
-				self.commands.extend(commands);
+				self.gemini.received(&data, &mut self.commands);
 			}
 			#[cfg(feature = "gemini")]
 			Event::StreamClosed(Stream::Gemini) => {
-				let mut commands = Vec::new();
-				self.gemini.closed(&mut commands);
-				self.commands.extend(commands);
+				self.gemini.closed(&mut self.commands);
 			}
 			Event::Datagram { from, data } => {
 				let text = String::from_utf8_lossy(&data);
@@ -532,20 +531,16 @@ impl App {
 			Screen::Settings | Screen::SettingsGroup(_) => self.settings_key(key),
 			Screen::WifiNetworks => self.wifi_networks_key(key),
 			Screen::Irc => {
-				let mut commands = Vec::new();
-				let outcome = self.irc.handle_key(key, &mut commands);
-				self.commands.extend(commands);
-				if let irc::Outcome::Leave = outcome {
+				let outcome = self.irc.handle_key(key, &mut self.commands);
+				if let Outcome::Leave = outcome {
 					self.screen = Screen::Apps;
 				}
 			}
 			Screen::Call => {
 				#[cfg(feature = "voice")]
 				{
-					let mut commands = Vec::new();
-					let outcome = self.call.handle_key(key, self.now, &mut commands);
-					self.commands.extend(commands);
-					if let call::Outcome::Leave = outcome {
+					let outcome = self.call.handle_key(key, self.now, &mut self.commands);
+					if let Outcome::Leave = outcome {
 						self.screen = Screen::Apps;
 					}
 				}
@@ -553,19 +548,15 @@ impl App {
 			Screen::Gemini => {
 				#[cfg(feature = "gemini")]
 				{
-					let mut commands = Vec::new();
-					let outcome = self.gemini.handle_key(key, &mut commands);
-					self.commands.extend(commands);
-					if let gemini::Outcome::Leave = outcome {
+					let outcome = self.gemini.handle_key(key, &mut self.commands);
+					if let Outcome::Leave = outcome {
 						self.screen = Screen::Apps;
 					}
 				}
 			}
 			Screen::Gopher => {
-				let mut commands = Vec::new();
-				let outcome = self.gopher.handle_key(key, &mut commands);
-				self.commands.extend(commands);
-				if let gopher::Outcome::Leave = outcome {
+				let outcome = self.gopher.handle_key(key, &mut self.commands);
+				if let Outcome::Leave = outcome {
 					self.screen = Screen::Apps;
 				}
 			}

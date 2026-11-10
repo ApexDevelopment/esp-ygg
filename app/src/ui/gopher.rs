@@ -7,7 +7,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::net::{Ipv6Addr, SocketAddrV6};
 
-use super::{Command, Key, TextInput, navigation};
+use super::{Command, Commands, Key, Outcome, TextInput, navigation};
 use crate::gopher::{self, Item, Url};
 
 const MAX_HISTORY: usize = 16;
@@ -40,11 +40,6 @@ pub(super) struct Browser {
 	aliases: BTreeMap<String, Ipv6Addr>,
 }
 
-pub(super) enum Outcome {
-	Stay,
-	Leave,
-}
-
 impl Browser {
 	pub fn new() -> Self {
 		Browser {
@@ -63,7 +58,7 @@ impl Browser {
 		self.pending.is_some()
 	}
 
-	pub fn handle_key(&mut self, key: Key, commands: &mut Vec<Command>) -> Outcome {
+	pub fn handle_key(&mut self, key: Key, commands: &mut Commands) -> Outcome {
 		if let Some((url, address, query)) = &mut self.search {
 			match key {
 				Key::Enter => {
@@ -107,7 +102,7 @@ impl Browser {
 		Outcome::Stay
 	}
 
-	fn go_to_address(&mut self, commands: &mut Vec<Command>) {
+	fn go_to_address(&mut self, commands: &mut Commands) {
 		let Some(url) = Url::parse(&self.address.text) else {
 			self.error = Some("Not a Gopher address".into());
 			return;
@@ -121,7 +116,7 @@ impl Browser {
 		}
 	}
 
-	fn open_selected(&mut self, commands: &mut Vec<Command>) {
+	fn open_selected(&mut self, commands: &mut Commands) {
 		let Some(page) = &self.page else {
 			return;
 		};
@@ -152,11 +147,11 @@ impl Browser {
 		url: Url,
 		address: Ipv6Addr,
 		query: Option<&str>,
-		commands: &mut Vec<Command>,
+		commands: &mut Commands,
 	) {
 		self.error = None;
 		let to = SocketAddrV6::new(address, url.port, 0, 0);
-		commands.push(Command::Fetch(to, url.request(query)));
+		commands.push_back(Command::Fetch(to, url.request(query)));
 		self.pending = Some(Pending { url, address });
 	}
 

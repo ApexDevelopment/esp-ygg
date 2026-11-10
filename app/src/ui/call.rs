@@ -2,13 +2,12 @@
 //! goes with push-to-talk on the board's G0 button.
 
 use alloc::string::String;
-use alloc::vec::Vec;
 use core::net::Ipv6Addr;
 
 use yggdrasil_espnow::Instant;
 
 use super::input::TextInput;
-use super::{Command, Key};
+use super::{Command, Commands, Key, Outcome};
 use crate::voice::iax2::CallEvent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,11 +17,6 @@ pub enum Phase {
 	Ringing,
 	Incoming,
 	Up,
-}
-
-pub enum Outcome {
-	Stay,
-	Leave,
 }
 
 pub struct Phone {
@@ -49,11 +43,11 @@ impl Phone {
 		}
 	}
 
-	pub fn handle_key(&mut self, key: Key, now: Instant, commands: &mut Vec<Command>) -> Outcome {
+	pub fn handle_key(&mut self, key: Key, now: Instant, commands: &mut Commands) -> Outcome {
 		match (self.phase, key) {
 			(Phase::Idle, Key::Enter) => match self.address.text.trim().parse() {
 				Ok(address) => {
-					commands.push(Command::Call(address));
+					commands.push_back(Command::Call(address));
 					self.phase = Phase::Calling;
 					self.peer = Some((address, None));
 					self.ended = None;
@@ -64,12 +58,12 @@ impl Phone {
 			(Phase::Idle, Key::Backspace) => self.address.backspace(),
 			(Phase::Idle, Key::Char(character)) => self.address.push(character),
 			(Phase::Incoming, Key::Enter) => {
-				commands.push(Command::Answer);
+				commands.push_back(Command::Answer);
 				self.phase = Phase::Up;
 				self.since = Some(now);
 			}
 			(Phase::Calling | Phase::Ringing | Phase::Incoming | Phase::Up, Key::Escape) => {
-				commands.push(Command::HangUp);
+				commands.push_back(Command::HangUp);
 				self.phase = Phase::Idle;
 				self.ended = Some("Hung up".into());
 			}

@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use core::net::SocketAddrV6;
 
 use super::view::wrap;
-use super::{Command, Key, TextInput, navigation};
+use super::{Command, Commands, Key, Outcome, TextInput, navigation};
 use crate::gemini::{self, Header, Line, LinkError, Url};
 use crate::overlay::Stream;
 use crate::tls::{self, Fingerprint, Session};
@@ -153,11 +153,6 @@ pub(super) struct Browser {
 	config: Option<Arc<rustls::ClientConfig>>,
 }
 
-pub(super) enum Outcome {
-	Stay,
-	Leave,
-}
-
 impl Browser {
 	pub fn new() -> Self {
 		Browser {
@@ -177,7 +172,7 @@ impl Browser {
 		self.request.is_some()
 	}
 
-	pub fn handle_key(&mut self, key: Key, commands: &mut Vec<Command>) -> Outcome {
+	pub fn handle_key(&mut self, key: Key, commands: &mut Commands) -> Outcome {
 		if let Some(prompt) = &mut self.prompt {
 			match key {
 				Key::Enter => {
@@ -228,7 +223,7 @@ impl Browser {
 		Outcome::Stay
 	}
 
-	fn open_selected(&mut self, commands: &mut Vec<Command>) {
+	fn open_selected(&mut self, commands: &mut Commands) {
 		let Some(page) = &self.page else {
 			return;
 		};
@@ -244,13 +239,7 @@ impl Browser {
 		}
 	}
 
-	fn visit(
-		&mut self,
-		url: Url,
-		redirects: u8,
-		back_to: Option<usize>,
-		commands: &mut Vec<Command>,
-	) {
+	fn visit(&mut self, url: Url, redirects: u8, back_to: Option<usize>, commands: &mut Commands) {
 		self.error = None;
 		let Some(address) = url.address() else {
 			self.error = Some(format!("Can't look up {}; use an address", url.host));
@@ -274,7 +263,7 @@ impl Browser {
 			}
 		};
 		let to = SocketAddrV6::new(address, url.port, 0, 0);
-		commands.push(Command::OpenStream(Stream::Gemini, to));
+		commands.push_back(Command::OpenStream(Stream::Gemini, to));
 		self.request = Some(Request {
 			url,
 			session,
@@ -285,27 +274,27 @@ impl Browser {
 		});
 	}
 
-	fn cancel(&mut self, commands: &mut Vec<Command>) {
+	fn cancel(&mut self, commands: &mut Commands) {
 		if self.request.take().is_some() {
-			commands.push(Command::CloseStream(Stream::Gemini));
+			commands.push_back(Command::CloseStream(Stream::Gemini));
 		}
 	}
 
-	pub fn opened(&mut self, commands: &mut Vec<Command>) {
+	pub fn opened(&mut self, commands: &mut Commands) {
 		if let Some(request) = &mut self.request {
 			request.opened = true;
 			self.progress(commands);
 		}
 	}
 
-	pub fn received(&mut self, data: &[u8], commands: &mut Vec<Command>) {
+	pub fn received(&mut self, data: &[u8], commands: &mut Commands) {
 		if let Some(request) = &mut self.request {
 			request.session.receive(data);
 			self.progress(commands);
 		}
 	}
 
-	pub fn closed(&mut self, commands: &mut Vec<Command>) {
+	pub fn closed(&mut self, commands: &mut Commands) {
 		match &self.request {
 			Some(request) if request.opened => self.finish(commands),
 			Some(request) => {
@@ -317,7 +306,7 @@ impl Browser {
 	}
 
 	/// Runs the connection as far as it can go, and sends what it made.
-	fn progress(&mut self, commands: &mut Vec<Command>) {
+	fn progress(&mut self, commands: &mut Commands) {
 		let Some(request) = &mut self.request else {
 			return;
 		};
@@ -343,7 +332,7 @@ impl Browser {
 			}
 		}
 		if !send.is_empty() {
-			commands.push(Command::StreamSend(Stream::Gemini, send));
+			commands.push_back(Command::StreamSend(Stream::Gemini, send));
 		}
 		let Some(request) = &mut self.request else {
 			return;
@@ -351,7 +340,7 @@ impl Browser {
 		request.response.extend(output.received);
 		if output.closed || request.response.len() >= MAX_RESPONSE {
 			request.response.truncate(MAX_RESPONSE);
-			commands.push(Command::CloseStream(Stream::Gemini));
+			commands.push_back(Command::CloseStream(Stream::Gemini));
 			self.finish(commands);
 		}
 	}
@@ -376,12 +365,12 @@ impl Browser {
 		}
 	}
 
-	fn fail(&mut self, error: String, commands: &mut Vec<Command>) {
+	fn fail(&mut self, error: String, commands: &mut Commands) {
 		self.cancel(commands);
 		self.error = Some(error);
 	}
 
-	fn finish(&mut self, commands: &mut Vec<Command>) {
+	fn finish(&mut self, commands: &mut Commands) {
 		let Some(request) = self.request.take() else {
 			return;
 		};

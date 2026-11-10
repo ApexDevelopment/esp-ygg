@@ -7,7 +7,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::net::{Ipv6Addr, SocketAddrV6};
 
-use super::{Command, Key, TextInput};
+use super::{Command, Commands, Key, Outcome, TextInput};
 use crate::irc::{self, LineReader, Message};
 use crate::overlay::Stream;
 
@@ -36,11 +36,6 @@ pub(super) enum Phase {
 	Setup,
 	Connecting,
 	Connected,
-}
-
-pub(super) enum Outcome {
-	Stay,
-	Leave,
 }
 
 pub(super) struct Client {
@@ -91,14 +86,14 @@ impl Client {
 		self.buffers.iter().map(|buffer| buffer.unread).sum()
 	}
 
-	pub fn handle_key(&mut self, key: Key, commands: &mut Vec<Command>) -> Outcome {
+	pub fn handle_key(&mut self, key: Key, commands: &mut Commands) -> Outcome {
 		match self.phase {
 			Phase::Setup => self.form_key(key, commands),
 			Phase::Connecting | Phase::Connected => self.chat_key(key, commands),
 		}
 	}
 
-	fn form_key(&mut self, key: Key, commands: &mut Vec<Command>) -> Outcome {
+	fn form_key(&mut self, key: Key, commands: &mut Commands) -> Outcome {
 		match key {
 			Key::Escape => return Outcome::Leave,
 			Key::Up => self.field = self.field.saturating_sub(1),
@@ -112,7 +107,7 @@ impl Client {
 		Outcome::Stay
 	}
 
-	fn connect(&mut self, commands: &mut Vec<Command>) {
+	fn connect(&mut self, commands: &mut Commands) {
 		let Some(server) = parse_server(&self.form[0].text) else {
 			self.error = Some("Enter the server as an address or [address]:port".into());
 			self.field = 0;
@@ -134,10 +129,10 @@ impl Client {
 		self.current = 0;
 		self.phase = Phase::Connecting;
 		self.log(SERVER, format!("Connecting to {server}"), true);
-		commands.push(Command::OpenStream(Stream::Irc, server));
+		commands.push_back(Command::OpenStream(Stream::Irc, server));
 	}
 
-	fn chat_key(&mut self, key: Key, commands: &mut Vec<Command>) -> Outcome {
+	fn chat_key(&mut self, key: Key, commands: &mut Commands) -> Outcome {
 		match key {
 			Key::Escape => return Outcome::Leave,
 			Key::Tab => {
@@ -159,7 +154,7 @@ impl Client {
 	}
 
 	/// Sends what was typed: a message to the current buffer, or a command.
-	fn submit(&mut self, text: &str, commands: &mut Vec<Command>) {
+	fn submit(&mut self, text: &str, commands: &mut Commands) {
 		if text.is_empty() {
 			return;
 		}
@@ -204,7 +199,7 @@ impl Client {
 			"quit" => {
 				let message = if rest.is_empty() { "Bye" } else { rest };
 				send(commands, irc::command("QUIT", &[], Some(message)));
-				commands.push(Command::CloseStream(Stream::Irc));
+				commands.push_back(Command::CloseStream(Stream::Irc));
 			}
 			"quote" if !rest.is_empty() => {
 				let mut raw = rest.to_string().into_bytes();
@@ -215,7 +210,7 @@ impl Client {
 		}
 	}
 
-	pub fn opened(&mut self, commands: &mut Vec<Command>) {
+	pub fn opened(&mut self, commands: &mut Commands) {
 		self.phase = Phase::Connected;
 		let nick = self.nick.clone();
 		send(commands, irc::command("NICK", &[&nick], None));
@@ -233,7 +228,7 @@ impl Client {
 		self.phase = Phase::Setup;
 	}
 
-	pub fn received(&mut self, data: &[u8], viewing: bool, commands: &mut Vec<Command>) {
+	pub fn received(&mut self, data: &[u8], viewing: bool, commands: &mut Commands) {
 		for line in self.reader.push(data) {
 			if let Some(message) = Message::parse(&line) {
 				self.handle_message(&message, viewing, commands);
@@ -241,7 +236,7 @@ impl Client {
 		}
 	}
 
-	fn handle_message(&mut self, message: &Message, viewing: bool, commands: &mut Vec<Command>) {
+	fn handle_message(&mut self, message: &Message, viewing: bool, commands: &mut Commands) {
 		let from = message.nick().unwrap_or(SERVER).to_string();
 		match message.command.as_str() {
 			"PING" => send(commands, irc::command("PONG", &[], Some(message.text()))),
@@ -368,8 +363,8 @@ impl Client {
 	}
 }
 
-fn send(commands: &mut Vec<Command>, line: Vec<u8>) {
-	commands.push(Command::StreamSend(Stream::Irc, line));
+fn send(commands: &mut Commands, line: Vec<u8>) {
+	commands.push_back(Command::StreamSend(Stream::Irc, line));
 }
 
 /// `[address]:port`, or a bare address for the usual IRC port.
