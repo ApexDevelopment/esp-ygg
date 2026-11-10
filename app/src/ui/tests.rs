@@ -309,7 +309,7 @@ fn shows_signal_and_loss_for_each_neighbor() {
 		loss: None,
 	});
 	app.set_status(status);
-	open(&mut app, "Radio");
+	open(&mut app, "ESP-NOW Neighbors");
 	app.tick(at(1));
 	app.handle_nodeinfo(named, Some(br#"{"name":"kitchen"}"#.to_vec()));
 	let shown = screen(&app).join("\n");

@@ -65,8 +65,8 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 	let screen = match app.screen {
 		Screen::Home => "",
 		Screen::Apps => "Apps",
-		Screen::Network | Screen::Node(_) => "Network",
-		Screen::Radio => "Radio",
+		Screen::Network | Screen::Node(_) => "Nodes",
+		Screen::Radio => "Neighbors",
 		Screen::Gopher => "Gopher",
 		Screen::Gemini => "Gemini",
 		Screen::Call => "Call",

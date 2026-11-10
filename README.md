@@ -80,8 +80,8 @@ Clients take memory only while they are in use, so most of the cost of a service
 
 On a Cardputer, the home screen shows the board's address and how many nodes it knows, with a menu below:
 
-- Network lists every node the board knows, direct peers first, named from their nodeinfo. Open one to see its details, then press `p` to ping it or `m` to send it a console message.
-- Radio lists ESP-NOW neighbors with their recent signal strength and the share of frames sent to them that went unacknowledged, for finding where boards still reach each other.
+- Yggdrasil Nodes lists every node the board knows, direct peers first, named from their nodeinfo. Open one to see its details, then press `p` to ping it or `m` to send it a console message.
+- ESP-NOW Neighbors lists the boards in radio range, with their recent signal strength and the share of frames sent to them that went unacknowledged, for finding where boards still reach each other.
 - Ping sends a ping every second to an address you type or pick, and shows each round trip.
 - Apps opens a menu of the apps below, and counts the new messages waiting in them:
   - Gopher browses Gopher menus and text, starting from an address you type. Links to a board's peers make it easy to hop across the mesh. Yggdrasil has no standard way to look up names, so links work when they use an address or the name of the server they came from.

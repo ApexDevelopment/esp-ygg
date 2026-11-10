@@ -263,8 +263,8 @@ enum ConsoleFocus {
 
 /// The home menu, without screens for services left out of the build.
 const MENU: &[(&str, Screen)] = &[
-	("Network", Screen::Network),
-	("Radio", Screen::Radio),
+	("Yggdrasil Nodes", Screen::Network),
+	("ESP-NOW Neighbors", Screen::Radio),
 	("Ping", Screen::Ping),
 	#[cfg(any(
 		feature = "console",
