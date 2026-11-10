@@ -193,8 +193,14 @@ fn edits_and_saves_settings() {
 	assert!(screen(&app).join("\n").contains("UTC-05:00"));
 	press(&mut app, &[Key::Down, Key::Enter]);
 	assert!(screen(&app).join("\n").contains("Status pages off"));
+	// The bridge's own menu, marked with an arrow
+	press(&mut app, &[Key::Down]);
+	assert!(screen(&app).join("\n").contains("Bridge       off"));
+	assert!(screen(&app).join("\n").contains('›'));
+	press(&mut app, &[Key::Enter]);
+	assert!(screen(&app)[0].contains("Bridge"));
 	// Bridge on, then pick a network from a scan
-	press(&mut app, &[Key::Down, Key::Enter, Key::Down, Key::Enter]);
+	press(&mut app, &[Key::Enter, Key::Down, Key::Enter]);
 	assert_eq!(commands(&mut app), [Command::ScanWifi]);
 	app.set_networks(Vec::from([
 		WifiNetwork {
@@ -209,28 +215,26 @@ fn edits_and_saves_settings() {
 		},
 	]));
 	press(&mut app, &[Key::Enter]);
-	// Password, then save without a peer, which is refused
+	// Password, then back out and save without a peer, which is refused
 	press(&mut app, &[Key::Down, Key::Enter]);
 	type_text(&mut app, "secret");
 	press(&mut app, &[Key::Enter]);
 	assert!(screen(&app).join("\n").contains("••••••"));
-	press(&mut app, &[Key::Down; 5]);
-	press(&mut app, &[Key::Enter]);
+	press(&mut app, &[Key::Escape]);
+	assert!(screen(&app).join("\n").contains("Bridge       on"));
+	press(&mut app, &[Key::Down, Key::Down, Key::Enter]);
 	assert!(commands(&mut app).is_empty());
 	assert!(screen(&app).join("\n").contains("needs a network and peer"));
 	// Peer
-	press(&mut app, &[Key::Up; 4]);
+	press(&mut app, &[Key::Up, Key::Up, Key::Enter]);
+	press(&mut app, &[Key::Down; 3]);
 	press(&mut app, &[Key::Enter]);
 	type_text(&mut app, "192.168.1.176:9001");
-	press(&mut app, &[Key::Enter]);
-	// The hotspot, under its own heading, with a password too short for WPA2
+	press(&mut app, &[Key::Enter, Key::Escape]);
+	// The hotspot, with a password too short for WPA2
 	press(&mut app, &[Key::Down, Key::Enter]);
-	assert!(
-		screen(&app)
-			.join("\n")
-			.contains("Hotspot for phones and laptops")
-	);
-	press(&mut app, &[Key::Down, Key::Enter]);
+	assert!(screen(&app)[0].contains("Hotspot"));
+	press(&mut app, &[Key::Enter, Key::Down, Key::Enter]);
 	type_text(&mut app, "pocket");
 	press(&mut app, &[Key::Enter, Key::Down, Key::Enter]);
 	type_text(&mut app, "short");
@@ -238,7 +242,7 @@ fn edits_and_saves_settings() {
 	assert!(screen(&app).join("\n").contains("8 or more"));
 	press(&mut app, &[Key::Enter]);
 	type_text(&mut app, "hunter22");
-	press(&mut app, &[Key::Enter, Key::Down, Key::Enter]);
+	press(&mut app, &[Key::Enter, Key::Escape, Key::Down, Key::Enter]);
 	let expected = Settings {
 		name: "kitchen".into(),
 		bridge: true,

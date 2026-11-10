@@ -180,7 +180,25 @@ enum Screen {
 	#[cfg_attr(not(feature = "gemini"), allow(dead_code))]
 	Gemini,
 	Settings,
+	/// The settings in one group, opened from the main settings.
+	SettingsGroup(Group),
 	Networks,
+}
+
+/// Settings that open as a menu of their own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Group {
+	Bridge,
+	Hotspot,
+}
+
+impl Group {
+	fn fields(self) -> &'static [Field] {
+		match self {
+			Group::Bridge => &[Field::Bridge, Field::Network, Field::Password, Field::Peer],
+			Group::Hotspot => &[Field::Hotspot, Field::HotspotName, Field::HotspotPassword],
+		}
+	}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,6 +209,7 @@ enum Field {
 	TimeZone,
 	#[cfg_attr(not(any(feature = "http", feature = "gopher")), allow(dead_code))]
 	StatusPage,
+	Open(Group),
 	Bridge,
 	Network,
 	Password,
@@ -201,17 +220,6 @@ enum Field {
 	Save,
 }
 
-impl Field {
-	/// The heading shown above a group of settings, before its first field.
-	fn heading(self) -> Option<&'static str> {
-		match self {
-			Field::Bridge => Some("Bridge to a WiFi network"),
-			Field::Hotspot => Some("Hotspot for phones and laptops"),
-			_ => None,
-		}
-	}
-}
-
 /// The settings, without those for services left out of the build.
 const FIELDS: &[Field] = &[
 	Field::Name,
@@ -220,13 +228,8 @@ const FIELDS: &[Field] = &[
 	Field::TimeZone,
 	#[cfg(any(feature = "http", feature = "gopher"))]
 	Field::StatusPage,
-	Field::Bridge,
-	Field::Network,
-	Field::Password,
-	Field::Peer,
-	Field::Hotspot,
-	Field::HotspotName,
-	Field::HotspotPassword,
+	Field::Open(Group::Bridge),
+	Field::Open(Group::Hotspot),
 	Field::Save,
 ];
 
@@ -287,6 +290,7 @@ pub struct App {
 	saved: Settings,
 	draft: Settings,
 	settings_selected: usize,
+	group_selected: usize,
 	editing: Option<(Field, TextInput)>,
 	networks: Option<Vec<WifiNetwork>>,
 	networks_selected: usize,
@@ -323,6 +327,7 @@ impl App {
 			draft: settings.clone(),
 			saved: settings,
 			settings_selected: 0,
+			group_selected: 0,
 			editing: None,
 			networks: None,
 			networks_selected: 0,
@@ -475,7 +480,7 @@ impl App {
 			}
 			Screen::Ping => self.ping_key(key),
 			Screen::Console => self.console_key(key),
-			Screen::Settings => self.settings_key(key),
+			Screen::Settings | Screen::SettingsGroup(_) => self.settings_key(key),
 			Screen::Networks => self.networks_key(key),
 			Screen::Irc => {
 				let mut commands = Vec::new();
@@ -655,14 +660,29 @@ impl App {
 			}
 			return;
 		}
+		let (fields, selected) = self.settings_fields();
 		match navigation(key) {
-			Some(Key::Up) => self.settings_selected = self.settings_selected.saturating_sub(1),
-			Some(Key::Down) => {
-				self.settings_selected = (self.settings_selected + 1).min(FIELDS.len() - 1)
+			Some(Key::Up) => *selected = selected.saturating_sub(1),
+			Some(Key::Down) => *selected = (*selected + 1).min(fields.len() - 1),
+			Some(Key::Escape | Key::Left) => {
+				self.screen = match self.screen {
+					Screen::SettingsGroup(_) => Screen::Settings,
+					_ => Screen::Home,
+				}
 			}
-			Some(Key::Escape | Key::Left) => self.screen = Screen::Home,
-			Some(Key::Enter | Key::Right) => self.activate(FIELDS[self.settings_selected]),
+			Some(Key::Enter | Key::Right) => {
+				let field = fields[*selected];
+				self.activate(field);
+			}
 			_ => {}
+		}
+	}
+
+	/// The settings on the screen shown, and which of them is selected.
+	fn settings_fields(&mut self) -> (&'static [Field], &mut usize) {
+		match self.screen {
+			Screen::SettingsGroup(group) => (group.fields(), &mut self.group_selected),
+			_ => (FIELDS, &mut self.settings_selected),
 		}
 	}
 
@@ -685,6 +705,11 @@ impl App {
 			}
 			Field::StatusPage => {
 				self.draft.status_page = !self.draft.status_page;
+				return;
+			}
+			Field::Open(group) => {
+				self.group_selected = 0;
+				self.screen = Screen::SettingsGroup(group);
 				return;
 			}
 			Field::Network => {
@@ -736,7 +761,12 @@ impl App {
 			Field::HotspotPassword => {
 				self.notice = Some("Use 8 or more characters, or none".into())
 			}
-			Field::Bridge | Field::StatusPage | Field::Network | Field::Hotspot | Field::Save => {}
+			Field::Bridge
+			| Field::StatusPage
+			| Field::Network
+			| Field::Hotspot
+			| Field::Open(_)
+			| Field::Save => {}
 		}
 	}
 
@@ -757,10 +787,10 @@ impl App {
 					if !network.secured {
 						self.draft.password.clear();
 					}
-					self.screen = Screen::Settings;
+					self.screen = Screen::SettingsGroup(Group::Bridge);
 				}
 			}
-			Some(Key::Escape | Key::Left) => self.screen = Screen::Settings,
+			Some(Key::Escape | Key::Left) => self.screen = Screen::SettingsGroup(Group::Bridge),
 			Some(Key::Char('r')) => {
 				self.networks = None;
 				self.commands.push_back(Command::ScanWifi);

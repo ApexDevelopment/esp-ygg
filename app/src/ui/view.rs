@@ -12,7 +12,7 @@ use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
 use super::gopher::Content;
 use super::irc::Phase as IrcPhase;
-use super::{App, ConsoleFocus, FIELDS, Field, Lookup, MENU, Screen, TextInput, Uplink};
+use super::{App, ConsoleFocus, FIELDS, Field, Group, Lookup, MENU, Screen, TextInput, Uplink};
 use crate::time::{DateTime, format_offset};
 
 const ACCENT: Color = Color::Green;
@@ -41,7 +41,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
 		Screen::Irc => draw_irc(frame, body, app),
 		Screen::Ping => draw_ping(frame, body, app),
 		Screen::Console => draw_console(frame, body, app),
-		Screen::Settings => draw_settings(frame, body, app),
+		Screen::Settings => draw_settings(frame, body, app, FIELDS, app.settings_selected),
+		Screen::SettingsGroup(group) => {
+			draw_settings(frame, body, app, group.fields(), app.group_selected)
+		}
 		Screen::Networks => draw_networks(frame, body, app),
 	}
 	let footer_text = match &app.notice {
@@ -62,6 +65,8 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 		Screen::Ping => "Ping",
 		Screen::Console => "Console",
 		Screen::Settings => "Settings",
+		Screen::SettingsGroup(Group::Bridge) => "Bridge",
+		Screen::SettingsGroup(Group::Hotspot) => "Hotspot",
 		Screen::Networks => "WiFi networks",
 	};
 	let name = if app.saved.name.is_empty() {
@@ -91,7 +96,7 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 	}
 	if let Some(time) = app.status.as_ref().and_then(|status| status.board.time) {
 		// While settings are open, preview the time zone being chosen.
-		let offset = if app.screen == Screen::Settings {
+		let offset = if matches!(app.screen, Screen::Settings | Screen::SettingsGroup(_)) {
 			app.draft.utc_offset
 		} else {
 			app.saved.utc_offset
@@ -131,8 +136,10 @@ fn hints(app: &App) -> &'static str {
 		Screen::Ping if app.pinging => "enter stop  esc back",
 		Screen::Ping => "tab complete  enter start",
 		Screen::Console => "tab switch field  enter send",
-		Screen::Settings if app.editing.is_some() => "enter done  esc cancel",
-		Screen::Settings => "↑↓ select  enter change",
+		Screen::Settings | Screen::SettingsGroup(_) if app.editing.is_some() => {
+			"enter done  esc cancel"
+		}
+		Screen::Settings | Screen::SettingsGroup(_) => "↑↓ select  enter change",
 		Screen::Networks => "enter choose  r rescan  esc back",
 	}
 }
@@ -597,14 +604,10 @@ fn draw_console(frame: &mut Frame, area: Rect, app: &App) {
 	);
 }
 
-fn draw_settings(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_settings(frame: &mut Frame, area: Rect, app: &App, fields: &[Field], selected: usize) {
 	let draft = &app.draft;
 	let mut lines = Vec::new();
-	let mut selected_line = 0;
-	for (index, field) in FIELDS.iter().enumerate() {
-		if let Some(heading) = field.heading() {
-			lines.push(Line::styled(format!(" {heading}"), DIM));
-		}
+	for (index, field) in fields.iter().enumerate() {
 		let (label, value) = match field {
 			Field::Name => ("Name", draft.name.clone()),
 			Field::Channel => ("Channel", draft.channel.to_string()),
@@ -613,6 +616,8 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App) {
 				format!("UTC{}", format_offset(draft.utc_offset)),
 			),
 			Field::StatusPage => ("Status pages", on_off(draft.status_page)),
+			Field::Open(Group::Bridge) => ("Bridge", on_off(draft.bridge)),
+			Field::Open(Group::Hotspot) => ("Hotspot", on_off(draft.hotspot)),
 			Field::Bridge => ("Bridge", on_off(draft.bridge)),
 			Field::Network => ("Network", draft.ssid.clone()),
 			Field::Password => ("Password", "•".repeat(draft.password.chars().count())),
@@ -628,10 +633,7 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App) {
 			),
 			Field::Save => ("Save and restart", String::new()),
 		};
-		let selected = index == app.settings_selected;
-		if selected {
-			selected_line = lines.len();
-		}
+		let selected = index == selected;
 		if let (true, Some((editing, input))) = (selected, &app.editing)
 			&& editing == field
 		{
@@ -652,10 +654,16 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App) {
 			continue;
 		}
 		let text = format!(" {label:<13}{value}");
+		let text = if let Field::Open(_) = field {
+			// An arrow at the right edge marks a menu of its own.
+			pad(&text, area.width.saturating_sub(2)) + "› "
+		} else {
+			pad(&text, area.width)
+		};
 		let style = if selected { SELECTED } else { Style::new() };
-		lines.push(Line::styled(pad(&text, area.width), style));
+		lines.push(Line::styled(text, style));
 	}
-	let scroll = (selected_line + 1).saturating_sub(usize::from(area.height));
+	let scroll = (selected + 1).saturating_sub(usize::from(area.height));
 	frame.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), area);
 }
 
