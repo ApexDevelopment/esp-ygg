@@ -611,20 +611,20 @@ fn completes_addresses_of_known_nodes_with_tab() {
 	// Every Yggdrasil address starts with 2, so Tab cycles through both.
 	type_text(&mut app, "2");
 	press(&mut app, &[Key::Tab]);
-	assert_eq!(app.console_target.text, address(&kitchen).to_string());
+	assert_eq!(app.console.target.text, address(&kitchen).to_string());
 	assert!(screen(&app).join("\n").contains("Kitchen  1 of 2"));
 	press(&mut app, &[Key::Tab]);
-	assert_eq!(app.console_target.text, address(&other).to_string());
+	assert_eq!(app.console.target.text, address(&other).to_string());
 	press(&mut app, &[Key::Tab]);
-	assert_eq!(app.console_target.text, address(&kitchen).to_string());
+	assert_eq!(app.console.target.text, address(&kitchen).to_string());
 
 	// A name works too, and Tab on a whole address moves on as before.
-	app.console_target.clear();
+	app.console.target.clear();
 	type_text(&mut app, "kit");
 	press(&mut app, &[Key::Tab]);
-	assert_eq!(app.console_target.text, address(&kitchen).to_string());
+	assert_eq!(app.console.target.text, address(&kitchen).to_string());
 	press(&mut app, &[Key::Tab]);
-	assert_eq!(app.console_focus, ConsoleFocus::Message);
+	assert_eq!(app.console.focus, console::Focus::Message);
 }
 
 #[test]

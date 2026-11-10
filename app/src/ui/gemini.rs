@@ -1,6 +1,14 @@
 //! A Gemini browser: an address line, pages to read and follow links on,
 //! questions servers ask, and history to go back through.
 
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::Line as ScreenLine;
+use ratatui::widgets::Paragraph;
+
+use super::view::{ACCENT, DIM, SELECTED, field_line, visible_end, wrap};
+
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -8,7 +16,6 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::net::SocketAddrV6;
 
-use super::view::wrap;
 use super::{Command, Commands, Key, Outcome, TextInput, navigation};
 use crate::gemini::{self, Header, Line, LinkError, Url};
 use crate::overlay::Stream;
@@ -464,6 +471,70 @@ fn add_wrapped(rows: &mut Vec<Row>, text: &str, prefixes: (&str, &str), kind: Ro
 			text: format!("{prefix}{part}"),
 			kind,
 		});
+	}
+}
+
+/// Drawing, kept apart from the state it shows.
+impl Browser {
+	pub fn draw(&self, frame: &mut Frame, area: Rect) {
+		let browser = self;
+		let [top, status, body] = Layout::vertical([
+			Constraint::Length(1),
+			Constraint::Length(1),
+			Constraint::Fill(1),
+		])
+		.areas(area);
+		let top_line = match (&browser.prompt, &browser.page) {
+			(Some(prompt), _) => field_line(">", &prompt.answer, true),
+			(None, Some(page)) if !browser.editing => {
+				ScreenLine::styled(format!(" {}", visible_end(&page.url.to_string(), 38)), DIM)
+			}
+			_ => field_line("go", &browser.address, browser.editing),
+		};
+		frame.render_widget(Paragraph::new(top_line), top);
+		let status_line = if let Some(prompt) = &browser.prompt {
+			ScreenLine::styled(format!(" {}", prompt.question), Style::new().fg(ACCENT))
+		} else if let Some(error) = &browser.error {
+			ScreenLine::styled(format!(" {error}"), Style::new().fg(Color::Yellow))
+		} else if browser.is_loading() {
+			ScreenLine::styled(" Loading…", DIM)
+		} else {
+			ScreenLine::raw("")
+		};
+		frame.render_widget(Paragraph::new(status_line), status);
+		let Some(page) = &browser.page else {
+			return;
+		};
+		let lines: Vec<ScreenLine> = page
+			.rows
+			.iter()
+			.skip(page.scroll)
+			.take(usize::from(body.height))
+			.map(|row| {
+				let style = match row.kind {
+					RowKind::Text => Style::new(),
+					RowKind::Heading => Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+					RowKind::Link(link) if page.selected == Some(link) => SELECTED,
+					RowKind::Link(_) => Style::new().fg(Color::Cyan),
+					RowKind::Quote | RowKind::Preformatted => DIM,
+				};
+				ScreenLine::styled(row.text.as_str(), style)
+			})
+			.collect();
+		frame.render_widget(Paragraph::new(lines), body);
+	}
+
+	pub fn hints(&self) -> &'static str {
+		let browser = self;
+		if browser.prompt.is_some() {
+			"type an answer  enter send"
+		} else if browser.editing {
+			"tab complete  enter go"
+		} else if browser.is_loading() {
+			"esc stop"
+		} else {
+			"↑↓ move  enter open  g address  esc back"
+		}
 	}
 }
 

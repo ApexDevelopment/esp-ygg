@@ -7,19 +7,15 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
-use super::gopher::Content;
-use super::irc::Phase as IrcPhase;
-use super::{
-	APPS, App, ConsoleFocus, FIELDS, Field, Group, Lookup, MENU, Screen, TextInput, Uplink,
-};
+use super::{APPS, App, FIELDS, Field, Group, Lookup, MENU, Screen, TextInput, Uplink};
 use crate::time::{DateTime, format_offset};
 
-const ACCENT: Color = Color::Green;
-const DIM: Style = Style::new().fg(Color::DarkGray);
-const SELECTED: Style = Style::new().fg(Color::Black).bg(ACCENT);
+pub(super) const ACCENT: Color = Color::Green;
+pub(super) const DIM: Style = Style::new().fg(Color::DarkGray);
+pub(super) const SELECTED: Style = Style::new().fg(Color::Black).bg(ACCENT);
 
 /// Draws the whole screen.
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -36,18 +32,25 @@ pub fn draw(frame: &mut Frame, app: &App) {
 		Screen::Nodes => draw_nodes(frame, body, app),
 		Screen::Node(key) => draw_node(frame, body, app, key),
 		Screen::Neighbors => draw_neighbors(frame, body, app),
-		Screen::Gopher => draw_gopher(frame, body, app),
+		Screen::Gopher => app.gopher.draw(frame, body),
 		#[cfg(feature = "gemini")]
-		Screen::Gemini => draw_gemini(frame, body, app),
+		Screen::Gemini => app.gemini.draw(frame, body),
 		#[cfg(not(feature = "gemini"))]
 		Screen::Gemini => {}
 		#[cfg(feature = "voice")]
-		Screen::Call => draw_call(frame, body, app),
+		Screen::Call => {
+			let who = app.call.peer.as_ref().map(|(address, name)| {
+				name.clone()
+					.unwrap_or_else(|| app.short_name_of_address(address))
+			});
+			app.call
+				.draw(frame, body, app.now, who.as_deref().unwrap_or_default())
+		}
 		#[cfg(not(feature = "voice"))]
 		Screen::Call => {}
-		Screen::Irc => draw_irc(frame, body, app),
-		Screen::Ping => draw_ping(frame, body, app),
-		Screen::Console => draw_console(frame, body, app),
+		Screen::Irc => app.irc.draw(frame, body),
+		Screen::Ping => app.ping.draw(frame, body),
+		Screen::Console => app.console.draw(frame, body),
 		Screen::Settings => draw_settings(frame, body, app, FIELDS, app.settings_selected),
 		Screen::SettingsGroup(group) => {
 			draw_settings(frame, body, app, group.fields(), app.group_selected)
@@ -131,25 +134,18 @@ fn hints(app: &App) -> &'static str {
 		Screen::Nodes => "↑↓ select  enter open  esc back",
 		Screen::Node(_) => "p ping  m message  esc back",
 		Screen::Neighbors => "esc back",
-		Screen::Irc if app.irc.phase == IrcPhase::Setup => "↑↓ field  enter connect  esc back",
-		Screen::Irc => "tab buffer  ↑↓ scroll  esc leave",
-		Screen::Gopher if app.gopher.search.is_some() => "type a search  enter go",
-		Screen::Gopher if app.gopher.editing => "tab complete  enter go",
-		Screen::Gopher => match app.gopher.page.as_ref().map(|page| &page.content) {
-			Some(Content::Text { .. }) => "↑↓ scroll  g address  esc back",
-			_ => "enter open  g address  esc back",
-		},
+		Screen::Irc => app.irc.hints(),
+		Screen::Gopher => app.gopher.hints(),
 		#[cfg(feature = "gemini")]
-		Screen::Gemini => gemini_hints(&app.gemini),
+		Screen::Gemini => app.gemini.hints(),
 		#[cfg(not(feature = "gemini"))]
 		Screen::Gemini => "",
 		#[cfg(feature = "voice")]
-		Screen::Call => call_hints(app.call.phase),
+		Screen::Call => app.call.hints(),
 		#[cfg(not(feature = "voice"))]
 		Screen::Call => "",
-		Screen::Ping if app.pinging => "enter stop  esc back",
-		Screen::Ping => "tab complete  enter start",
-		Screen::Console => "tab switch field  enter send",
+		Screen::Ping => app.ping.hints(),
+		Screen::Console => app.console.hints(),
 		Screen::Settings | Screen::SettingsGroup(_) if app.editing.is_some() => {
 			"enter done  esc cancel"
 		}
@@ -219,7 +215,7 @@ fn draw_menu(frame: &mut Frame, area: Rect, app: &App, items: &[(&str, Screen)],
 /// New messages waiting on a menu item's screen.
 fn unread(app: &App, screen: Screen) -> usize {
 	match screen {
-		Screen::Console => app.unread,
+		Screen::Console => app.console.unread,
 		Screen::Irc => app.irc.unread(),
 		Screen::Apps => APPS.iter().map(|&(_, screen)| unread(app, screen)).sum(),
 		_ => 0,
@@ -288,66 +284,6 @@ fn draw_node(frame: &mut Frame, area: Rect, app: &App, key: yggdrasil_espnow::Pu
 	frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn draw_irc(frame: &mut Frame, area: Rect, app: &App) {
-	let client = &app.irc;
-	if client.phase == IrcPhase::Setup {
-		let mut lines = Vec::new();
-		for (index, label) in ["server", "nick", "join"].iter().enumerate() {
-			lines.push(field_line(
-				label,
-				&client.form[index],
-				index == client.field,
-			));
-		}
-		if let Some(error) = &client.error {
-			lines.push(Line::raw(""));
-			lines.push(Line::styled(
-				format!(" {error}"),
-				Style::new().fg(Color::Yellow),
-			));
-		}
-		frame.render_widget(Paragraph::new(lines), area);
-		return;
-	}
-	let [header, log, input] = Layout::vertical([
-		Constraint::Length(1),
-		Constraint::Fill(1),
-		Constraint::Length(1),
-	])
-	.areas(area);
-	let buffer = &client.buffers[client.current];
-	let mut spans = Vec::from([Span::styled(
-		format!(" {}", buffer.name),
-		Style::new().fg(ACCENT),
-	)]);
-	if client.phase == IrcPhase::Connecting {
-		spans.push(Span::styled(" connecting…", DIM));
-	} else {
-		spans.push(Span::styled(format!(" as {}", client.nick), DIM));
-	}
-	for other in client.buffers.iter().filter(|other| other.unread > 0) {
-		spans.push(Span::raw(format!(" {}({})", other.name, other.unread)));
-	}
-	frame.render_widget(Paragraph::new(Line::from(spans)), header);
-	let width = usize::from(log.width.saturating_sub(1)).max(1);
-	let wrapped: Vec<String> = buffer
-		.lines
-		.iter()
-		.flat_map(|line| wrap(line, width))
-		.collect();
-	let height = usize::from(log.height);
-	let end = wrapped
-		.len()
-		.saturating_sub(client.scroll.min(wrapped.len().saturating_sub(height)));
-	let start = end.saturating_sub(height);
-	let lines: Vec<Line> = wrapped[start..end]
-		.iter()
-		.map(|line| Line::raw(format!(" {line}")))
-		.collect();
-	frame.render_widget(Paragraph::new(lines), log);
-	frame.render_widget(Paragraph::new(field_line(">", &client.input, true)), input);
-}
-
 /// Breaks `text` into lines of at most `width` characters, at spaces where
 /// it can.
 pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
@@ -385,127 +321,6 @@ pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
 		lines.push(line);
 	}
 	lines
-}
-
-fn draw_gopher(frame: &mut Frame, area: Rect, app: &App) {
-	let browser = &app.gopher;
-	let [top, status, body] = Layout::vertical([
-		Constraint::Length(1),
-		Constraint::Length(1),
-		Constraint::Fill(1),
-	])
-	.areas(area);
-	let top_line = match (&browser.search, &browser.page) {
-		(Some((_, _, query)), _) => field_line("search", query, true),
-		(None, Some(page)) if !browser.editing => {
-			Line::styled(format!(" {}", visible_end(&page.url.to_string(), 38)), DIM)
-		}
-		_ => field_line("go", &browser.address, browser.editing),
-	};
-	frame.render_widget(Paragraph::new(top_line), top);
-	let status_line = if let Some(error) = &browser.error {
-		Line::styled(format!(" {error}"), Style::new().fg(Color::Yellow))
-	} else if browser.is_loading() {
-		Line::styled(" Loading…", DIM)
-	} else {
-		Line::raw("")
-	};
-	frame.render_widget(Paragraph::new(status_line), status);
-	let Some(page) = &browser.page else {
-		return;
-	};
-	match &page.content {
-		Content::Text { text, scroll } => {
-			let text = Paragraph::new(text.as_str())
-				.wrap(Wrap { trim: false })
-				.scroll((*scroll, 0));
-			frame.render_widget(text, body);
-		}
-		Content::Menu { items, selected } => {
-			let lines: Vec<ListItem> = items
-				.iter()
-				.map(|item| {
-					let text = match item.kind {
-						'1' => format!("{}/", item.text),
-						'7' => format!("{}?", item.text),
-						_ => item.text.clone(),
-					};
-					let style = if item.is_link() && item.is_supported() {
-						Style::new()
-					} else {
-						DIM
-					};
-					ListItem::new(Line::styled(text, style))
-				})
-				.collect();
-			let list = List::new(lines).highlight_style(SELECTED);
-			let mut state = ListState::default().with_selected(Some(*selected));
-			frame.render_stateful_widget(list, body, &mut state);
-		}
-	}
-}
-
-#[cfg(feature = "gemini")]
-fn gemini_hints(browser: &super::gemini::Browser) -> &'static str {
-	if browser.prompt.is_some() {
-		"type an answer  enter send"
-	} else if browser.editing {
-		"tab complete  enter go"
-	} else if browser.is_loading() {
-		"esc stop"
-	} else {
-		"↑↓ move  enter open  g address  esc back"
-	}
-}
-
-#[cfg(feature = "gemini")]
-fn draw_gemini(frame: &mut Frame, area: Rect, app: &App) {
-	use super::gemini::RowKind;
-	let browser = &app.gemini;
-	let [top, status, body] = Layout::vertical([
-		Constraint::Length(1),
-		Constraint::Length(1),
-		Constraint::Fill(1),
-	])
-	.areas(area);
-	let top_line = match (&browser.prompt, &browser.page) {
-		(Some(prompt), _) => field_line(">", &prompt.answer, true),
-		(None, Some(page)) if !browser.editing => {
-			Line::styled(format!(" {}", visible_end(&page.url.to_string(), 38)), DIM)
-		}
-		_ => field_line("go", &browser.address, browser.editing),
-	};
-	frame.render_widget(Paragraph::new(top_line), top);
-	let status_line = if let Some(prompt) = &browser.prompt {
-		Line::styled(format!(" {}", prompt.question), Style::new().fg(ACCENT))
-	} else if let Some(error) = &browser.error {
-		Line::styled(format!(" {error}"), Style::new().fg(Color::Yellow))
-	} else if browser.is_loading() {
-		Line::styled(" Loading…", DIM)
-	} else {
-		Line::raw("")
-	};
-	frame.render_widget(Paragraph::new(status_line), status);
-	let Some(page) = &browser.page else {
-		return;
-	};
-	let lines: Vec<Line> = page
-		.rows
-		.iter()
-		.skip(page.scroll)
-		.take(usize::from(body.height))
-		.map(|row| {
-			let style = match row.kind {
-				RowKind::Text => Style::new(),
-				RowKind::Heading => Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-				RowKind::Link(link) if page.selected == Some(link) => SELECTED,
-				RowKind::Link(_) => Style::new().fg(Color::Cyan),
-				RowKind::Quote | RowKind::Preformatted => DIM,
-			};
-			Line::styled(row.text.as_str(), style)
-		})
-		.collect();
-	frame.render_widget(Paragraph::new(lines), body);
 }
 
 fn draw_neighbors(frame: &mut Frame, area: Rect, app: &App) {
@@ -576,119 +391,6 @@ fn truncate(text: &str, width: usize) -> String {
 	let mut short: String = text.chars().take(width - 1).collect();
 	short.push('…');
 	short
-}
-
-#[cfg(feature = "voice")]
-fn draw_call(frame: &mut Frame, area: Rect, app: &App) {
-	use super::call::Phase;
-	let phone = &app.call;
-	let who = phone
-		.peer
-		.as_ref()
-		.map(|(address, name)| {
-			name.clone()
-				.unwrap_or_else(|| app.short_name_of_address(address))
-		})
-		.unwrap_or_default();
-	let mut lines = Vec::new();
-	match phone.phase {
-		Phase::Idle => {
-			lines.push(field_line("to", &phone.address, true));
-			lines.push(Line::raw(""));
-			if let Some(ended) = &phone.ended {
-				lines.push(Line::styled(format!(" {ended}"), DIM));
-			}
-			lines.push(Line::styled(" Hold G0 to hear yourself back", DIM));
-		}
-		Phase::Calling => lines.push(Line::raw(format!(" Calling {who}…"))),
-		Phase::Ringing => lines.push(Line::raw(format!(" Ringing {who}…"))),
-		Phase::Incoming => {
-			lines.push(Line::styled(" Incoming call from", DIM));
-			lines.push(Line::raw(format!(" {who}")));
-		}
-		Phase::Up => {
-			lines.push(Line::raw(format!(" In a call with {who}")));
-			if let Some(since) = phone.since {
-				let seconds = app.now.saturating_duration_since(since).as_secs();
-				lines.push(Line::styled(
-					format!(" {}:{:02}", seconds / 60, seconds % 60),
-					DIM,
-				));
-			}
-			lines.push(Line::raw(""));
-			lines.push(if phone.talking {
-				Line::styled(pad(" Talking", area.width), SELECTED)
-			} else {
-				Line::styled(" Hold G0 to talk", DIM)
-			});
-		}
-	}
-	frame.render_widget(Paragraph::new(lines), area);
-}
-
-#[cfg(feature = "voice")]
-fn call_hints(phase: super::call::Phase) -> &'static str {
-	use super::call::Phase;
-	match phase {
-		Phase::Idle => "tab complete  enter call",
-		Phase::Incoming => "enter answer  esc decline",
-		Phase::Calling | Phase::Ringing | Phase::Up => "esc hang up",
-	}
-}
-
-fn draw_ping(frame: &mut Frame, area: Rect, app: &App) {
-	let [target, summary, log] = Layout::vertical([
-		Constraint::Length(1),
-		Constraint::Length(1),
-		Constraint::Fill(1),
-	])
-	.areas(area);
-	frame.render_widget(
-		Paragraph::new(field_line("to", &app.ping_target, !app.pinging)),
-		target,
-	);
-	let mut text = format!(" sent {}  received {}", app.ping_sent, app.ping_received);
-	if app.ping_received > 0 {
-		let average = app.ping_total / app.ping_received;
-		text.push_str(&format!("  avg {} ms", average.as_millis()));
-	}
-	frame.render_widget(Paragraph::new(Line::styled(text, DIM)), summary);
-	frame.render_widget(Paragraph::new(tail(&app.ping_log, log.height)), log);
-}
-
-fn draw_console(frame: &mut Frame, area: Rect, app: &App) {
-	let [log, target, message] = Layout::vertical([
-		Constraint::Fill(1),
-		Constraint::Length(1),
-		Constraint::Length(1),
-	])
-	.areas(area);
-	let lines = if app.console_log.is_empty() {
-		Vec::from([Line::styled(
-			format!(" Listening on UDP port {}", crate::CONSOLE_PORT),
-			DIM,
-		)])
-	} else {
-		tail(&app.console_log, log.height)
-	};
-	frame.render_widget(Paragraph::new(lines), log);
-	let focus = app.console_focus;
-	frame.render_widget(
-		Paragraph::new(field_line(
-			"to",
-			&app.console_target,
-			focus == ConsoleFocus::Target,
-		)),
-		target,
-	);
-	frame.render_widget(
-		Paragraph::new(field_line(
-			">",
-			&app.console_message,
-			focus == ConsoleFocus::Message,
-		)),
-		message,
-	);
 }
 
 fn draw_settings(frame: &mut Frame, area: Rect, app: &App, fields: &[Field], selected: usize) {
@@ -783,7 +485,7 @@ fn on_off(on: bool) -> String {
 }
 
 /// A labelled text field, highlighted with a cursor when focused.
-fn field_line<'a>(label: &'a str, input: &TextInput, focused: bool) -> Line<'a> {
+pub(super) fn field_line<'a>(label: &'a str, input: &TextInput, focused: bool) -> Line<'a> {
 	let text = visible_end(&input.display(), 34);
 	let value = if focused {
 		Span::styled(
@@ -798,12 +500,12 @@ fn field_line<'a>(label: &'a str, input: &TextInput, focused: bool) -> Line<'a> 
 
 /// The last `width` characters of `text`, so the end of a long entry stays
 /// in view while typing.
-fn visible_end(text: &str, width: usize) -> String {
+pub(super) fn visible_end(text: &str, width: usize) -> String {
 	let count = text.chars().count();
 	text.chars().skip(count.saturating_sub(width)).collect()
 }
 
-fn tail(log: &alloc::collections::VecDeque<String>, height: u16) -> Vec<Line<'static>> {
+pub(super) fn tail(log: &alloc::collections::VecDeque<String>, height: u16) -> Vec<Line<'static>> {
 	let skip = log.len().saturating_sub(usize::from(height));
 	log.iter()
 		.skip(skip)
@@ -812,7 +514,7 @@ fn tail(log: &alloc::collections::VecDeque<String>, height: u16) -> Vec<Line<'st
 }
 
 /// Pads `text` so a highlighted line spans the full width.
-fn pad(text: &str, width: u16) -> String {
+pub(super) fn pad(text: &str, width: u16) -> String {
 	format!("{text:<width$}", width = usize::from(width))
 }
 

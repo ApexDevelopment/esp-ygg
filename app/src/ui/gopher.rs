@@ -1,6 +1,14 @@
 //! A Gopher browser: an address line, menus to pick from, text to scroll,
 //! and history to go back through.
 
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Color, Style};
+use ratatui::text::Line;
+use ratatui::widgets::{List, ListItem, ListState, Paragraph, Wrap};
+
+use super::view::{DIM, SELECTED, field_line, visible_end};
+
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -247,4 +255,81 @@ impl Browser {
 
 fn cannot_resolve(url: &Url) -> String {
 	format!("Can't look up {}; use an address", url.host)
+}
+
+/// Drawing, kept apart from the state it shows.
+impl Browser {
+	pub fn draw(&self, frame: &mut Frame, area: Rect) {
+		let browser = self;
+		let [top, status, body] = Layout::vertical([
+			Constraint::Length(1),
+			Constraint::Length(1),
+			Constraint::Fill(1),
+		])
+		.areas(area);
+		let top_line = match (&browser.search, &browser.page) {
+			(Some((_, _, query)), _) => field_line("search", query, true),
+			(None, Some(page)) if !browser.editing => {
+				Line::styled(format!(" {}", visible_end(&page.url.to_string(), 38)), DIM)
+			}
+			_ => field_line("go", &browser.address, browser.editing),
+		};
+		frame.render_widget(Paragraph::new(top_line), top);
+		let status_line = if let Some(error) = &browser.error {
+			Line::styled(format!(" {error}"), Style::new().fg(Color::Yellow))
+		} else if browser.is_loading() {
+			Line::styled(" Loading…", DIM)
+		} else {
+			Line::raw("")
+		};
+		frame.render_widget(Paragraph::new(status_line), status);
+		let Some(page) = &browser.page else {
+			return;
+		};
+		match &page.content {
+			Content::Text { text, scroll } => {
+				let text = Paragraph::new(text.as_str())
+					.wrap(Wrap { trim: false })
+					.scroll((*scroll, 0));
+				frame.render_widget(text, body);
+			}
+			Content::Menu { items, selected } => {
+				let lines: Vec<ListItem> = items
+					.iter()
+					.map(|item| {
+						let text = match item.kind {
+							'1' => format!("{}/", item.text),
+							'7' => format!("{}?", item.text),
+							_ => item.text.clone(),
+						};
+						let style = if item.is_link() && item.is_supported() {
+							Style::new()
+						} else {
+							DIM
+						};
+						ListItem::new(Line::styled(text, style))
+					})
+					.collect();
+				let list = List::new(lines).highlight_style(SELECTED);
+				let mut state = ListState::default().with_selected(Some(*selected));
+				frame.render_stateful_widget(list, body, &mut state);
+			}
+		}
+	}
+
+	pub fn hints(&self) -> &'static str {
+		if self.search.is_some() {
+			"type a search  enter go"
+		} else if self.editing {
+			"tab complete  enter go"
+		} else if let Some(Page {
+			content: Content::Text { .. },
+			..
+		}) = &self.page
+		{
+			"↑↓ scroll  g address  esc back"
+		} else {
+			"enter open  g address  esc back"
+		}
+	}
 }

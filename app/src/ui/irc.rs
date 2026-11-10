@@ -1,6 +1,14 @@
 //! An IRC client: a form to connect, then one buffer of lines for the
 //! server and for each channel or private conversation.
 
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::Paragraph;
+
+use super::view::{ACCENT, DIM, field_line, wrap};
+
 use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -374,4 +382,75 @@ fn parse_server(text: &str) -> Option<SocketAddrV6> {
 		let address: Ipv6Addr = text.parse().ok()?;
 		Some(SocketAddrV6::new(address, irc::PORT, 0, 0))
 	})
+}
+
+/// Drawing, kept apart from the state it shows.
+impl Client {
+	pub fn draw(&self, frame: &mut Frame, area: Rect) {
+		let client = self;
+		if client.phase == Phase::Setup {
+			let mut lines = Vec::new();
+			for (index, label) in ["server", "nick", "join"].iter().enumerate() {
+				lines.push(field_line(
+					label,
+					&client.form[index],
+					index == client.field,
+				));
+			}
+			if let Some(error) = &client.error {
+				lines.push(Line::raw(""));
+				lines.push(Line::styled(
+					format!(" {error}"),
+					Style::new().fg(Color::Yellow),
+				));
+			}
+			frame.render_widget(Paragraph::new(lines), area);
+			return;
+		}
+		let [header, log, input] = Layout::vertical([
+			Constraint::Length(1),
+			Constraint::Fill(1),
+			Constraint::Length(1),
+		])
+		.areas(area);
+		let buffer = &client.buffers[client.current];
+		let mut spans = Vec::from([Span::styled(
+			format!(" {}", buffer.name),
+			Style::new().fg(ACCENT),
+		)]);
+		if client.phase == Phase::Connecting {
+			spans.push(Span::styled(" connecting…", DIM));
+		} else {
+			spans.push(Span::styled(format!(" as {}", client.nick), DIM));
+		}
+		for other in client.buffers.iter().filter(|other| other.unread > 0) {
+			spans.push(Span::raw(format!(" {}({})", other.name, other.unread)));
+		}
+		frame.render_widget(Paragraph::new(Line::from(spans)), header);
+		let width = usize::from(log.width.saturating_sub(1)).max(1);
+		let wrapped: Vec<String> = buffer
+			.lines
+			.iter()
+			.flat_map(|line| wrap(line, width))
+			.collect();
+		let height = usize::from(log.height);
+		let end = wrapped
+			.len()
+			.saturating_sub(client.scroll.min(wrapped.len().saturating_sub(height)));
+		let start = end.saturating_sub(height);
+		let lines: Vec<Line> = wrapped[start..end]
+			.iter()
+			.map(|line| Line::raw(format!(" {line}")))
+			.collect();
+		frame.render_widget(Paragraph::new(lines), log);
+		frame.render_widget(Paragraph::new(field_line(">", &client.input, true)), input);
+	}
+
+	pub fn hints(&self) -> &'static str {
+		if self.phase == Phase::Setup {
+			"↑↓ field  enter connect  esc back"
+		} else {
+			"tab buffer  ↑↓ scroll  esc leave"
+		}
+	}
 }

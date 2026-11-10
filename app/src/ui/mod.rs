@@ -5,12 +5,14 @@
 
 #[cfg(feature = "voice")]
 mod call;
+mod console;
 #[cfg(feature = "gemini")]
 mod gemini;
 mod gopher;
 mod input;
 mod irc;
 pub mod keyboard;
+mod ping;
 pub mod remote;
 mod view;
 
@@ -19,25 +21,22 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::net::{Ipv6Addr, SocketAddrV6};
-use core::time::Duration;
 
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 use yggdrasil_espnow::{Instant, Mac, Node, Platform, PublicKey};
 
 use crate::BoardInfo;
-use crate::overlay::{CONSOLE_PORT, Event, Stream};
+use crate::overlay::{Event, Stream};
 use crate::settings::Settings;
 use crate::time::{format_offset, parse_offset};
 pub use input::TextInput;
 pub use view::draw;
 
-const PING_INTERVAL: Duration = Duration::from_secs(1);
 const LOG_LINES: usize = 64;
 /// Nodeinfo requests in flight at once, so lookups do not crowd the radio.
 const MAX_LOOKUPS: usize = 3;
 /// Lookups that time out are retried this many times.
 const LOOKUP_ATTEMPTS: u8 = 3;
-const MAX_MESSAGE: usize = 200;
 
 /// A key press, after the keyboard driver has applied Shift and Fn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +60,8 @@ type Commands = VecDeque<Command>;
 enum Outcome {
 	Stay,
 	Leave,
+	/// Stays, with a word about what went wrong.
+	Notice(&'static str),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -264,12 +265,6 @@ const FIELDS: &[Field] = &[
 	Field::Save,
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ConsoleFocus {
-	Target,
-	Message,
-}
-
 /// The home menu, without screens for services left out of the build.
 const MENU: &[(&str, Screen)] = &[
 	("Yggdrasil Nodes", Screen::Nodes),
@@ -314,19 +309,8 @@ pub struct App {
 	lookups: BTreeMap<PublicKey, Lookup>,
 	nodes_selected: usize,
 
-	ping_target: TextInput,
-	pinging: bool,
-	last_ping: Option<Instant>,
-	ping_log: VecDeque<String>,
-	ping_sent: u32,
-	ping_received: u32,
-	ping_total: Duration,
-
-	console_target: TextInput,
-	console_message: TextInput,
-	console_focus: ConsoleFocus,
-	console_log: VecDeque<String>,
-	unread: usize,
+	ping: ping::Ping,
+	console: console::Console,
 
 	gopher: gopher::Browser,
 	irc: irc::Client,
@@ -357,18 +341,8 @@ impl App {
 			completion: None,
 			lookups: BTreeMap::new(),
 			nodes_selected: 0,
-			ping_target: TextInput::new("", 45),
-			pinging: false,
-			last_ping: None,
-			ping_log: VecDeque::new(),
-			ping_sent: 0,
-			ping_received: 0,
-			ping_total: Duration::ZERO,
-			console_target: TextInput::new("", 52),
-			console_message: TextInput::new("", MAX_MESSAGE),
-			console_focus: ConsoleFocus::Target,
-			console_log: VecDeque::new(),
-			unread: 0,
+			ping: ping::Ping::new(),
+			console: console::Console::new(),
 			gopher: gopher::Browser::new(),
 			irc: irc::Client::new(&default_nick(&settings.name)),
 			#[cfg(feature = "gemini")]
@@ -404,16 +378,7 @@ impl App {
 	/// Runs timers: repeated pings and nodeinfo lookups.
 	pub fn tick(&mut self, now: Instant) {
 		self.now = now;
-		if self.pinging
-			&& self
-				.last_ping
-				.is_none_or(|last| now >= last + PING_INTERVAL)
-			&& let Ok(target) = self.ping_target.text.parse()
-		{
-			self.commands.push_back(Command::Ping(target));
-			self.last_ping = Some(now);
-			self.ping_sent += 1;
-		}
+		self.ping.tick(now, &mut self.commands);
 		// Names are looked up where they are shown or can be typed.
 		if matches!(
 			self.screen,
@@ -436,18 +401,8 @@ impl App {
 				from,
 				sequence,
 				round_trip,
-			} => {
-				if self.ping_target.text.parse() == Ok(from) {
-					self.ping_received += 1;
-					self.ping_total += round_trip;
-					self.log_ping(format!("#{sequence}  {} ms", round_trip.as_millis()));
-				}
-			}
-			Event::PingTimeout { target, sequence } => {
-				if self.ping_target.text.parse() == Ok(target) {
-					self.log_ping(format!("#{sequence}  timed out"));
-				}
-			}
+			} => self.ping.replied(from, sequence, round_trip),
+			Event::PingTimeout { target, sequence } => self.ping.timed_out(target, sequence),
 			Event::Fetched { data } => self.gopher.fetched(&data),
 			Event::FetchFailed => self.gopher.failed(),
 			Event::StreamOpened(Stream::Irc) => {
@@ -477,16 +432,9 @@ impl App {
 				self.gemini.closed(&mut self.commands);
 			}
 			Event::Datagram { from, data } => {
-				let text = String::from_utf8_lossy(&data);
-				let line = format!(
-					"{} {}",
-					self.short_name_of_address(from.ip()),
-					text.trim_end()
-				);
-				push_limited(&mut self.console_log, line);
-				if self.screen != Screen::Console {
-					self.unread += 1;
-				}
+				let sender = self.short_name_of_address(from.ip());
+				let viewing = self.screen == Screen::Console;
+				self.console.received(&sender, &data, viewing);
 			}
 		}
 	}
@@ -516,63 +464,59 @@ impl App {
 		} else if self.complete_address() {
 			return;
 		}
-		match self.screen {
+		let outcome = match self.screen {
 			Screen::Home => self.home_key(key),
 			Screen::Apps => self.apps_key(key),
 			Screen::Nodes => self.nodes_key(key),
 			Screen::Node(node) => self.node_key(node, key),
-			Screen::Neighbors => {
-				if matches!(navigation(key), Some(Key::Escape | Key::Left)) {
-					self.screen = Screen::Home;
-				}
-			}
-			Screen::Ping => self.ping_key(key),
-			Screen::Console => self.console_key(key),
+			Screen::Neighbors => match navigation(key) {
+				Some(Key::Escape | Key::Left) => Outcome::Leave,
+				_ => Outcome::Stay,
+			},
 			Screen::Settings | Screen::SettingsGroup(_) => self.settings_key(key),
 			Screen::WifiNetworks => self.wifi_networks_key(key),
-			Screen::Irc => {
-				let outcome = self.irc.handle_key(key, &mut self.commands);
-				if let Outcome::Leave = outcome {
-					self.screen = Screen::Apps;
-				}
-			}
-			Screen::Call => {
-				#[cfg(feature = "voice")]
-				{
-					let outcome = self.call.handle_key(key, self.now, &mut self.commands);
-					if let Outcome::Leave = outcome {
-						self.screen = Screen::Apps;
-					}
-				}
-			}
-			Screen::Gemini => {
-				#[cfg(feature = "gemini")]
-				{
-					let outcome = self.gemini.handle_key(key, &mut self.commands);
-					if let Outcome::Leave = outcome {
-						self.screen = Screen::Apps;
-					}
-				}
-			}
-			Screen::Gopher => {
-				let outcome = self.gopher.handle_key(key, &mut self.commands);
-				if let Outcome::Leave = outcome {
-					self.screen = Screen::Apps;
-				}
-			}
+			Screen::Ping => self.ping.handle_key(key),
+			Screen::Console => self.console.handle_key(key, &mut self.commands),
+			Screen::Irc => self.irc.handle_key(key, &mut self.commands),
+			Screen::Gopher => self.gopher.handle_key(key, &mut self.commands),
+			#[cfg(feature = "gemini")]
+			Screen::Gemini => self.gemini.handle_key(key, &mut self.commands),
+			#[cfg(feature = "voice")]
+			Screen::Call => self.call.handle_key(key, self.now, &mut self.commands),
+			#[cfg(not(feature = "gemini"))]
+			Screen::Gemini => Outcome::Stay,
+			#[cfg(not(feature = "voice"))]
+			Screen::Call => Outcome::Stay,
+		};
+		match outcome {
+			Outcome::Stay => {}
+			Outcome::Leave => self.screen = self.parent(),
+			Outcome::Notice(notice) => self.notice = Some(notice.into()),
 		}
 	}
 
-	fn home_key(&mut self, key: Key) {
+	/// Where leaving the current screen goes.
+	fn parent(&self) -> Screen {
+		match self.screen {
+			Screen::Node(_) => Screen::Nodes,
+			Screen::SettingsGroup(_) => Screen::Settings,
+			Screen::WifiNetworks => Screen::SettingsGroup(Group::Bridge),
+			screen if APPS.iter().any(|&(_, app)| app == screen) => Screen::Apps,
+			_ => Screen::Home,
+		}
+	}
+
+	fn home_key(&mut self, key: Key) -> Outcome {
 		match navigation(key) {
 			Some(Key::Up) => self.menu = self.menu.saturating_sub(1),
 			Some(Key::Down) => self.menu = (self.menu + 1).min(MENU.len() - 1),
 			Some(Key::Enter | Key::Right) => self.open(MENU[self.menu].1),
 			_ => {}
 		}
+		Outcome::Stay
 	}
 
-	fn apps_key(&mut self, key: Key) {
+	fn apps_key(&mut self, key: Key) -> Outcome {
 		match navigation(key) {
 			Some(Key::Up) => self.apps_selected = self.apps_selected.saturating_sub(1),
 			Some(Key::Down) => {
@@ -583,26 +527,26 @@ impl App {
 					self.open(screen);
 				}
 			}
-			Some(Key::Escape | Key::Left) => self.screen = Screen::Home,
+			Some(Key::Escape | Key::Left) => return Outcome::Leave,
 			_ => {}
 		}
+		Outcome::Stay
 	}
 
 	fn open(&mut self, screen: Screen) {
-		if screen == Screen::Console {
-			self.unread = 0;
-		}
-		if screen == Screen::Irc {
-			self.irc.mark_read();
-		}
-		if screen == Screen::Settings {
-			self.draft = self.saved.clone();
-			self.settings_selected = 0;
+		match screen {
+			Screen::Console => self.console.unread = 0,
+			Screen::Irc => self.irc.mark_read(),
+			Screen::Settings => {
+				self.draft = self.saved.clone();
+				self.settings_selected = 0;
+			}
+			_ => {}
 		}
 		self.screen = screen;
 	}
 
-	fn nodes_key(&mut self, key: Key) {
+	fn nodes_key(&mut self, key: Key) -> Outcome {
 		let count = self.nodes().len();
 		match navigation(key) {
 			Some(Key::Up) => self.nodes_selected = self.nodes_selected.saturating_sub(1),
@@ -614,105 +558,30 @@ impl App {
 					self.screen = Screen::Node(node);
 				}
 			}
-			Some(Key::Escape | Key::Left) => self.screen = Screen::Home,
+			Some(Key::Escape | Key::Left) => return Outcome::Leave,
 			_ => {}
 		}
+		Outcome::Stay
 	}
 
-	fn node_key(&mut self, node: PublicKey, key: Key) {
+	fn node_key(&mut self, node: PublicKey, key: Key) -> Outcome {
 		let address = Ipv6Addr::from(addr_for_key(&node).0);
 		match key {
 			Key::Char('p') => {
-				self.ping_target = TextInput::new(&address.to_string(), 45);
-				self.start_pinging();
+				self.ping.start_at(address);
 				self.screen = Screen::Ping;
 			}
 			Key::Char('m') => {
-				self.console_target = TextInput::new(&address.to_string(), 52);
-				self.console_focus = ConsoleFocus::Message;
+				self.console.write_to(address);
 				self.open(Screen::Console);
 			}
-			_ if matches!(navigation(key), Some(Key::Escape | Key::Left)) => {
-				self.screen = Screen::Nodes
-			}
+			_ if matches!(navigation(key), Some(Key::Escape | Key::Left)) => return Outcome::Leave,
 			_ => {}
 		}
+		Outcome::Stay
 	}
 
-	fn ping_key(&mut self, key: Key) {
-		match key {
-			Key::Enter if self.pinging => self.pinging = false,
-			Key::Enter => {
-				if self.ping_target.text.parse::<Ipv6Addr>().is_ok() {
-					self.start_pinging();
-				} else {
-					self.notice = Some("Not an IPv6 address".into());
-				}
-			}
-			Key::Escape => {
-				self.pinging = false;
-				self.screen = Screen::Home;
-			}
-			Key::Backspace if !self.pinging => self.ping_target.backspace(),
-			Key::Char(character) if !self.pinging => self.ping_target.push(character),
-			_ => {}
-		}
-	}
-
-	fn start_pinging(&mut self) {
-		self.pinging = true;
-		self.last_ping = None;
-		self.ping_log.clear();
-		self.ping_sent = 0;
-		self.ping_received = 0;
-		self.ping_total = Duration::ZERO;
-	}
-
-	fn log_ping(&mut self, line: String) {
-		push_limited(&mut self.ping_log, line);
-	}
-
-	fn console_key(&mut self, key: Key) {
-		let field = match self.console_focus {
-			ConsoleFocus::Target => &mut self.console_target,
-			ConsoleFocus::Message => &mut self.console_message,
-		};
-		match key {
-			Key::Escape => self.screen = Screen::Apps,
-			Key::Tab | Key::Up | Key::Down => {
-				self.console_focus = match self.console_focus {
-					ConsoleFocus::Target => ConsoleFocus::Message,
-					ConsoleFocus::Message => ConsoleFocus::Target,
-				}
-			}
-			Key::Enter => match self.console_focus {
-				ConsoleFocus::Target => self.console_focus = ConsoleFocus::Message,
-				ConsoleFocus::Message => self.send_console_message(),
-			},
-			Key::Backspace => field.backspace(),
-			Key::Char(character) => field.push(character),
-			_ => {}
-		}
-	}
-
-	fn send_console_message(&mut self) {
-		let Some(to) = parse_destination(&self.console_target.text) else {
-			self.notice = Some("Enter an address, or [address]:port".into());
-			self.console_focus = ConsoleFocus::Target;
-			return;
-		};
-		if self.console_message.text.is_empty() {
-			return;
-		}
-		let mut data = self.console_message.text.clone().into_bytes();
-		data.push(b'\n');
-		self.commands.push_back(Command::SendDatagram(to, data));
-		let line = format!("> {}", self.console_message.text);
-		push_limited(&mut self.console_log, line);
-		self.console_message.clear();
-	}
-
-	fn settings_key(&mut self, key: Key) {
+	fn settings_key(&mut self, key: Key) -> Outcome {
 		if let Some((field, input)) = &mut self.editing {
 			match key {
 				Key::Enter => {
@@ -725,24 +594,20 @@ impl App {
 				Key::Char(character) => input.push(character),
 				_ => {}
 			}
-			return;
+			return Outcome::Stay;
 		}
 		let (fields, selected) = self.settings_fields();
 		match navigation(key) {
 			Some(Key::Up) => *selected = selected.saturating_sub(1),
 			Some(Key::Down) => *selected = (*selected + 1).min(fields.len() - 1),
-			Some(Key::Escape | Key::Left) => {
-				self.screen = match self.screen {
-					Screen::SettingsGroup(_) => Screen::Settings,
-					_ => Screen::Home,
-				}
-			}
+			Some(Key::Escape | Key::Left) => return Outcome::Leave,
 			Some(Key::Enter | Key::Right) => {
 				let field = fields[*selected];
 				self.activate(field);
 			}
 			_ => {}
 		}
+		Outcome::Stay
 	}
 
 	/// The settings on the screen shown, and which of them is selected.
@@ -837,7 +702,7 @@ impl App {
 		}
 	}
 
-	fn wifi_networks_key(&mut self, key: Key) {
+	fn wifi_networks_key(&mut self, key: Key) -> Outcome {
 		let count = self.networks.as_ref().map_or(0, Vec::len);
 		match navigation(key) {
 			Some(Key::Up) => self.networks_selected = self.networks_selected.saturating_sub(1),
@@ -857,13 +722,14 @@ impl App {
 					self.screen = Screen::SettingsGroup(Group::Bridge);
 				}
 			}
-			Some(Key::Escape | Key::Left) => self.screen = Screen::SettingsGroup(Group::Bridge),
+			Some(Key::Escape | Key::Left) => return Outcome::Leave,
 			Some(Key::Char('r')) => {
 				self.networks = None;
 				self.commands.push_back(Command::ScanWifi);
 			}
 			_ => {}
 		}
+		Outcome::Stay
 	}
 
 	/// Known nodes, direct peers first, then by address.
@@ -896,9 +762,9 @@ impl App {
 	/// The field being typed in, if it takes a node's address.
 	fn address_field(&mut self) -> Option<&mut TextInput> {
 		match self.screen {
-			Screen::Ping if !self.pinging => Some(&mut self.ping_target),
-			Screen::Console if self.console_focus == ConsoleFocus::Target => {
-				Some(&mut self.console_target)
+			Screen::Ping if !self.ping.running => Some(&mut self.ping.target),
+			Screen::Console if self.console.focus == console::Focus::Target => {
+				Some(&mut self.console.target)
 			}
 			Screen::Gopher if self.gopher.editing && self.gopher.search.is_none() => {
 				Some(&mut self.gopher.address)
@@ -1057,13 +923,6 @@ fn navigation(key: Key) -> Option<Key> {
 }
 
 /// `[address]:port`, or a bare address for the console port.
-fn parse_destination(text: &str) -> Option<SocketAddrV6> {
-	text.parse::<SocketAddrV6>().ok().or_else(|| {
-		let address: Ipv6Addr = text.parse().ok()?;
-		Some(SocketAddrV6::new(address, CONSOLE_PORT, 0, 0))
-	})
-}
-
 type NodeInfoFields = (Option<String>, Vec<(String, String)>);
 
 fn parse_nodeinfo(json: &[u8]) -> Option<NodeInfoFields> {

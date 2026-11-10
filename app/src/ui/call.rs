@@ -1,6 +1,16 @@
 //! The Call screen: dialing an address, ringing, and the call itself. Voice
 //! goes with push-to-talk on the board's G0 button.
 
+use alloc::format;
+use alloc::vec::Vec;
+
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
+
+use super::view::{DIM, SELECTED, field_line, pad};
+
 use alloc::string::String;
 use core::net::Ipv6Addr;
 
@@ -97,5 +107,54 @@ impl Phone {
 			CallEvent::Ringing => {}
 		}
 		false
+	}
+}
+
+/// Drawing, kept apart from the state it shows.
+impl Phone {
+	pub fn draw(&self, frame: &mut Frame, area: Rect, now: Instant, who: &str) {
+		let phone = self;
+		let mut lines = Vec::new();
+		match phone.phase {
+			Phase::Idle => {
+				lines.push(field_line("to", &phone.address, true));
+				lines.push(Line::raw(""));
+				if let Some(ended) = &phone.ended {
+					lines.push(Line::styled(format!(" {ended}"), DIM));
+				}
+				lines.push(Line::styled(" Hold G0 to hear yourself back", DIM));
+			}
+			Phase::Calling => lines.push(Line::raw(format!(" Calling {who}…"))),
+			Phase::Ringing => lines.push(Line::raw(format!(" Ringing {who}…"))),
+			Phase::Incoming => {
+				lines.push(Line::styled(" Incoming call from", DIM));
+				lines.push(Line::raw(format!(" {who}")));
+			}
+			Phase::Up => {
+				lines.push(Line::raw(format!(" In a call with {who}")));
+				if let Some(since) = phone.since {
+					let seconds = now.saturating_duration_since(since).as_secs();
+					lines.push(Line::styled(
+						format!(" {}:{:02}", seconds / 60, seconds % 60),
+						DIM,
+					));
+				}
+				lines.push(Line::raw(""));
+				lines.push(if phone.talking {
+					Line::styled(pad(" Talking", area.width), SELECTED)
+				} else {
+					Line::styled(" Hold G0 to talk", DIM)
+				});
+			}
+		}
+		frame.render_widget(Paragraph::new(lines), area);
+	}
+
+	pub fn hints(&self) -> &'static str {
+		match self.phase {
+			Phase::Idle => "tab complete  enter call",
+			Phase::Incoming => "enter answer  esc decline",
+			Phase::Calling | Phase::Ringing | Phase::Up => "esc hang up",
+		}
 	}
 }
