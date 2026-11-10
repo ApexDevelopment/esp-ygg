@@ -320,38 +320,55 @@ fn streams_carry_data_both_ways() {
 const PHONE_MAC: [u8; 6] = [0x8a, 0, 0, 0, 0, 2];
 const BOARD_MAC: [u8; 6] = [0x24, 0, 0, 0, 0, 1];
 
-/// An Ethernet frame from a phone on a hotspot, carrying a UDP datagram.
-fn phone_datagram(from: SocketAddrV6, to: SocketAddrV6, data: &[u8]) -> Vec<u8> {
-	let length = (8 + data.len()) as u16;
-	let mut udp = Vec::new();
-	udp.extend_from_slice(&from.port().to_be_bytes());
-	udp.extend_from_slice(&to.port().to_be_bytes());
-	udp.extend_from_slice(&length.to_be_bytes());
-	udp.extend_from_slice(&[0, 0]);
-	udp.extend_from_slice(data);
-	let mut sum: u32 = 0;
+/// An Ethernet frame from a phone on a hotspot. `checksum_at` is where in
+/// `payload` its checksum goes.
+fn phone_frame(
+	from: Ipv6Addr,
+	to: Ipv6Addr,
+	next_header: u8,
+	mut payload: Vec<u8>,
+	checksum_at: usize,
+) -> Vec<u8> {
+	let length = payload.len() as u16;
 	let mut pseudo = Vec::new();
-	pseudo.extend_from_slice(&from.ip().octets());
-	pseudo.extend_from_slice(&to.ip().octets());
+	pseudo.extend_from_slice(&from.octets());
+	pseudo.extend_from_slice(&to.octets());
 	pseudo.extend_from_slice(&u32::from(length).to_be_bytes());
-	pseudo.extend_from_slice(&[0, 0, 0, 17]);
-	pseudo.extend_from_slice(&udp);
+	pseudo.extend_from_slice(&[0, 0, 0, next_header]);
+	pseudo.extend_from_slice(&payload);
+	let mut sum: u32 = 0;
 	for pair in pseudo.chunks(2) {
 		sum += u32::from(u16::from_be_bytes([pair[0], *pair.get(1).unwrap_or(&0)]));
 	}
 	while sum > 0xffff {
 		sum = (sum & 0xffff) + (sum >> 16);
 	}
-	udp[6..8].copy_from_slice(&(!(sum as u16)).to_be_bytes());
+	payload[checksum_at..checksum_at + 2].copy_from_slice(&(!(sum as u16)).to_be_bytes());
 	let mut frame = Vec::from(BOARD_MAC);
 	frame.extend_from_slice(&PHONE_MAC);
 	frame.extend_from_slice(&[0x86, 0xdd, 0x60, 0, 0, 0]);
 	frame.extend_from_slice(&length.to_be_bytes());
-	frame.extend_from_slice(&[17, 64]);
-	frame.extend_from_slice(&from.ip().octets());
-	frame.extend_from_slice(&to.ip().octets());
-	frame.extend_from_slice(&udp);
+	frame.extend_from_slice(&[next_header, 64]);
+	frame.extend_from_slice(&from.octets());
+	frame.extend_from_slice(&to.octets());
+	frame.extend_from_slice(&payload);
 	frame
+}
+
+fn phone_datagram(from: SocketAddrV6, to: SocketAddrV6, data: &[u8]) -> Vec<u8> {
+	let mut udp = Vec::new();
+	udp.extend_from_slice(&from.port().to_be_bytes());
+	udp.extend_from_slice(&to.port().to_be_bytes());
+	udp.extend_from_slice(&((8 + data.len()) as u16).to_be_bytes());
+	udp.extend_from_slice(&[0, 0]);
+	udp.extend_from_slice(data);
+	phone_frame(*from.ip(), *to.ip(), 17, udp, 6)
+}
+
+fn phone_ping(from: Ipv6Addr, to: Ipv6Addr) -> Vec<u8> {
+	let mut echo = Vec::from([128, 0, 0, 0, 0, 1, 0, 1]);
+	echo.extend_from_slice(b"ping");
+	phone_frame(from, to, 58, echo, 2)
 }
 
 #[test]
@@ -410,4 +427,17 @@ fn hotspot_devices_reach_the_mesh_and_hear_back() {
 		},
 	);
 	assert_eq!(local, Some(b"to this board".to_vec()));
+
+	let ping = phone_ping(phone_ip, address(&radio, 0));
+	overlays[0]
+		.1
+		.receive_hotspot_frame(&mut radio.nodes[0], &ping);
+	let reply = wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(1),
+		|_, overlays| overlays[0].1.poll_hotspot_frame(),
+	);
+	// An echo reply
+	assert_eq!(reply.expect("no ping reply")[14 + 40], 129);
 }

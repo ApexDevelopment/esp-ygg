@@ -14,7 +14,7 @@ rustls = { version = "0.23.46", default-features = false, features = ["tls12"], 
 rustls-rustcrypto = { version = "0.1.0-pre.0", default-features = false, features = ["alloc", "tls12"], optional = true }
 serde_json = { version = "1.0.154", default-features = false, features = ["alloc"] }
 sha2 = { version = "0.11.1", default-features = false, optional = true }
-smoltcp = { version = "0.13.1", default-features = false, features = ["alloc", "medium-ip", "proto-ipv6", "socket-icmp", "socket-tcp", "socket-udp"] }
+smoltcp = { version = "0.13.1", default-features = false, features = ["alloc", "medium-ip", "auto-icmp-echo-reply", "proto-ipv6", "socket-icmp", "socket-tcp", "socket-udp"] }
 yggdrasil-espnow = { path = "../node" }
 
 [features]
