@@ -280,9 +280,9 @@ const MENU: &[(&str, Screen)] = &[
 /// The apps menu, opened from the home menu.
 const APPS: &[(&str, Screen)] = &[
 	#[cfg(feature = "console")]
-	("Console", Screen::Console),
+	("UDP Console", Screen::Console),
 	#[cfg(feature = "voice")]
-	("Call", Screen::Call),
+	("Voice Call (IAX2)", Screen::Call),
 	#[cfg(feature = "irc")]
 	("IRC", Screen::Irc),
 	#[cfg(feature = "gemini")]

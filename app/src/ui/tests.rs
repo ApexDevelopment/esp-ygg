@@ -152,7 +152,7 @@ fn names_nodes_from_their_nodeinfo_and_retries_lookups() {
 fn sends_console_messages_to_the_console_port() {
 	let mut app = App::new(Settings::new(), at(0));
 	app.set_status(status(&[], &[]));
-	open(&mut app, "Console");
+	open(&mut app, "UDP Console");
 	type_text(&mut app, "200::1");
 	press(&mut app, &[Key::Enter]);
 	type_text(&mut app, "hello");
@@ -182,8 +182,8 @@ fn counts_unread_messages_on_the_home_screen() {
 	});
 	assert!(screen(&app).join("\n").contains("Apps (1 new)"));
 	press(&mut app, &[Key::Down, Key::Down, Key::Down, Key::Enter]);
-	assert!(screen(&app).join("\n").contains("Console (1 new)"));
-	open(&mut app, "Console");
+	assert!(screen(&app).join("\n").contains("UDP Console (1 new)"));
+	open(&mut app, "UDP Console");
 	press(&mut app, &[Key::Escape]);
 	let shown = screen(&app).join("\n");
 	assert!(
@@ -602,7 +602,7 @@ fn completes_addresses_of_known_nodes_with_tab() {
 	let mut app = App::new(Settings::new(), at(0));
 	let (kitchen, other) = (key(2), key(3));
 	app.set_status(status(&[kitchen], &[kitchen, other]));
-	open(&mut app, "Console");
+	open(&mut app, "UDP Console");
 	app.tick(at(1));
 	assert_eq!(commands(&mut app).len(), 2, "names are looked up");
 	app.handle_nodeinfo(kitchen, Some(br#"{"name":"Kitchen"}"#.to_vec()));
