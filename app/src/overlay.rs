@@ -83,7 +83,9 @@ impl Stream {
 
 struct StreamSlot {
 	stream: Stream,
-	socket: SocketHandle,
+	receive_buffer: usize,
+	/// Made when the stream opens, so a closed stream costs no memory.
+	socket: Option<SocketHandle>,
 	state: StreamState,
 	outgoing: Vec<u8>,
 }
@@ -157,6 +159,7 @@ struct ServerConnection {
 
 /// A request to another server, and what has come back so far.
 struct Fetch {
+	socket: SocketHandle,
 	request: Vec<u8>,
 	sent: bool,
 	connected: bool,
@@ -170,7 +173,8 @@ pub struct Overlay {
 	device: Queues,
 	sockets: SocketSet<'static>,
 	servers: Vec<ServerConnection>,
-	client: Option<SocketHandle>,
+	/// Connections this board closed, kept until they finish closing.
+	closing: Vec<SocketHandle>,
 	streams: Vec<StreamSlot>,
 	fetch: Option<Fetch>,
 	next_local_port: u16,
@@ -205,9 +209,11 @@ impl Overlay {
 		let servers = protocols
 			.into_iter()
 			.map(|protocol| {
+				// Requests and responses are gathered elsewhere, so the
+				// socket only needs room for what is in flight.
 				let socket = tcp::Socket::new(
-					tcp::SocketBuffer::new(vec![0; http::MAX_REQUEST]),
-					tcp::SocketBuffer::new(vec![0; 4096]),
+					tcp::SocketBuffer::new(vec![0; 512]),
+					tcp::SocketBuffer::new(vec![0; 1024]),
 				);
 				ServerConnection {
 					protocol,
@@ -218,35 +224,20 @@ impl Overlay {
 				}
 			})
 			.collect();
-		let client = cfg!(feature = "gopher").then(|| {
-			sockets.add(tcp::Socket::new(
-				tcp::SocketBuffer::new(vec![0; 4096]),
-				tcp::SocketBuffer::new(vec![0; 1024]),
-			))
-		});
 		let streams = Stream::BUILT
 			.iter()
-			.map(|&(stream, receive_buffer)| {
-				let mut socket = tcp::Socket::new(
-					tcp::SocketBuffer::new(vec![0; receive_buffer]),
-					tcp::SocketBuffer::new(vec![0; 1024]),
-				);
-				socket.set_timeout(Some(smoltcp::time::Duration::from_secs(
-					STREAM_TIMEOUT_SECS,
-				)));
-				socket.set_keep_alive(Some(smoltcp::time::Duration::from_secs(60)));
-				StreamSlot {
-					stream,
-					socket: sockets.add(socket),
-					state: StreamState::Closed,
-					outgoing: Vec::new(),
-				}
+			.map(|&(stream, receive_buffer)| StreamSlot {
+				stream,
+				receive_buffer,
+				socket: None,
+				state: StreamState::Closed,
+				outgoing: Vec::new(),
 			})
 			.collect();
 		let console = cfg!(feature = "console").then(|| {
 			let mut console = udp::Socket::new(
-				udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 8], vec![0; 4 * MTU]),
-				udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 8], vec![0; 4 * MTU]),
+				udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0; 2 * MTU]),
+				udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0; 2 * MTU]),
 			);
 			console
 				.bind(CONSOLE_PORT)
@@ -279,7 +270,7 @@ impl Overlay {
 			interface,
 			device,
 			servers,
-			client,
+			closing: Vec::new(),
 			streams,
 			fetch: None,
 			next_local_port: EPHEMERAL_PORTS.start + (random_seed as u16 % 1000),
@@ -309,6 +300,7 @@ impl Overlay {
 		self.serve(node, board);
 		self.progress_fetch(now);
 		self.progress_streams();
+		self.free_closed_sockets();
 		self.receive_datagrams();
 		self.receive_pings(now);
 		self.expire_pings(now);
@@ -466,15 +458,16 @@ impl Overlay {
 		request: Vec<u8>,
 		now: Instant,
 	) -> Result<(), SendError> {
-		let handle = self.client.ok_or(SendError::Unavailable)?;
-		let local_port = self.next_port();
-		let socket = self.sockets.get_mut::<tcp::Socket>(handle);
-		socket.abort();
-		let remote = IpEndpoint::new(IpAddress::Ipv6(*to.ip()), to.port());
-		socket
-			.connect(self.interface.context(), remote, local_port)
-			.map_err(|_| SendError::Busy)?;
+		if !cfg!(feature = "gopher") {
+			return Err(SendError::Unavailable);
+		}
+		if let Some(old) = self.fetch.take() {
+			self.sockets.get_mut::<tcp::Socket>(old.socket).abort();
+			self.closing.push(old.socket);
+		}
+		let socket = self.connect(to, 4096)?;
 		self.fetch = Some(Fetch {
+			socket,
 			request,
 			sent: false,
 			connected: false,
@@ -487,15 +480,20 @@ impl Overlay {
 	/// Opens a lasting TCP connection, replacing the one `stream` had open.
 	/// Its progress arrives as [`Event`]s.
 	pub fn open_stream(&mut self, stream: Stream, to: SocketAddrV6) -> Result<(), SendError> {
-		let local_port = self.next_port();
-		let handle = self.slot(stream)?.socket;
-		let socket = self.sockets.get_mut::<tcp::Socket>(handle);
-		socket.abort();
-		let remote = IpEndpoint::new(IpAddress::Ipv6(*to.ip()), to.port());
-		socket
-			.connect(self.interface.context(), remote, local_port)
-			.map_err(|_| SendError::Busy)?;
 		let slot = self.slot(stream)?;
+		let receive_buffer = slot.receive_buffer;
+		if let Some(old) = slot.socket.take() {
+			self.sockets.get_mut::<tcp::Socket>(old).abort();
+			self.closing.push(old);
+		}
+		let socket = self.connect(to, receive_buffer)?;
+		let lasting = self.sockets.get_mut::<tcp::Socket>(socket);
+		lasting.set_timeout(Some(smoltcp::time::Duration::from_secs(
+			STREAM_TIMEOUT_SECS,
+		)));
+		lasting.set_keep_alive(Some(smoltcp::time::Duration::from_secs(60)));
+		let slot = self.slot(stream)?;
+		slot.socket = Some(socket);
 		slot.state = StreamState::Connecting;
 		slot.outgoing.clear();
 		Ok(())
@@ -516,8 +514,12 @@ impl Overlay {
 
 	/// Closes a stream once what is queued has been sent.
 	pub fn close_stream(&mut self, stream: Stream) {
-		if let Ok(slot) = self.slot(stream) {
-			let socket = slot.socket;
+		if let Ok(StreamSlot {
+			socket: Some(socket),
+			..
+		}) = self.slot(stream)
+		{
+			let socket = *socket;
 			self.sockets.get_mut::<tcp::Socket>(socket).close();
 		}
 	}
@@ -529,13 +531,49 @@ impl Overlay {
 			.ok_or(SendError::Unavailable)
 	}
 
+	/// Makes a socket and starts connecting it to `to`.
+	fn connect(
+		&mut self,
+		to: SocketAddrV6,
+		receive_buffer: usize,
+	) -> Result<SocketHandle, SendError> {
+		let local_port = self.next_port();
+		let socket = self.sockets.add(tcp::Socket::new(
+			tcp::SocketBuffer::new(vec![0; receive_buffer]),
+			tcp::SocketBuffer::new(vec![0; 1024]),
+		));
+		let remote = IpEndpoint::new(IpAddress::Ipv6(*to.ip()), to.port());
+		let connected = self.sockets.get_mut::<tcp::Socket>(socket).connect(
+			self.interface.context(),
+			remote,
+			local_port,
+		);
+		if connected.is_err() {
+			self.sockets.remove(socket);
+			return Err(SendError::Busy);
+		}
+		Ok(socket)
+	}
+
+	/// Frees the memory of connections that have finished closing.
+	fn free_closed_sockets(&mut self) {
+		let sockets = &mut self.sockets;
+		self.closing.retain(|&handle| {
+			let open = sockets.get::<tcp::Socket>(handle).is_open();
+			if !open {
+				sockets.remove(handle);
+			}
+			open
+		});
+	}
+
 	fn progress_streams(&mut self) {
 		for slot in &mut self.streams {
-			if slot.state == StreamState::Closed {
+			let Some(handle) = slot.socket else {
 				continue;
-			}
+			};
 			let stream = slot.stream;
-			let socket = self.sockets.get_mut::<tcp::Socket>(slot.socket);
+			let socket = self.sockets.get_mut::<tcp::Socket>(handle);
 			if slot.state == StreamState::Connecting && socket.may_send() {
 				slot.state = StreamState::Open;
 				self.events.push_back(Event::StreamOpened(stream));
@@ -560,6 +598,9 @@ impl Overlay {
 			}
 			if !socket.is_open() {
 				slot.state = StreamState::Closed;
+				slot.socket = None;
+				slot.outgoing = Vec::new();
+				self.sockets.remove(handle);
 				self.events.push_back(Event::StreamClosed(stream));
 			}
 		}
@@ -575,10 +616,10 @@ impl Overlay {
 	}
 
 	fn progress_fetch(&mut self, now: Instant) {
-		let (Some(fetch), Some(handle)) = (&mut self.fetch, self.client) else {
+		let Some(fetch) = &mut self.fetch else {
 			return;
 		};
-		let socket = self.sockets.get_mut::<tcp::Socket>(handle);
+		let socket = self.sockets.get_mut::<tcp::Socket>(fetch.socket);
 		if socket.may_send() {
 			fetch.connected = true;
 			if !fetch.sent && socket.send_slice(&fetch.request) == Ok(fetch.request.len()) {
@@ -605,6 +646,7 @@ impl Overlay {
 			socket.abort();
 		}
 		let fetch = self.fetch.take().expect("checked above");
+		self.closing.push(fetch.socket);
 		let event = if fetch.connected && (finished || full) {
 			Event::Fetched {
 				data: fetch.response,
@@ -619,8 +661,9 @@ impl Overlay {
 		for connection in &mut self.servers {
 			let socket = self.sockets.get_mut::<tcp::Socket>(connection.socket);
 			if !socket.is_open() {
-				connection.request.clear();
-				connection.response.clear();
+				// Drop rather than clear, so idle connections hold no memory.
+				connection.request = Vec::new();
+				connection.response = Vec::new();
 				connection.sent = 0;
 				let port = connection.protocol.port();
 				let _ = socket.listen(IpListenEndpoint::from(port));
@@ -631,6 +674,10 @@ impl Overlay {
 					connection.request.extend_from_slice(data);
 					(data.len(), ())
 				});
+				if connection.request.len() > http::MAX_REQUEST {
+					socket.abort();
+					continue;
+				}
 				connection.response = match connection.protocol {
 					Protocol::Http if http::is_complete(&connection.request) => {
 						http::respond(&connection.request, node, board)

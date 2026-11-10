@@ -77,7 +77,7 @@ To leave out default ones too, turn off the defaults and list everything you wan
 cargo run --release --no-default-features --features cardputer,console
 ```
 
-On a Cardputer ADV acting as a gateway with every service but IRC, leaving out Gopher, the console and NTP freed about 23 KB of the roughly 70 KB that was otherwise left.
+Clients take memory only while they are in use, so most of the cost of a service is its server, if it has one. A Cardputer ADV acting as a gateway with every service has about 75 KB free.
 
 ## On-device interface
 
