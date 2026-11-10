@@ -192,7 +192,7 @@ nc -6u <board address> 4242
 
 The first request after the boards come up can take several seconds while routes form. After that, a ping across a gateway and one ESP-NOW hop typically takes 30 to 70 ms.
 
-Radio trouble shows up in the serial log. Every 10 seconds in which some ESP-NOW sends failed, the board logs how many were sent, refused by the radio, not acknowledged, or not reported on in time, along with the lowest free heap. A few failures are normal and are resent.
+On a Cardputer, ESP-NOW Neighbors shows each neighbor's signal and the share of frames it did not acknowledge. A few failures are normal and are resent.
 
 ## Limits
 
