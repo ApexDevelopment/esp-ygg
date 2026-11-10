@@ -65,7 +65,7 @@ To add the larger ones, list them along with the board:
 cargo run --release --features cardputer,gopher,irc
 ```
 
-Builds with Gemini need the `gemini` profile instead of `--release`, because the TLS library trips a bug in the Xtensa compiler ([esp-rs/rust#282](https://github.com/esp-rs/rust/issues/282)) unless it is built unoptimized and without link-time optimization. That makes the firmware about a megabyte larger, which still leaves plenty of room in the Cardputer's flash. `cargo cardputer-gemini` builds and flashes a Cardputer with Gemini:
+Builds with Gemini need the `gemini` profile instead of `--release`, because the TLS library trips a bug in the Xtensa compiler ([esp-rs/rust#282](https://github.com/esp-rs/rust/issues/282)). The profile builds that library with the compiler's DAG combiner turned off, which avoids the bug, and without link-time optimization, which would bring it back. `cargo cardputer-gemini` builds and flashes a Cardputer with Gemini:
 
 ```sh
 cargo run --profile gemini --features cardputer,gopher,irc,gemini

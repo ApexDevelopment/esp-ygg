@@ -1,3 +1,5 @@
+cargo-features = ["profile-rustflags"]
+
 [package]
 name = "esp-ygg"
 version = "0.1.0"
@@ -106,10 +108,11 @@ lto = "fat"
 opt-level = "s"
 
 # For builds with Gemini. Its TLS library trips a bug in the Xtensa compiler
-# (esp-rs/rust#282) unless it is built unoptimized and without LTO.
+# (esp-rs/rust#282), which turning off the DAG combiner for it avoids. LTO
+# would compile it again without that, so it is off too.
 [profile.gemini]
 inherits = "release"
 lto = false
 
 [profile.gemini.package.rustls]
-opt-level = 0
+rustflags = ["-C", "llvm-args=--combiner-disabled"]
