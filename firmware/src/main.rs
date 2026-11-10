@@ -5,6 +5,7 @@ extern crate alloc;
 
 #[cfg(feature = "cardputer")]
 mod cardputer;
+mod hotspot;
 mod platform;
 mod radio;
 mod storage;
@@ -16,7 +17,9 @@ use alloc::vec::Vec;
 use core::net::Ipv6Addr;
 
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either, Either4, select, select4};
+use embassy_futures::select::{Either3, Either4, select3, select4};
+#[cfg(feature = "cardputer")]
+use embassy_futures::select::{Either, select};
 use embassy_net::StackResources;
 use embassy_time::{Duration, Instant, Timer};
 use esp_backtrace as _;
@@ -24,7 +27,8 @@ use esp_hal::clock::CpuClock;
 use esp_hal::rng::Rng;
 use esp_hal::timer::timg::TimerGroup;
 use esp_radio::esp_now::{BROADCAST_ADDRESS, EspNowManager, EspNowWifiInterface, PeerInfo};
-use esp_radio::wifi::{ControllerConfig, WifiController};
+use esp_radio::wifi::sta::StationConfig;
+use esp_radio::wifi::{Config as WifiConfig, ControllerConfig, Interface, WifiController};
 use esp_storage::FlashStorage;
 #[cfg(feature = "cardputer")]
 use esp_ygg_app::ui::{Command, Status, Uplink, WifiNetwork};
@@ -89,9 +93,31 @@ async fn main(spawner: Spawner) -> ! {
 		.then(|| uplink::station_config(&settings.ssid, &settings.password))
 		.flatten();
 	let bridge = station.is_some() && settings.can_bridge();
+	let station = station.filter(|_| bridge);
+	let access_point = settings
+		.hotspot
+		.then(|| {
+			hotspot::config(
+				&settings.hotspot_name,
+				&settings.hotspot_password,
+				settings.channel,
+			)
+		})
+		.flatten();
+	let hotspot_on = access_point.is_some();
 	let mut controller_config = ControllerConfig::default();
-	if let (true, Some(station)) = (bridge, station) {
-		controller_config = controller_config.with_initial_config(station);
+	match (station, access_point) {
+		(Some(station), None) => {
+			controller_config = controller_config.with_initial_config(WifiConfig::Station(station));
+		}
+		// ESP-NOW sends through the station interface, so it stays up even
+		// when not bridging.
+		(station, Some(access_point)) => {
+			let station = station.unwrap_or_else(StationConfig::default);
+			controller_config = controller_config
+				.with_initial_config(WifiConfig::AccessPointStation(station, access_point));
+		}
+		(None, None) => {}
 	}
 	let controller =
 		WifiController::new(peripherals.WIFI, controller_config).expect("starting WiFi");
@@ -142,6 +168,12 @@ async fn main(spawner: Spawner) -> ! {
 		u64::from(rng.random()) << 32 | u64::from(rng.random()),
 		settings.status_page,
 	);
+	if hotspot_on {
+		let access_point = Interface::access_point();
+		overlay.start_hotspot(&node, access_point.mac_address());
+		spawner.spawn(hotspot::link(access_point).expect("spawning the hotspot task"));
+		info!("Hotspot {} is on", settings.hotspot_name);
+	}
 
 	#[cfg(feature = "cardputer")]
 	{
@@ -222,7 +254,11 @@ async fn main(spawner: Spawner) -> ! {
 			receiver.receive_async(),
 			Timer::at(wake),
 			TO_NODE.receive(),
-			select(radio::LOST.receive(), next_ui_input()),
+			select3(
+				radio::LOST.receive(),
+				hotspot::FROM_HOTSPOT.receive(),
+				next_ui_input(),
+			),
 		)
 		.await;
 		let woke = Instant::now();
@@ -234,13 +270,16 @@ async fn main(spawner: Spawner) -> ! {
 			}
 			Either4::Second(()) => {}
 			Either4::Third(message) => handle_uplink(&mut node, &mut stream, message),
-			Either4::Fourth(Either::First(lost)) => node.frame_lost(lost.mac, &lost.frame),
+			Either4::Fourth(Either3::First(lost)) => node.frame_lost(lost.mac, &lost.frame),
+			Either4::Fourth(Either3::Second(frame)) => {
+				overlay.receive_hotspot_frame(&mut node, &frame);
+			}
 			#[cfg(feature = "cardputer")]
-			Either4::Fourth(Either::Second(Either::First(command))) => {
+			Either4::Fourth(Either3::Third(Either::First(command))) => {
 				carry_out(command, &mut node, &mut overlay, &mut store);
 			}
 			#[cfg(feature = "cardputer")]
-			Either4::Fourth(Either::Second(Either::Second(networks))) => {
+			Either4::Fourth(Either3::Third(Either::Second(networks))) => {
 				if !bridge {
 					// Scanning hops channels, so return to the mesh's.
 					let _ = manager.set_channel(settings.channel);
@@ -256,7 +295,7 @@ async fn main(spawner: Spawner) -> ! {
 				let _ = ui::TO_UI.try_send(ui::ToUi::Networks(networks));
 			}
 			#[cfg(not(feature = "cardputer"))]
-			Either4::Fourth(Either::Second(never)) => match never {},
+			Either4::Fourth(Either3::Third(never)) => match never {},
 		}
 		let handled = Instant::now();
 		// Whatever woke the loop, run expired timers, or a steady stream of
@@ -281,6 +320,9 @@ async fn main(spawner: Spawner) -> ! {
 		};
 		overlay.poll(&mut node, &board);
 		let services_run = Instant::now();
+		while let Some(frame) = overlay.poll_hotspot_frame() {
+			let _ = hotspot::TO_HOTSPOT.try_send(frame);
+		}
 
 		#[cfg(feature = "cardputer")]
 		{
@@ -295,6 +337,7 @@ async fn main(spawner: Spawner) -> ! {
 			if Instant::now() >= next_status {
 				let uplink = uplink_state(bridge, &node, stream);
 				let mut status = Status::from_node(&node, &board, uplink);
+				status.hotspot = overlay.hotspot_devices();
 				for neighbor in &mut status.neighbors {
 					(neighbor.signal, neighbor.loss) = radio::quality(&neighbor.mac);
 				}
@@ -337,13 +380,14 @@ async fn main(spawner: Spawner) -> ! {
 }
 
 /// What woke the main loop, for the stall warning.
-fn cause<A, B, C, D, E>(event: &Either4<A, B, C, Either<D, E>>) -> &'static str {
+fn cause<A, B, C, D, E, F>(event: &Either4<A, B, C, Either3<D, E, F>>) -> &'static str {
 	match event {
 		Either4::First(_) => "a radio frame",
 		Either4::Second(_) => "a timer",
 		Either4::Third(_) => "the bridge",
-		Either4::Fourth(Either::First(_)) => "a lost frame",
-		Either4::Fourth(Either::Second(_)) => "the UI",
+		Either4::Fourth(Either3::First(_)) => "a lost frame",
+		Either4::Fourth(Either3::Second(_)) => "a hotspot frame",
+		Either4::Fourth(Either3::Third(_)) => "the UI",
 	}
 }
 
@@ -436,6 +480,11 @@ fn build_time_settings() -> Settings {
 	settings.peer = option_env!("ESP_YGG_PEER").unwrap_or("").into();
 	settings.bridge = settings.can_bridge();
 	settings.status_page = option_env!("ESP_YGG_STATUS_PAGE") != Some("off");
+	if let Some(name) = option_env!("ESP_YGG_HOTSPOT") {
+		settings.hotspot = true;
+		settings.hotspot_name = name.into();
+		settings.hotspot_password = option_env!("ESP_YGG_HOTSPOT_PASSWORD").unwrap_or("").into();
+	}
 	settings.channel = option_env!("ESP_YGG_CHANNEL")
 		.and_then(|channel| channel.parse().ok())
 		.unwrap_or(DEFAULT_CHANNEL);

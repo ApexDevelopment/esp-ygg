@@ -2,8 +2,8 @@
 //! never delay the radio and network work on the first. The cores exchange
 //! messages through channels.
 
-use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
 use embassy_futures::select::{Either3, select3};
@@ -12,8 +12,8 @@ use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use embedded_io_async::Read;
 use esp_hal::peripherals::{CPU_CTRL, FROM_CPU_INTR1, USB_DEVICE};
-use esp_hal::usb::usb_serial_jtag::UsbSerialJtag;
 use esp_hal::system::Stack;
+use esp_hal::usb::usb_serial_jtag::UsbSerialJtag;
 use esp_rtos::embassy::Executor;
 use esp_ygg_app::ui::remote::{self, Remote};
 use esp_ygg_app::ui::{self, App, Command, Status, WifiNetwork};
@@ -85,20 +85,15 @@ pub fn start(
 			.write_bytes(UNUSED, STACK_SIZE);
 	}
 	STACK_BOTTOM.store(stack.mem.as_ptr() as usize, Ordering::Relaxed);
-	esp_rtos::start_second_core(
-		cpu_control,
-		interrupt,
-		stack,
-		move || {
-			static EXECUTOR: StaticCell<Executor> = StaticCell::new();
-			EXECUTOR.init(Executor::new()).run(|spawner| {
-				let (model, screen) = cardputer::start(&spawner, pins);
-				MODEL.store(model as u8 + 1, Ordering::Relaxed);
-				spawner.spawn(run(screen, settings).expect("spawning the UI task"));
-				spawner.spawn(serial(usb).expect("spawning the serial task"));
-			});
-		},
-	);
+	esp_rtos::start_second_core(cpu_control, interrupt, stack, move || {
+		static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+		EXECUTOR.init(Executor::new()).run(|spawner| {
+			let (model, screen) = cardputer::start(&spawner, pins);
+			MODEL.store(model as u8 + 1, Ordering::Relaxed);
+			spawner.spawn(run(screen, settings).expect("spawning the UI task"));
+			spawner.spawn(serial(usb).expect("spawning the serial task"));
+		});
+	});
 }
 
 /// The board's name, once the second core has detected it.
@@ -117,7 +112,11 @@ async fn run(mut screen: Screen, settings: Settings) {
 	loop {
 		let used = stack_used();
 		if used >= stack_reported + 1024 {
-			info!("The UI has used {} of {} KB of its stack", used / 1024, STACK_SIZE / 1024);
+			info!(
+				"The UI has used {} of {} KB of its stack",
+				used / 1024,
+				STACK_SIZE / 1024
+			);
 			stack_reported = used;
 		}
 		match select3(KEYS.receive(), TO_UI.receive(), Timer::after(TICK)).await {

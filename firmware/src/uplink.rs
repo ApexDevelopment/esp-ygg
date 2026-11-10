@@ -21,8 +21,7 @@ use embassy_time::{Duration, Instant, Timer, with_timeout};
 use embedded_io_async::Write;
 use esp_radio::wifi::scan::ScanConfig;
 use esp_radio::wifi::{
-	AuthenticationMethod, AuthenticationMethodConfig, Config, Interface, WifiController,
-	sta::StationConfig,
+	AuthenticationMethod, AuthenticationMethodConfig, Interface, WifiController, sta::StationConfig,
 };
 use esp_ygg_app::sntp;
 use log::{info, warn};
@@ -59,17 +58,17 @@ pub struct ScannedNetwork {
 	pub secured: bool,
 }
 
-pub fn station_config(ssid: &str, password: &str) -> Option<Config> {
+pub fn station_config(ssid: &str, password: &str) -> Option<StationConfig> {
 	let auth = if password.is_empty() {
 		AuthenticationMethodConfig::Open
 	} else {
 		AuthenticationMethodConfig::Wpa2Personal(password.try_into().ok()?)
 	};
-	Some(Config::Station(
+	Some(
 		StationConfig::default()
 			.with_ssid(ssid.try_into().ok()?)
 			.with_authentication(auth),
-	))
+	)
 }
 
 /// Owns the WiFi controller: keeps the board on its network when bridging,

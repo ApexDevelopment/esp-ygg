@@ -84,7 +84,7 @@ On a Cardputer, the home screen shows the board's address and how many nodes it 
 - Gemini browses Gemini capsules, starting from an address you type. Up and down move between links, scrolling past text where there are none, and Enter follows the selected one. It answers questions servers ask and follows redirects. Gemini servers mostly sign their own certificates, so the browser trusts the certificate a server shows first and refuses a different one until the board restarts. Going back fetches the page again, to save memory.
 - IRC connects to an IRC server over Yggdrasil and joins a channel. Each channel and private conversation gets its own buffer, and Tab moves between them. The usual commands work, such as `/join`, `/part`, `/msg`, `/me`, `/nick` and `/quit`. Leaving the screen keeps the connection, and the home menu counts new lines.
 - Console shows text received on UDP port 4242 and sends what you type, to an address or `[address]:port`.
-- Settings changes the name, bridging, WiFi network, password, peer, channel and time zone, and turns the status pages on or off. Saving restarts the board to apply them.
+- Settings changes the name, channel and time zone, turns the status pages on or off, and sets up the bridge and the hotspot. Saving restarts the board to apply them.
 
 Once the board knows the time, the title bar shows it. A bridged board gets the time from `pool.ntp.org`, and other boards ask their peers over Yggdrasil, so it spreads through the mesh. The time zone is a fixed offset from UTC, so it needs changing by hand for daylight saving time.
 
@@ -113,6 +113,8 @@ A Cardputer stores the settings chosen in its interface in flash. Until then, an
 | `ESP_YGG_WIFI_PASSWORD` | none | Its WPA2 password. Leave unset for an open network. |
 | `ESP_YGG_PEER` | none | Address of the node to peer with over TCP, as an IPv4 address and port |
 | `ESP_YGG_STATUS_PAGE` | `on` | Set to `off` to close the HTTP and Gopher ports |
+| `ESP_YGG_HOTSPOT` | none | Name of a WiFi network for the board to run as a hotspot |
+| `ESP_YGG_HOTSPOT_PASSWORD` | none | Its WPA2 password, 8 to 63 characters. Leave unset for an open network. |
 
 A board peers over TCP only when both `ESP_YGG_WIFI_SSID` and `ESP_YGG_PEER` are set. For example:
 
@@ -123,6 +125,14 @@ ESP_YGG_WIFI_SSID=home ESP_YGG_WIFI_PASSWORD=secret ESP_YGG_PEER=192.168.1.10:90
 The WiFi password is stored in flash as plain text. The node at that address needs a TCP listener in its config, such as `Listen: ["tcp://0.0.0.0:9001"]`.
 
 A board on WiFi uses the access point's channel for ESP-NOW too, because the radio can only be on one channel at a time. Build the other boards with `ESP_YGG_CHANNEL` set to that channel, or they will not hear it.
+
+## Hotspot
+
+The bridge and the hotspot both use WiFi, in opposite directions. The bridge joins an existing WiFi network to peer with a node on it. The hotspot is a WiFi network the board runs itself, so phones and laptops can reach Yggdrasil without installing anything. A board can do both at once.
+
+Devices that join the hotspot get an address in the board's `300:` subnet and a route to the rest of Yggdrasil through the board. They can then reach any Yggdrasil address, such as the status page of a board across the mesh. The hotspot only carries Yggdrasil traffic. It has no IPv4 and no internet, so phones may warn that the network has no internet and need telling to stay connected. Laptops on another network as well keep using it for everything else.
+
+The hotspot runs on the board's ESP-NOW channel, or on the bridge's network's channel when bridging. Linux ignores the route to `200::/7` that the board advertises unless `net.ipv6.conf.<interface>.accept_ra_rt_info_max_plen` is at least 7, so a Linux laptop on another IPv6 network as well needs that set. One that also runs Yggdrasil already has that route through its own node.
 
 ## Trying it out
 
