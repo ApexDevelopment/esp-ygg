@@ -6,6 +6,7 @@
 extern crate alloc;
 
 pub mod device;
+pub mod gemini;
 pub mod gopher;
 pub mod http;
 pub mod irc;
@@ -13,10 +14,12 @@ mod overlay;
 pub mod settings;
 pub mod sntp;
 pub mod time;
+#[cfg(feature = "gemini")]
+pub mod tls;
 #[cfg(feature = "ui")]
 pub mod ui;
 
 pub use device::MTU;
 pub use http::BoardInfo;
-pub use overlay::{CONSOLE_PORT, Event, HTTP_PORT, Overlay, PING_TIMEOUT, SendError};
+pub use overlay::{CONSOLE_PORT, Event, HTTP_PORT, Overlay, PING_TIMEOUT, SendError, Stream};
 pub use settings::Settings;

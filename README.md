@@ -57,11 +57,18 @@ Each service costs memory while the board runs, so the firmware can be built wit
 | `ntp` | Time over NTP, and the clock | on |
 | `gopher` | Gopher menu, and the Gopher screen | off |
 | `irc` | The IRC screen | off |
+| `gemini` | The Gemini screen | off |
 
 To add the larger ones, list them along with the board:
 
 ```sh
 cargo run --release --features cardputer,gopher,irc
+```
+
+Builds with Gemini need the `gemini` profile instead of `--release`, because the TLS library trips a bug in the Xtensa compiler ([esp-rs/rust#282](https://github.com/esp-rs/rust/issues/282)) unless it is built unoptimized and without link-time optimization. That makes the firmware about a megabyte larger, which still leaves plenty of room in the Cardputer's flash. `cargo cardputer-gemini` builds and flashes a Cardputer with Gemini:
+
+```sh
+cargo run --profile gemini --features cardputer,gopher,irc,gemini
 ```
 
 To leave out default ones too, turn off the defaults and list everything you want. For example, a Cardputer with only the console:
@@ -80,6 +87,7 @@ On a Cardputer, the home screen shows the board's address and how many nodes it 
 - Radio lists ESP-NOW neighbors with their recent signal strength and the share of frames sent to them that went unacknowledged, for finding where boards still reach each other.
 - Ping sends a ping every second to an address you type or pick, and shows each round trip.
 - Gopher browses Gopher menus and text, starting from an address you type. Links to a board's peers make it easy to hop across the mesh. Yggdrasil has no standard way to look up names, so links work when they use an address or the name of the server they came from.
+- Gemini browses Gemini capsules, starting from an address you type. Up and down move between links, scrolling past text where there are none, and Enter follows the selected one. It answers questions servers ask and follows redirects. Gemini servers mostly sign their own certificates, so the browser trusts the certificate a server shows first and refuses a different one until the board restarts. Going back fetches the page again, to save memory.
 - IRC connects to an IRC server over Yggdrasil and joins a channel. Each channel and private conversation gets its own buffer, and Tab moves between them. The usual commands work, such as `/join`, `/part`, `/msg`, `/me`, `/nick` and `/quit`. Leaving the screen keeps the connection, and the home menu counts new lines.
 - Console shows text received on UDP port 4242 and sends what you type, to an address or `[address]:port`.
 - Settings changes the name, bridging, WiFi network, password, peer, channel and time zone, and turns the status pages on or off. Saving restarts the board to apply them.

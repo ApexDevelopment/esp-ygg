@@ -3,6 +3,8 @@
 //! with Ratatui. Another renderer could replace [`draw`] without touching
 //! the rest.
 
+#[cfg(feature = "gemini")]
+mod gemini;
 mod gopher;
 mod input;
 mod irc;
@@ -20,7 +22,7 @@ use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 use yggdrasil_espnow::{Instant, Mac, Node, Platform, PublicKey};
 
 use crate::BoardInfo;
-use crate::overlay::{CONSOLE_PORT, Event};
+use crate::overlay::{CONSOLE_PORT, Event, Stream};
 use crate::settings::Settings;
 use crate::time::{format_offset, parse_offset};
 pub use input::TextInput;
@@ -57,9 +59,9 @@ pub enum Command {
 	/// Send a request to a TCP server and collect its whole response.
 	Fetch(SocketAddrV6, Vec<u8>),
 	/// Open a lasting TCP connection, send on it, and close it.
-	OpenStream(SocketAddrV6),
-	StreamSend(Vec<u8>),
-	CloseStream,
+	OpenStream(Stream, SocketAddrV6),
+	StreamSend(Stream, Vec<u8>),
+	CloseStream(Stream),
 	ScanWifi,
 	/// Store these settings and restart to apply them.
 	Save(Settings),
@@ -164,6 +166,8 @@ enum Screen {
 	Gopher,
 	#[cfg_attr(not(feature = "irc"), allow(dead_code))]
 	Irc,
+	#[cfg_attr(not(feature = "gemini"), allow(dead_code))]
+	Gemini,
 	Settings,
 	Networks,
 }
@@ -213,6 +217,8 @@ const MENU: &[(&str, Screen)] = &[
 	("Console", Screen::Console),
 	#[cfg(feature = "irc")]
 	("IRC", Screen::Irc),
+	#[cfg(feature = "gemini")]
+	("Gemini", Screen::Gemini),
 	#[cfg(feature = "gopher")]
 	("Gopher", Screen::Gopher),
 	("Settings", Screen::Settings),
@@ -246,6 +252,8 @@ pub struct App {
 
 	gopher: gopher::Browser,
 	irc: irc::Client,
+	#[cfg(feature = "gemini")]
+	gemini: gemini::Browser,
 
 	saved: Settings,
 	draft: Settings,
@@ -280,6 +288,8 @@ impl App {
 			unread: 0,
 			gopher: gopher::Browser::new(),
 			irc: irc::Client::new(&default_nick(&settings.name)),
+			#[cfg(feature = "gemini")]
+			gemini: gemini::Browser::new(),
 			draft: settings.clone(),
 			saved: settings,
 			settings_selected: 0,
@@ -346,18 +356,42 @@ impl App {
 			}
 			Event::Fetched { data } => self.gopher.fetched(&data),
 			Event::FetchFailed => self.gopher.failed(),
-			Event::StreamOpened => {
+			Event::StreamOpened(Stream::Irc) => {
 				let mut commands = Vec::new();
 				self.irc.opened(&mut commands);
 				self.commands.extend(commands);
 			}
-			Event::StreamData { data } => {
+			Event::StreamData {
+				stream: Stream::Irc,
+				data,
+			} => {
 				let mut commands = Vec::new();
 				let viewing = self.screen == Screen::Irc;
 				self.irc.received(&data, viewing, &mut commands);
 				self.commands.extend(commands);
 			}
-			Event::StreamClosed => self.irc.closed(),
+			Event::StreamClosed(Stream::Irc) => self.irc.closed(),
+			#[cfg(feature = "gemini")]
+			Event::StreamOpened(Stream::Gemini) => {
+				let mut commands = Vec::new();
+				self.gemini.opened(&mut commands);
+				self.commands.extend(commands);
+			}
+			#[cfg(feature = "gemini")]
+			Event::StreamData {
+				stream: Stream::Gemini,
+				data,
+			} => {
+				let mut commands = Vec::new();
+				self.gemini.received(&data, &mut commands);
+				self.commands.extend(commands);
+			}
+			#[cfg(feature = "gemini")]
+			Event::StreamClosed(Stream::Gemini) => {
+				let mut commands = Vec::new();
+				self.gemini.closed(&mut commands);
+				self.commands.extend(commands);
+			}
 			Event::Datagram { from, data } => {
 				let text = String::from_utf8_lossy(&data);
 				let line = format!(
@@ -412,6 +446,17 @@ impl App {
 				self.commands.extend(commands);
 				if let irc::Outcome::Leave = outcome {
 					self.screen = Screen::Home;
+				}
+			}
+			Screen::Gemini => {
+				#[cfg(feature = "gemini")]
+				{
+					let mut commands = Vec::new();
+					let outcome = self.gemini.handle_key(key, &mut commands);
+					self.commands.extend(commands);
+					if let gemini::Outcome::Leave = outcome {
+						self.screen = Screen::Home;
+					}
 				}
 			}
 			Screen::Gopher => {

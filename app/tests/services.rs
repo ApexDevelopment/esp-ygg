@@ -4,7 +4,7 @@ use std::net::{Ipv6Addr, SocketAddrV6};
 use std::time::Duration;
 
 use esp_ygg_app::device::{self, Queues};
-use esp_ygg_app::{BoardInfo, CONSOLE_PORT, Event, HTTP_PORT, Overlay};
+use esp_ygg_app::{BoardInfo, CONSOLE_PORT, Event, HTTP_PORT, Overlay, Stream};
 use smoltcp::iface::SocketSet;
 use smoltcp::socket::tcp;
 use smoltcp::wire::IpAddress;
@@ -293,7 +293,7 @@ fn fetching_from_a_closed_port_fails() {
 fn streams_carry_data_both_ways() {
 	let (mut radio, mut overlays) = mesh(2, &[0, 1]);
 	let server = SocketAddrV6::new(address(&radio, 0), esp_ygg_app::gopher::PORT, 0, 0);
-	overlays[1].1.open_stream(server).unwrap();
+	overlays[1].1.open_stream(Stream::Irc, server).unwrap();
 	let mut received = Vec::new();
 	let closed = wait_for(
 		&mut radio,
@@ -302,9 +302,11 @@ fn streams_carry_data_both_ways() {
 		|_, overlays| {
 			while let Some(event) = overlays[1].1.poll_event() {
 				match event {
-					Event::StreamOpened => overlays[1].1.stream_send(b"\r\n").unwrap(),
-					Event::StreamData { data } => received.extend(data),
-					Event::StreamClosed => return Some(()),
+					Event::StreamOpened(_) => {
+						overlays[1].1.stream_send(Stream::Irc, b"\r\n").unwrap()
+					}
+					Event::StreamData { data, .. } => received.extend(data),
+					Event::StreamClosed(_) => return Some(()),
 					_ => {}
 				}
 			}

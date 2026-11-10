@@ -381,17 +381,17 @@ fn carry_out(
 				warn!("Fetching from {to} failed: {error:?}");
 			}
 		}
-		Command::OpenStream(to) => {
-			if let Err(error) = overlay.open_stream(to) {
+		Command::OpenStream(stream, to) => {
+			if let Err(error) = overlay.open_stream(stream, to) {
 				warn!("Connecting to {to} failed: {error:?}");
 			}
 		}
-		Command::StreamSend(data) => {
-			if let Err(error) = overlay.stream_send(&data) {
+		Command::StreamSend(stream, data) => {
+			if let Err(error) = overlay.stream_send(stream, &data) {
 				warn!("Sending on a stream failed: {error:?}");
 			}
 		}
-		Command::CloseStream => overlay.close_stream(),
+		Command::CloseStream(stream) => overlay.close_stream(stream),
 		Command::ScanWifi => {
 			let _ = uplink::SCANS.try_send(());
 		}

@@ -34,6 +34,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
 		Screen::Node(key) => draw_node(frame, body, app, key),
 		Screen::Radio => draw_radio(frame, body, app),
 		Screen::Gopher => draw_gopher(frame, body, app),
+		#[cfg(feature = "gemini")]
+		Screen::Gemini => draw_gemini(frame, body, app),
+		#[cfg(not(feature = "gemini"))]
+		Screen::Gemini => {}
 		Screen::Irc => draw_irc(frame, body, app),
 		Screen::Ping => draw_ping(frame, body, app),
 		Screen::Console => draw_console(frame, body, app),
@@ -53,6 +57,7 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 		Screen::Network | Screen::Node(_) => "Network",
 		Screen::Radio => "Radio",
 		Screen::Gopher => "Gopher",
+		Screen::Gemini => "Gemini",
 		Screen::Irc => "IRC",
 		Screen::Ping => "Ping",
 		Screen::Console => "Console",
@@ -114,6 +119,10 @@ fn hints(app: &App) -> &'static str {
 			Some(Content::Text { .. }) => "↑↓ scroll  g address  esc back",
 			_ => "enter open  g address  esc back",
 		},
+		#[cfg(feature = "gemini")]
+		Screen::Gemini => gemini_hints(&app.gemini),
+		#[cfg(not(feature = "gemini"))]
+		Screen::Gemini => "",
 		Screen::Ping if app.pinging => "enter stop  esc back",
 		Screen::Ping => "type an address  enter start",
 		Screen::Console => "tab switch field  enter send",
@@ -294,7 +303,7 @@ fn draw_irc(frame: &mut Frame, area: Rect, app: &App) {
 
 /// Breaks `text` into lines of at most `width` characters, at spaces where
 /// it can.
-fn wrap(text: &str, width: usize) -> Vec<String> {
+pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
 	let mut lines = Vec::new();
 	let mut line = String::new();
 	for word in text.split(' ') {
@@ -387,6 +396,69 @@ fn draw_gopher(frame: &mut Frame, area: Rect, app: &App) {
 			frame.render_stateful_widget(list, body, &mut state);
 		}
 	}
+}
+
+#[cfg(feature = "gemini")]
+fn gemini_hints(browser: &super::gemini::Browser) -> &'static str {
+	if browser.prompt.is_some() {
+		"type an answer  enter send"
+	} else if browser.editing {
+		"type an address  enter go"
+	} else if browser.is_loading() {
+		"esc stop"
+	} else {
+		"↑↓ move  enter open  g address  esc back"
+	}
+}
+
+#[cfg(feature = "gemini")]
+fn draw_gemini(frame: &mut Frame, area: Rect, app: &App) {
+	use super::gemini::RowKind;
+	let browser = &app.gemini;
+	let [top, status, body] = Layout::vertical([
+		Constraint::Length(1),
+		Constraint::Length(1),
+		Constraint::Fill(1),
+	])
+	.areas(area);
+	let top_line = match (&browser.prompt, &browser.page) {
+		(Some(prompt), _) => field_line(">", &prompt.answer, true),
+		(None, Some(page)) if !browser.editing => {
+			Line::styled(format!(" {}", visible_end(&page.url.to_string(), 38)), DIM)
+		}
+		_ => field_line("go", &browser.address, browser.editing),
+	};
+	frame.render_widget(Paragraph::new(top_line), top);
+	let status_line = if let Some(prompt) = &browser.prompt {
+		Line::styled(format!(" {}", prompt.question), Style::new().fg(ACCENT))
+	} else if let Some(error) = &browser.error {
+		Line::styled(format!(" {error}"), Style::new().fg(Color::Yellow))
+	} else if browser.is_loading() {
+		Line::styled(" Loading…", DIM)
+	} else {
+		Line::raw("")
+	};
+	frame.render_widget(Paragraph::new(status_line), status);
+	let Some(page) = &browser.page else {
+		return;
+	};
+	let lines: Vec<Line> = page
+		.rows
+		.iter()
+		.skip(page.scroll)
+		.take(usize::from(body.height))
+		.map(|row| {
+			let style = match row.kind {
+				RowKind::Text => Style::new(),
+				RowKind::Heading => Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+				RowKind::Link(link) if page.selected == Some(link) => SELECTED,
+				RowKind::Link(_) => Style::new().fg(Color::Cyan),
+				RowKind::Quote | RowKind::Preformatted => DIM,
+			};
+			Line::styled(row.text.as_str(), style)
+		})
+		.collect();
+	frame.render_widget(Paragraph::new(lines), body);
 }
 
 fn draw_radio(frame: &mut Frame, area: Rect, app: &App) {

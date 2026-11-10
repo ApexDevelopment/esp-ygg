@@ -10,7 +10,10 @@ publish = false
 [dependencies]
 log = "0.4.35"
 ratatui = { version = "0.30.2", default-features = false, optional = true }
+rustls = { version = "0.23.46", default-features = false, features = ["tls12"], optional = true }
+rustls-rustcrypto = { version = "0.1.0-pre.0", default-features = false, features = ["alloc", "tls12"], optional = true }
 serde_json = { version = "1.0.154", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.11.1", default-features = false, optional = true }
 smoltcp = { version = "0.13.1", default-features = false, features = ["alloc", "medium-ip", "proto-ipv6", "socket-icmp", "socket-tcp", "socket-udp"] }
 yggdrasil-espnow = { path = "../node" }
 
@@ -18,18 +21,22 @@ yggdrasil-espnow = { path = "../node" }
 default = ["ui", "http", "console", "ntp"]
 # The on-device interface. Boards without a screen can leave it out.
 ui = ["dep:ratatui"]
-# Services, each of which costs memory while the board runs. Gopher and
-# IRC are larger, so they are off by default.
+# Services, each of which costs memory while the board runs. Gopher, IRC
+# and Gemini are larger, so they are off by default.
 http = []
 gopher = []
 console = []
 ntp = []
 irc = []
+gemini = ["dep:rustls", "dep:rustls-rustcrypto", "dep:sha2"]
 
 [dev-dependencies]
 # Turns on every service for this crate's own tests
-esp-ygg-app = { path = ".", features = ["gopher", "irc"] }
+esp-ygg-app = { path = ".", features = ["gopher", "irc", "gemini"] }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+# A server for the TLS client to talk to
+rustls = { version = "0.23.46", default-features = false, features = ["std", "tls12"] }
+rustls-rustcrypto = { version = "0.1.0-pre.0", features = ["std", "tls12"] }
 smoltcp = { version = "0.13.1", default-features = false, features = ["alloc", "medium-ip", "proto-ipv6", "socket-tcp"] }
 yggdrasil-espnow = { path = "../node", features = ["sim"] }
 

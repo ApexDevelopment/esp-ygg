@@ -382,14 +382,17 @@ fn browses_gopher_menus_and_goes_back() {
 fn irc_line(app: &mut App, line: &str) {
 	let mut data = line.as_bytes().to_vec();
 	data.extend_from_slice(b"\r\n");
-	app.handle_event(Event::StreamData { data });
+	app.handle_event(Event::StreamData {
+		stream: Stream::Irc,
+		data,
+	});
 }
 
 fn sent_lines(app: &mut App) -> Vec<String> {
 	commands(app)
 		.into_iter()
 		.filter_map(|command| match command {
-			Command::StreamSend(line) => Some(String::from_utf8(line).unwrap()),
+			Command::StreamSend(Stream::Irc, line) => Some(String::from_utf8(line).unwrap()),
 			_ => None,
 		})
 		.collect()
@@ -403,9 +406,12 @@ fn chats_on_irc() {
 	type_text(&mut app, "200::5");
 	press(&mut app, &[Key::Enter, Key::Enter, Key::Enter]);
 	let server = SocketAddrV6::new("200::5".parse().unwrap(), 6667, 0, 0);
-	assert_eq!(commands(&mut app), [Command::OpenStream(server)]);
+	assert_eq!(
+		commands(&mut app),
+		[Command::OpenStream(Stream::Irc, server)]
+	);
 
-	app.handle_event(Event::StreamOpened);
+	app.handle_event(Event::StreamOpened(Stream::Irc));
 	assert_eq!(
 		sent_lines(&mut app),
 		["NICK esp-ygg\r\n", "USER esp-ygg 0 * :esp-ygg\r\n"]
@@ -471,4 +477,100 @@ fn previews_a_time_zone_until_settings_are_left() {
 	// Leaving without saving drops the change.
 	press(&mut app, &[Key::Escape]);
 	assert!(screen(&app)[0].contains("18:30"), "{}", screen(&app)[0]);
+}
+
+/// Carries the app's Gemini connections to servers that answer each
+/// request with what `respond` gives, and returns the requests.
+fn serve_gemini(app: &mut App, respond: impl Fn(&str) -> &'static str) -> Vec<String> {
+	use std::io::{Read, Write};
+	let mut requests = Vec::new();
+	let mut server = None;
+	loop {
+		let pending = commands(app);
+		if pending.is_empty() {
+			return requests;
+		}
+		for command in pending {
+			match command {
+				Command::OpenStream(Stream::Gemini, to) => {
+					assert_eq!(to.port(), 1965);
+					server = Some(crate::tls::tests::server(&[&rustls::version::TLS13]));
+					app.handle_event(Event::StreamOpened(Stream::Gemini));
+				}
+				Command::StreamSend(Stream::Gemini, data) => {
+					let server = server.as_mut().expect("sent before opening");
+					server.read_tls(&mut &data[..]).unwrap();
+					server.process_new_packets().unwrap();
+					let mut request = Vec::new();
+					let _ = server.reader().read_to_end(&mut request);
+					if !request.is_empty() {
+						let request = String::from_utf8(request).unwrap();
+						let response = respond(request.trim_end());
+						requests.push(request.trim_end().into());
+						server.writer().write_all(response.as_bytes()).unwrap();
+						server.send_close_notify();
+					}
+					let mut reply = Vec::new();
+					while server.wants_write() {
+						server.write_tls(&mut reply).unwrap();
+					}
+					if !reply.is_empty() {
+						app.handle_event(Event::StreamData {
+							stream: Stream::Gemini,
+							data: reply,
+						});
+					}
+				}
+				// The browser is done with the connection by the time it closes it.
+				Command::CloseStream(Stream::Gemini) => server = None,
+				other => panic!("unexpected {other:?}"),
+			}
+		}
+	}
+}
+
+#[test]
+fn browses_gemini_capsules() {
+	let mut app = App::new(Settings::new(), at(0));
+	app.set_status(status(&[], &[]));
+	open(&mut app, "Gemini");
+	type_text(&mut app, "200::1");
+	press(&mut app, &[Key::Enter]);
+	let respond = |request: &str| match request {
+		"gemini://[200::1]/" => {
+			"20 text/gemini\r\n# Capsule\nHello\n=> /next Next\n=> https://example.org Web\n"
+		}
+		"gemini://[200::1]/next" => "31 /ask\r\n",
+		"gemini://[200::1]/ask" => "10 Your name?\r\n",
+		"gemini://[200::1]/ask?a%20b" => "20 text/plain\r\nHi a b\n",
+		_ => "51 Not found\r\n",
+	};
+	assert_eq!(serve_gemini(&mut app, respond), ["gemini://[200::1]/"]);
+	let shown = screen(&app).join("\n");
+	assert!(
+		shown.contains("Capsule") && shown.contains("→ Next"),
+		"{shown}"
+	);
+
+	press(&mut app, &[Key::Down, Key::Enter]);
+	assert!(screen(&app).join("\n").contains("Can't open https links"));
+
+	press(&mut app, &[Key::Up, Key::Enter]);
+	assert_eq!(
+		serve_gemini(&mut app, respond),
+		["gemini://[200::1]/next", "gemini://[200::1]/ask"]
+	);
+	assert!(screen(&app).join("\n").contains("Your name?"));
+	type_text(&mut app, "a b");
+	press(&mut app, &[Key::Enter]);
+	assert_eq!(
+		serve_gemini(&mut app, respond),
+		["gemini://[200::1]/ask?a%20b"]
+	);
+	assert!(screen(&app).join("\n").contains("Hi a b"));
+
+	// Back goes to the page before, fetching it again.
+	press(&mut app, &[Key::Escape]);
+	assert_eq!(serve_gemini(&mut app, respond), ["gemini://[200::1]/"]);
+	assert!(screen(&app).join("\n").contains("Capsule"));
 }

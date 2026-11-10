@@ -23,6 +23,7 @@ esp-radio = { version = "1.0.0-beta.1", features = ["esp-alloc", "esp-now", "log
 esp-rtos = { version = "0.4.0", features = ["embassy", "esp-alloc", "esp-radio", "log-04"] }
 esp-storage = "0.10.0"
 embedded-hal-bus = { version = "0.3.0", optional = true }
+getrandom = { version = "0.4.3", optional = true }
 esp-ygg-app = { path = "../app", default-features = false }
 mipidsi = { version = "0.10.0", optional = true }
 mousefood = { version = "0.5.3", default-features = false, features = ["fonts"], optional = true }
@@ -35,14 +36,16 @@ yggdrasil-espnow = { path = "../node" }
 
 [features]
 default = ["esp32s3", "standard"]
-# The small services every board runs unless built without them. Gopher and
-# IRC are larger; add them with, for example, --features cardputer,gopher,irc
+# The small services every board runs unless built without them. Gopher,
+# IRC and Gemini are larger; add them with, for example,
+# --features cardputer,gopher,irc,gemini
 standard = ["http", "console", "ntp"]
 http = ["esp-ygg-app/http"]
 gopher = ["esp-ygg-app/gopher"]
 console = ["esp-ygg-app/console"]
 ntp = ["esp-ygg-app/ntp"]
 irc = ["esp-ygg-app/irc"]
+gemini = ["esp-ygg-app/gemini", "dep:getrandom"]
 # M5Stack Cardputer and Cardputer ADV: screen, keyboard and on-device UI
 cardputer = [
 	"esp32s3",
@@ -101,3 +104,12 @@ codegen-units = 1
 debug = 2
 lto = "fat"
 opt-level = "s"
+
+# For builds with Gemini. Its TLS library trips a bug in the Xtensa compiler
+# (esp-rs/rust#282) unless it is built unoptimized and without LTO.
+[profile.gemini]
+inherits = "release"
+lto = false
+
+[profile.gemini.package.rustls]
+opt-level = 0

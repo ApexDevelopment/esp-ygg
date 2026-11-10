@@ -61,6 +61,32 @@ enum StreamState {
 	Connecting,
 	Open,
 }
+
+/// The lasting connections the board can hold, one for each client that
+/// needs one, so they can stay open side by side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stream {
+	Irc,
+	#[cfg(feature = "gemini")]
+	Gemini,
+}
+
+impl Stream {
+	/// The streams this build has, with their receive buffer sizes.
+	const BUILT: &[(Stream, usize)] = &[
+		#[cfg(feature = "irc")]
+		(Stream::Irc, 2048),
+		#[cfg(feature = "gemini")]
+		(Stream::Gemini, 4096),
+	];
+}
+
+struct StreamSlot {
+	stream: Stream,
+	socket: SocketHandle,
+	state: StreamState,
+	outgoing: Vec<u8>,
+}
 const PING_DATA: &[u8] = b"esp-ygg ping";
 
 /// Something a service wants the user to see.
@@ -86,12 +112,13 @@ pub enum Event {
 	/// The server could not be reached, or did not answer in time.
 	FetchFailed,
 	/// The connection from [`Overlay::open_stream`] is ready for data.
-	StreamOpened,
+	StreamOpened(Stream),
 	StreamData {
+		stream: Stream,
 		data: Vec<u8>,
 	},
 	/// The stream ended, or could not be opened.
-	StreamClosed,
+	StreamClosed(Stream),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -144,9 +171,7 @@ pub struct Overlay {
 	sockets: SocketSet<'static>,
 	servers: Vec<ServerConnection>,
 	client: Option<SocketHandle>,
-	stream: Option<SocketHandle>,
-	stream_open: StreamState,
-	stream_outgoing: Vec<u8>,
+	streams: Vec<StreamSlot>,
 	fetch: Option<Fetch>,
 	next_local_port: u16,
 	console: Option<SocketHandle>,
@@ -199,17 +224,25 @@ impl Overlay {
 				tcp::SocketBuffer::new(vec![0; 1024]),
 			))
 		});
-		let stream = cfg!(feature = "irc").then(|| {
-			let mut socket = tcp::Socket::new(
-				tcp::SocketBuffer::new(vec![0; 2048]),
-				tcp::SocketBuffer::new(vec![0; 1024]),
-			);
-			socket.set_timeout(Some(smoltcp::time::Duration::from_secs(
-				STREAM_TIMEOUT_SECS,
-			)));
-			socket.set_keep_alive(Some(smoltcp::time::Duration::from_secs(60)));
-			sockets.add(socket)
-		});
+		let streams = Stream::BUILT
+			.iter()
+			.map(|&(stream, receive_buffer)| {
+				let mut socket = tcp::Socket::new(
+					tcp::SocketBuffer::new(vec![0; receive_buffer]),
+					tcp::SocketBuffer::new(vec![0; 1024]),
+				);
+				socket.set_timeout(Some(smoltcp::time::Duration::from_secs(
+					STREAM_TIMEOUT_SECS,
+				)));
+				socket.set_keep_alive(Some(smoltcp::time::Duration::from_secs(60)));
+				StreamSlot {
+					stream,
+					socket: sockets.add(socket),
+					state: StreamState::Closed,
+					outgoing: Vec::new(),
+				}
+			})
+			.collect();
 		let console = cfg!(feature = "console").then(|| {
 			let mut console = udp::Socket::new(
 				udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 8], vec![0; 4 * MTU]),
@@ -247,9 +280,7 @@ impl Overlay {
 			device,
 			servers,
 			client,
-			stream,
-			stream_open: StreamState::Closed,
-			stream_outgoing: Vec::new(),
+			streams,
 			fetch: None,
 			next_local_port: EPHEMERAL_PORTS.start + (random_seed as u16 % 1000),
 			console,
@@ -277,7 +308,7 @@ impl Overlay {
 			.poll(to_smoltcp(now), &mut self.device, &mut self.sockets);
 		self.serve(node, board);
 		self.progress_fetch(now);
-		self.progress_stream();
+		self.progress_streams();
 		self.receive_datagrams();
 		self.receive_pings(now);
 		self.expire_pings(now);
@@ -453,74 +484,84 @@ impl Overlay {
 		Ok(())
 	}
 
-	/// Opens a lasting TCP connection, replacing one already open. Its
-	/// progress arrives as [`Event`]s.
-	pub fn open_stream(&mut self, to: SocketAddrV6) -> Result<(), SendError> {
-		let handle = self.stream.ok_or(SendError::Unavailable)?;
+	/// Opens a lasting TCP connection, replacing the one `stream` had open.
+	/// Its progress arrives as [`Event`]s.
+	pub fn open_stream(&mut self, stream: Stream, to: SocketAddrV6) -> Result<(), SendError> {
 		let local_port = self.next_port();
+		let handle = self.slot(stream)?.socket;
 		let socket = self.sockets.get_mut::<tcp::Socket>(handle);
 		socket.abort();
 		let remote = IpEndpoint::new(IpAddress::Ipv6(*to.ip()), to.port());
 		socket
 			.connect(self.interface.context(), remote, local_port)
 			.map_err(|_| SendError::Busy)?;
-		self.stream_open = StreamState::Connecting;
-		self.stream_outgoing.clear();
+		let slot = self.slot(stream)?;
+		slot.state = StreamState::Connecting;
+		slot.outgoing.clear();
 		Ok(())
 	}
 
-	/// Queues data for the open stream.
-	pub fn stream_send(&mut self, data: &[u8]) -> Result<(), SendError> {
-		if self.stream_open == StreamState::Closed {
+	/// Queues data for an open stream.
+	pub fn stream_send(&mut self, stream: Stream, data: &[u8]) -> Result<(), SendError> {
+		let slot = self.slot(stream)?;
+		if slot.state == StreamState::Closed {
 			return Err(SendError::Unavailable);
 		}
-		if self.stream_outgoing.len() + data.len() > MAX_STREAM_BACKLOG {
+		if slot.outgoing.len() + data.len() > MAX_STREAM_BACKLOG {
 			return Err(SendError::Busy);
 		}
-		self.stream_outgoing.extend_from_slice(data);
+		slot.outgoing.extend_from_slice(data);
 		Ok(())
 	}
 
-	/// Closes the stream once what is queued has been sent.
-	pub fn close_stream(&mut self) {
-		if let Some(handle) = self.stream {
-			self.sockets.get_mut::<tcp::Socket>(handle).close();
+	/// Closes a stream once what is queued has been sent.
+	pub fn close_stream(&mut self, stream: Stream) {
+		if let Ok(slot) = self.slot(stream) {
+			let socket = slot.socket;
+			self.sockets.get_mut::<tcp::Socket>(socket).close();
 		}
 	}
 
-	fn progress_stream(&mut self) {
-		let Some(handle) = self.stream else {
-			return;
-		};
-		if self.stream_open == StreamState::Closed {
-			return;
-		}
-		let socket = self.sockets.get_mut::<tcp::Socket>(handle);
-		if self.stream_open == StreamState::Connecting && socket.may_send() {
-			self.stream_open = StreamState::Open;
-			self.events.push_back(Event::StreamOpened);
-		}
-		if self.stream_open == StreamState::Open
-			&& !self.stream_outgoing.is_empty()
-			&& let Ok(sent) = socket.send_slice(&self.stream_outgoing)
-		{
-			self.stream_outgoing.drain(..sent);
-		}
-		while socket.can_recv() {
-			let mut data = Vec::new();
-			let _ = socket.recv(|bytes| {
-				data.extend_from_slice(bytes);
-				(bytes.len(), ())
-			});
-			self.events.push_back(Event::StreamData { data });
-		}
-		// The server finished, so finish too.
-		if self.stream_open == StreamState::Open && !socket.may_recv() && socket.may_send() {
-			socket.close();
-		}
-		if !socket.is_open() {
-			self.stream_open = StreamState::Closed;
-			self.events.push_back(Event::StreamClosed);
+	fn slot(&mut self, stream: Stream) -> Result<&mut StreamSlot, SendError> {
+		self.streams
+			.iter_mut()
+			.find(|slot| slot.stream == stream)
+			.ok_or(SendError::Unavailable)
+	}
+
+	fn progress_streams(&mut self) {
+		for slot in &mut self.streams {
+			if slot.state == StreamState::Closed {
+				continue;
+			}
+			let stream = slot.stream;
+			let socket = self.sockets.get_mut::<tcp::Socket>(slot.socket);
+			if slot.state == StreamState::Connecting && socket.may_send() {
+				slot.state = StreamState::Open;
+				self.events.push_back(Event::StreamOpened(stream));
+			}
+			if slot.state == StreamState::Open
+				&& !slot.outgoing.is_empty()
+				&& let Ok(sent) = socket.send_slice(&slot.outgoing)
+			{
+				slot.outgoing.drain(..sent);
+			}
+			while socket.can_recv() {
+				let mut data = Vec::new();
+				let _ = socket.recv(|bytes| {
+					data.extend_from_slice(bytes);
+					(bytes.len(), ())
+				});
+				self.events.push_back(Event::StreamData { stream, data });
+			}
+			// The server finished, so finish too.
+			if slot.state == StreamState::Open && !socket.may_recv() && socket.may_send() {
+				socket.close();
+			}
+			if !socket.is_open() {
+				slot.state = StreamState::Closed;
+				self.events.push_back(Event::StreamClosed(stream));
+			}
 		}
 	}
 

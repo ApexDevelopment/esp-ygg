@@ -9,6 +9,7 @@ use core::net::{Ipv6Addr, SocketAddrV6};
 
 use super::{Command, Key, TextInput};
 use crate::irc::{self, LineReader, Message};
+use crate::overlay::Stream;
 
 const MAX_LINES: usize = 100;
 const MAX_BUFFERS: usize = 8;
@@ -133,7 +134,7 @@ impl Client {
 		self.current = 0;
 		self.phase = Phase::Connecting;
 		self.log(SERVER, format!("Connecting to {server}"), true);
-		commands.push(Command::OpenStream(server));
+		commands.push(Command::OpenStream(Stream::Irc, server));
 	}
 
 	fn chat_key(&mut self, key: Key, commands: &mut Vec<Command>) -> Outcome {
@@ -203,7 +204,7 @@ impl Client {
 			"quit" => {
 				let message = if rest.is_empty() { "Bye" } else { rest };
 				send(commands, irc::command("QUIT", &[], Some(message)));
-				commands.push(Command::CloseStream);
+				commands.push(Command::CloseStream(Stream::Irc));
 			}
 			"quote" if !rest.is_empty() => {
 				let mut raw = rest.to_string().into_bytes();
@@ -368,7 +369,7 @@ impl Client {
 }
 
 fn send(commands: &mut Vec<Command>, line: Vec<u8>) {
-	commands.push(Command::StreamSend(line));
+	commands.push(Command::StreamSend(Stream::Irc, line));
 }
 
 /// `[address]:port`, or a bare address for the usual IRC port.

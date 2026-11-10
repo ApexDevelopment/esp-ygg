@@ -45,3 +45,17 @@ pub fn now() -> Instant {
 		embassy_time::Instant::now().as_micros(),
 	))
 }
+
+/// Randomness for TLS. The hardware generator is truly random while the
+/// radio runs, which it always does here.
+#[cfg(feature = "gemini")]
+#[unsafe(no_mangle)]
+unsafe extern "Rust" fn __getrandom_v03_custom(
+	destination: *mut u8,
+	length: usize,
+) -> Result<(), getrandom::Error> {
+	// SAFETY: getrandom passes a buffer of this length that it owns.
+	let buffer = unsafe { core::slice::from_raw_parts_mut(destination, length) };
+	Rng::new().read(buffer);
+	Ok(())
+}

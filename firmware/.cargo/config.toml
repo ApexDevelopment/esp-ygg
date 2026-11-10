@@ -14,14 +14,16 @@ runner = "espflash flash --monitor --chip esp32c3"
 runner = "espflash flash --monitor --chip esp32c6"
 
 [target.'cfg(target_arch = "xtensa")']
-rustflags = ["-C", "link-arg=-nostartfiles"]
+# TLS for Gemini takes its randomness from the hardware, through getrandom.
+rustflags = ["-C", "link-arg=-nostartfiles", "--cfg", 'getrandom_backend="custom"']
 
 [target.'cfg(target_arch = "riscv32")']
-rustflags = ["-C", "force-frame-pointers"]
+rustflags = ["-C", "force-frame-pointers", "--cfg", 'getrandom_backend="custom"']
 
 [alias]
 s3 = "run --release"
 cardputer = "run --release --features cardputer"
+cardputer-gemini = "run --profile gemini --features cardputer,gemini"
 c3 = "run --release --no-default-features --features esp32c3,standard --target riscv32imc-unknown-none-elf"
 c6 = "run --release --no-default-features --features esp32c6,standard --target riscv32imac-unknown-none-elf"
 esp32 = "run --release --no-default-features --features esp32,standard --target xtensa-esp32-none-elf"
