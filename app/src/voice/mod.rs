@@ -9,35 +9,48 @@ pub mod iax2;
 pub mod mulaw;
 
 /// The codecs this build offers in calls, most preferred first.
-pub const CODECS: &[Codec] = &[Codec::G726, Codec::Ulaw];
+pub const CODECS: &[Codec] = &[Codec::G726, Codec::G726Aal2, Codec::Ulaw];
 
 /// Samples per second, the telephone rate every codec here uses.
 pub const SAMPLE_RATE: u32 = 8000;
 /// Samples in one 20 ms frame.
 pub const FRAME_SAMPLES: usize = 160;
 
-/// The codecs calls can use, named by their IAX2 format bits.
+/// The codecs calls can use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Codec {
 	/// G.711 μ-law, 64 kbit/s
 	Ulaw,
-	/// G.726 at 32 kbit/s
+	/// G.726 at 32 kbit/s, packed as RFC 3551 has it
 	G726,
+	/// G.726 at 32 kbit/s, packed as ATM's AAL2 has it
+	G726Aal2,
 }
 
 impl Codec {
+	/// The IAX2 format bit. These follow Asterisk, which swapped the two
+	/// G.726 bits from what RFC 5456 lists, and which other software follows.
 	pub fn format(self) -> u32 {
 		match self {
 			Codec::Ulaw => 0x04,
-			Codec::G726 => 0x10,
+			Codec::G726Aal2 => 0x10,
+			Codec::G726 => 0x800,
 		}
 	}
 
 	pub fn from_format(format: u32) -> Option<Self> {
 		match format {
 			0x04 => Some(Codec::Ulaw),
-			0x10 => Some(Codec::G726),
+			0x10 => Some(Codec::G726Aal2),
+			0x800 => Some(Codec::G726),
 			_ => None,
+		}
+	}
+
+	fn packing(self) -> g726::Packing {
+		match self {
+			Codec::G726Aal2 => g726::Packing::Aal2,
+			_ => g726::Packing::Rfc3551,
 		}
 	}
 }
@@ -66,7 +79,9 @@ impl Encoder {
 				.iter()
 				.map(|&sample| mulaw::encode(sample))
 				.collect(),
-			Codec::G726 => g726::encode(&mut self.g726, samples),
+			Codec::G726 | Codec::G726Aal2 => {
+				g726::encode(&mut self.g726, self.codec.packing(), samples)
+			}
 		}
 	}
 }
@@ -92,7 +107,9 @@ impl Decoder {
 	pub fn decode(&mut self, data: &[u8]) -> Vec<i16> {
 		match self.codec {
 			Codec::Ulaw => data.iter().map(|&byte| mulaw::decode(byte)).collect(),
-			Codec::G726 => g726::decode(&mut self.g726, data),
+			Codec::G726 | Codec::G726Aal2 => {
+				g726::decode(&mut self.g726, self.codec.packing(), data)
+			}
 		}
 	}
 }

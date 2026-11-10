@@ -716,10 +716,19 @@ fn full_frame(
 	frame.extend_from_slice(&(0x8000 | source).to_be_bytes());
 	frame.extend_from_slice(&destination.to_be_bytes());
 	frame.extend_from_slice(&timestamp.to_be_bytes());
-	// Every subclass sent fits in 7 bits, without the power-of-two form.
-	frame.extend_from_slice(&[out_sequence, in_sequence, kind, subclass as u8]);
+	frame.extend_from_slice(&[out_sequence, in_sequence, kind, encode_subclass(subclass)]);
 	frame.extend_from_slice(data);
 	frame
+}
+
+/// A subclass in 7 bits, or as a power of two with the C bit for larger
+/// formats.
+fn encode_subclass(subclass: u32) -> u8 {
+	if subclass < 0x80 {
+		subclass as u8
+	} else {
+		0x80 | subclass.trailing_zeros() as u8
+	}
 }
 
 fn push_ie(data: &mut Vec<u8>, id: u8, value: &[u8]) {
@@ -937,5 +946,8 @@ mod tests {
 			panic!("a full frame");
 		};
 		assert_eq!(frame.subclass, 0x10);
+		// And larger formats are written that way.
+		assert_eq!(encode_subclass(0x800), 0x8b);
+		assert_eq!(encode_subclass(0x04), 0x04);
 	}
 }

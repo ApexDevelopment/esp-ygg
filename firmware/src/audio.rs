@@ -44,10 +44,11 @@ pub static VOICE_IN: Channel<CriticalSectionRawMutex, (Codec, Vec<u8>), 16> = Ch
 pub static VOICE_OUT: Channel<CriticalSectionRawMutex, Vec<u8>, 8> = Channel::new();
 
 /// The call as the network side sees it: none, ringing here, or up, with
-/// the codec's format bits.
+/// the codec's place in [`CALL_CODECS`] after those.
 static CALL: AtomicU8 = AtomicU8::new(NO_CALL);
 const NO_CALL: u8 = 0;
 const RINGING: u8 = 1;
+const CALL_CODECS: [Codec; 3] = [Codec::Ulaw, Codec::G726, Codec::G726Aal2];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CallState {
@@ -59,7 +60,10 @@ enum CallState {
 /// Called by the network side whenever the call changes.
 pub fn set_call(ringing: bool, up: Option<Codec>) {
 	let value = match (up, ringing) {
-		(Some(codec), _) => codec.format() as u8,
+		(Some(codec), _) => {
+			let index = CALL_CODECS.iter().position(|&known| known == codec);
+			2 + index.expect("every codec is listed") as u8
+		}
 		(None, true) => RINGING,
 		(None, false) => NO_CALL,
 	};
@@ -70,7 +74,9 @@ fn call_state() -> CallState {
 	match CALL.load(Ordering::Relaxed) {
 		NO_CALL => CallState::None,
 		RINGING => CallState::Ringing,
-		format => Codec::from_format(u32::from(format)).map_or(CallState::None, CallState::Up),
+		value => CALL_CODECS
+			.get(usize::from(value - 2))
+			.map_or(CallState::None, |&codec| CallState::Up(codec)),
 	}
 }
 

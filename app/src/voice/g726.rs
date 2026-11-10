@@ -288,22 +288,35 @@ fn reconstruct(negative: bool, dqln: i32, y: i32) -> i32 {
 	if negative { dq - 0x8000 } else { dq }
 }
 
-/// Packs codes two to a byte, the first in the low four bits, as RFC 3551
-/// and Asterisk's IAX2 format 0x10 do.
-pub fn encode(state: &mut State, samples: &[i16]) -> alloc::vec::Vec<u8> {
+/// How codes are packed two to a byte.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Packing {
+	/// The first code in the low four bits, as RFC 3551 has it
+	Rfc3551,
+	/// The first code in the high four bits, as ATM's AAL2 has it
+	Aal2,
+}
+
+pub fn encode(state: &mut State, packing: Packing, samples: &[i16]) -> alloc::vec::Vec<u8> {
 	samples
 		.chunks(2)
 		.map(|pair| {
-			let low = state.encode(pair[0]);
-			let high = pair.get(1).map_or(0, |&sample| state.encode(sample));
-			low | high << 4
+			let first = state.encode(pair[0]);
+			let second = pair.get(1).map_or(0, |&sample| state.encode(sample));
+			match packing {
+				Packing::Rfc3551 => first | second << 4,
+				Packing::Aal2 => first << 4 | second,
+			}
 		})
 		.collect()
 }
 
-pub fn decode(state: &mut State, data: &[u8]) -> alloc::vec::Vec<i16> {
+pub fn decode(state: &mut State, packing: Packing, data: &[u8]) -> alloc::vec::Vec<i16> {
 	data.iter()
-		.flat_map(|&byte| [byte & 0x0f, byte >> 4])
+		.flat_map(|&byte| match packing {
+			Packing::Rfc3551 => [byte & 0x0f, byte >> 4],
+			Packing::Aal2 => [byte >> 4, byte & 0x0f],
+		})
 		.map(|code| state.decode(code))
 		.collect()
 }
@@ -339,13 +352,13 @@ mod tests {
 	/// Asterisk's G.726 codec is built on.
 	#[test]
 	fn matches_the_reference_bit_for_bit() {
-		let encoded = encode(&mut State::default(), &signal());
+		let encoded = encode(&mut State::default(), Packing::Rfc3551, &signal());
 		assert_eq!(
 			encoded[..8],
 			[0x88, 0x78, 0x87, 0xe9, 0x18, 0x83, 0xe1, 0xd3]
 		);
 		assert_eq!(fnv(encoded.iter().copied()), 0x8d5ec9b1a024ff07);
-		let decoded = decode(&mut State::default(), &encoded);
+		let decoded = decode(&mut State::default(), Packing::Rfc3551, &encoded);
 		let bytes = decoded.iter().flat_map(|sample| sample.to_le_bytes());
 		assert_eq!(fnv(bytes), 0xd634ab09212b9724);
 	}
