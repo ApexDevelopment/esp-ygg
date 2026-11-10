@@ -448,3 +448,27 @@ fn chats_on_irc() {
 	irc_line(&mut app, ":ada!a@200::2 PRIVMSG #esp-ygg :still there?");
 	assert!(screen(&app).join("\n").contains("IRC (2 new)"));
 }
+
+#[test]
+fn previews_a_time_zone_until_settings_are_left() {
+	let mut app = App::new(Settings::new(), at(0));
+	let mut status = status(&[], &[]);
+	// 2026-11-09 18:30 UTC
+	status.board.time = Some(1_794_249_000_000_000);
+	app.set_status(status);
+	open(&mut app, "Settings");
+	let time_zone = FIELDS
+		.iter()
+		.position(|field| *field == Field::TimeZone)
+		.unwrap();
+	for _ in 0..time_zone {
+		press(&mut app, &[Key::Down]);
+	}
+	press(&mut app, &[Key::Enter]);
+	type_text(&mut app, "-5");
+	press(&mut app, &[Key::Enter]);
+	assert!(screen(&app)[0].contains("13:30"), "{}", screen(&app)[0]);
+	// Leaving without saving drops the change.
+	press(&mut app, &[Key::Escape]);
+	assert!(screen(&app)[0].contains("18:30"), "{}", screen(&app)[0]);
+}

@@ -80,7 +80,13 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 		Uplink::Connected => "bridged ",
 	});
 	if let Some(time) = app.status.as_ref().and_then(|status| status.board.time) {
-		let local = DateTime::from_unix((time / 1_000_000) as i64, app.saved.utc_offset);
+		// While settings are open, preview the time zone being chosen.
+		let offset = if app.screen == Screen::Settings {
+			app.draft.utc_offset
+		} else {
+			app.saved.utc_offset
+		};
+		let local = DateTime::from_unix((time / 1_000_000) as i64, offset);
 		right.push_str(&local.clock());
 		right.push(' ');
 	}
