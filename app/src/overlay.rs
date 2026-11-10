@@ -15,6 +15,7 @@ use yggdrasil_espnow::{Instant, Node, Platform};
 
 use crate::device::{MTU, Queues, interface};
 use crate::gopher;
+use crate::hotspot::{Hotspot, Mac};
 use crate::http::{self, BoardInfo};
 use crate::sntp;
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
@@ -189,6 +190,7 @@ pub struct Overlay {
 	/// When each time server was last asked, so only replies we asked for count.
 	time_requests: BTreeMap<Ipv6Addr, Instant>,
 	next_time_request: Instant,
+	hotspot: Option<Hotspot>,
 }
 
 impl Overlay {
@@ -285,16 +287,25 @@ impl Overlay {
 			clock: None,
 			time_requests: BTreeMap::new(),
 			next_time_request: node.now(),
+			hotspot: None,
 		}
 	}
 
 	/// Moves packets between the node and the stack and runs the services.
 	/// Call it after every call to the node, and when [`Overlay::poll_at`] passes.
 	pub fn poll<P: Platform>(&mut self, node: &mut Node<P>, board: &BoardInfo) {
-		while let Some(packet) = node.recv_ipv6() {
-			self.device.received.push_back(packet);
-		}
 		let now = node.now();
+		while let Some(packet) = node.recv_ipv6() {
+			match &mut self.hotspot {
+				Some(hotspot) if hotspot.in_subnet(&destination(&packet)) => hotspot.send(packet),
+				_ => self.device.received.push_back(packet),
+			}
+		}
+		if let Some(hotspot) = &mut self.hotspot
+			&& hotspot.poll_at() <= now
+		{
+			hotspot.handle_timeout(now);
+		}
 		self.interface
 			.poll(to_smoltcp(now), &mut self.device, &mut self.sockets);
 		self.serve(node, board);
@@ -309,8 +320,44 @@ impl Overlay {
 		self.interface
 			.poll(to_smoltcp(now), &mut self.device, &mut self.sockets);
 		while let Some(packet) = self.device.outgoing.pop_front() {
+			match &mut self.hotspot {
+				Some(hotspot) if hotspot.in_subnet(&destination(&packet)) => hotspot.send(packet),
+				_ => {
+					let _ = node.send_ipv6(&packet);
+				}
+			}
+		}
+	}
+
+	/// Starts routing for devices on the board's own WiFi network, whose
+	/// access point has hardware address `mac`.
+	pub fn start_hotspot<P: Platform>(&mut self, node: &Node<P>, mac: Mac) {
+		self.hotspot = Some(Hotspot::new(mac, node.subnet().0, node.now()));
+	}
+
+	/// Takes a frame from the hotspot. Call [`Overlay::poll`] afterwards.
+	pub fn receive_hotspot_frame<P: Platform>(&mut self, node: &mut Node<P>, frame: &[u8]) {
+		let Some(hotspot) = &mut self.hotspot else {
+			return;
+		};
+		let Some(packet) = hotspot.receive(frame, node.now()) else {
+			return;
+		};
+		if Ipv6Addr::from(destination(&packet)) == self.address {
+			self.device.received.push_back(packet);
+		} else {
 			let _ = node.send_ipv6(&packet);
 		}
+	}
+
+	/// The next frame for the hotspot to send.
+	pub fn poll_hotspot_frame(&mut self) -> Option<Vec<u8>> {
+		self.hotspot.as_mut()?.poll_frame()
+	}
+
+	/// How many devices are using the hotspot, if it is on.
+	pub fn hotspot_devices(&self) -> Option<usize> {
+		self.hotspot.as_ref().map(Hotspot::devices)
 	}
 
 	/// When [`Overlay::poll`] next needs to run, if no packets arrive first.
@@ -324,6 +371,7 @@ impl Overlay {
 			.into_iter()
 			.chain(pings)
 			.chain([self.next_time_request])
+			.chain(self.hotspot.as_ref().map(Hotspot::poll_at))
 			.chain(
 				self.fetch
 					.as_ref()
@@ -764,6 +812,14 @@ impl Overlay {
 			}
 		}
 	}
+}
+
+/// An IPv6 packet's destination address, or `::` if it is too short to have one.
+fn destination(packet: &[u8]) -> [u8; 16] {
+	packet
+		.get(24..40)
+		.and_then(|bytes| bytes.try_into().ok())
+		.unwrap_or([0; 16])
 }
 
 fn to_smoltcp(instant: Instant) -> smoltcp::time::Instant {

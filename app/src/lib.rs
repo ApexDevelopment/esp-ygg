@@ -8,6 +8,7 @@ extern crate alloc;
 pub mod device;
 pub mod gemini;
 pub mod gopher;
+pub mod hotspot;
 pub mod http;
 pub mod irc;
 mod overlay;

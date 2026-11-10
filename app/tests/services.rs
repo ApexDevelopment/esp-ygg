@@ -316,3 +316,98 @@ fn streams_carry_data_both_ways() {
 	assert!(closed.is_some(), "the stream never closed");
 	assert!(String::from_utf8_lossy(&received).contains("Test <board>"));
 }
+
+const PHONE_MAC: [u8; 6] = [0x8a, 0, 0, 0, 0, 2];
+const BOARD_MAC: [u8; 6] = [0x24, 0, 0, 0, 0, 1];
+
+/// An Ethernet frame from a phone on a hotspot, carrying a UDP datagram.
+fn phone_datagram(from: SocketAddrV6, to: SocketAddrV6, data: &[u8]) -> Vec<u8> {
+	let length = (8 + data.len()) as u16;
+	let mut udp = Vec::new();
+	udp.extend_from_slice(&from.port().to_be_bytes());
+	udp.extend_from_slice(&to.port().to_be_bytes());
+	udp.extend_from_slice(&length.to_be_bytes());
+	udp.extend_from_slice(&[0, 0]);
+	udp.extend_from_slice(data);
+	let mut sum: u32 = 0;
+	let mut pseudo = Vec::new();
+	pseudo.extend_from_slice(&from.ip().octets());
+	pseudo.extend_from_slice(&to.ip().octets());
+	pseudo.extend_from_slice(&u32::from(length).to_be_bytes());
+	pseudo.extend_from_slice(&[0, 0, 0, 17]);
+	pseudo.extend_from_slice(&udp);
+	for pair in pseudo.chunks(2) {
+		sum += u32::from(u16::from_be_bytes([pair[0], *pair.get(1).unwrap_or(&0)]));
+	}
+	while sum > 0xffff {
+		sum = (sum & 0xffff) + (sum >> 16);
+	}
+	udp[6..8].copy_from_slice(&(!(sum as u16)).to_be_bytes());
+	let mut frame = Vec::from(BOARD_MAC);
+	frame.extend_from_slice(&PHONE_MAC);
+	frame.extend_from_slice(&[0x86, 0xdd, 0x60, 0, 0, 0]);
+	frame.extend_from_slice(&length.to_be_bytes());
+	frame.extend_from_slice(&[17, 64]);
+	frame.extend_from_slice(&from.ip().octets());
+	frame.extend_from_slice(&to.ip().octets());
+	frame.extend_from_slice(&udp);
+	frame
+}
+
+#[test]
+fn hotspot_devices_reach_the_mesh_and_hear_back() {
+	let (mut radio, mut overlays) = mesh(3, &[0, 2]);
+	overlays[0].1.start_hotspot(&radio.nodes[0], BOARD_MAC);
+	let mut phone_ip = radio.nodes[0].subnet().0.to_vec();
+	phone_ip.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 7]);
+	let phone_ip = Ipv6Addr::from(<[u8; 16]>::try_from(phone_ip).unwrap());
+	let phone = SocketAddrV6::new(phone_ip, 5000, 0, 0);
+	let far_console = SocketAddrV6::new(address(&radio, 2), CONSOLE_PORT, 0, 0);
+	let near_console = SocketAddrV6::new(address(&radio, 0), CONSOLE_PORT, 0, 0);
+
+	let heard = wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(30),
+		|radio, overlays| {
+			if radio.now_micros() % 1_000_000 < 1_000 {
+				let frame = phone_datagram(phone, far_console, b"from a phone");
+				overlays[0]
+					.1
+					.receive_hotspot_frame(&mut radio.nodes[0], &frame);
+			}
+			match overlays[1].1.poll_event() {
+				Some(Event::Datagram { from, data }) => Some((from, data)),
+				_ => None,
+			}
+		},
+	);
+	assert_eq!(heard, Some((phone, b"from a phone".to_vec())));
+
+	overlays[1].1.send_datagram(phone, b"hello phone").unwrap();
+	let answer = wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(10),
+		|_, overlays| {
+			std::iter::from_fn(|| overlays[0].1.poll_hotspot_frame())
+				.find(|frame| frame.ends_with(b"hello phone"))
+		},
+	);
+	assert_eq!(answer.expect("no answer reached the phone")[..6], PHONE_MAC);
+
+	let frame = phone_datagram(phone, near_console, b"to this board");
+	overlays[0]
+		.1
+		.receive_hotspot_frame(&mut radio.nodes[0], &frame);
+	let local = wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(1),
+		|_, overlays| match overlays[0].1.poll_event() {
+			Some(Event::Datagram { data, .. }) => Some(data),
+			_ => None,
+		},
+	);
+	assert_eq!(local, Some(b"to this board".to_vec()));
+}
