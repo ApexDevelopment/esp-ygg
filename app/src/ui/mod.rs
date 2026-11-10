@@ -90,6 +90,8 @@ pub struct Status {
 	/// Every node in this node's view of the network.
 	pub known: Vec<PublicKey>,
 	pub uplink: Uplink,
+	/// How many devices are on the hotspot, if it is on.
+	pub hotspot: Option<usize>,
 	pub board: BoardInfo,
 }
 
@@ -117,6 +119,7 @@ impl Status {
 				.filter(|key| *key != own)
 				.collect(),
 			uplink,
+			hotspot: None,
 			board: board.clone(),
 		}
 	}
@@ -183,30 +186,47 @@ enum Screen {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Field {
 	Name,
-	Bridge,
-	Network,
-	Password,
-	Peer,
 	Channel,
 	#[cfg_attr(not(feature = "ntp"), allow(dead_code))]
 	TimeZone,
 	#[cfg_attr(not(any(feature = "http", feature = "gopher")), allow(dead_code))]
 	StatusPage,
+	Bridge,
+	Network,
+	Password,
+	Peer,
+	Hotspot,
+	HotspotName,
+	HotspotPassword,
 	Save,
+}
+
+impl Field {
+	/// The heading shown above a group of settings, before its first field.
+	fn heading(self) -> Option<&'static str> {
+		match self {
+			Field::Bridge => Some("Bridge to a WiFi network"),
+			Field::Hotspot => Some("Hotspot for phones and laptops"),
+			_ => None,
+		}
+	}
 }
 
 /// The settings, without those for services left out of the build.
 const FIELDS: &[Field] = &[
 	Field::Name,
-	Field::Bridge,
-	Field::Network,
-	Field::Password,
-	Field::Peer,
 	Field::Channel,
 	#[cfg(feature = "ntp")]
 	Field::TimeZone,
 	#[cfg(any(feature = "http", feature = "gopher"))]
 	Field::StatusPage,
+	Field::Bridge,
+	Field::Network,
+	Field::Password,
+	Field::Peer,
+	Field::Hotspot,
+	Field::HotspotName,
+	Field::HotspotPassword,
 	Field::Save,
 ];
 
@@ -653,8 +673,14 @@ impl App {
 			Field::Peer => TextInput::prefilled(&self.draft.peer, 21),
 			Field::Channel => TextInput::prefilled(&self.draft.channel.to_string(), 2),
 			Field::TimeZone => TextInput::prefilled(&format_offset(self.draft.utc_offset), 6),
+			Field::HotspotName => TextInput::prefilled(&self.draft.hotspot_name, 32),
+			Field::HotspotPassword => TextInput::secret(&self.draft.hotspot_password, 63),
 			Field::Bridge => {
 				self.draft.bridge = !self.draft.bridge;
+				return;
+			}
+			Field::Hotspot => {
+				self.draft.hotspot = !self.draft.hotspot;
 				return;
 			}
 			Field::StatusPage => {
@@ -700,7 +726,17 @@ impl App {
 				Ok(channel @ 1..=13) => self.draft.channel = channel,
 				_ => self.notice = Some("Channels go from 1 to 13".into()),
 			},
-			Field::Bridge | Field::StatusPage | Field::Network | Field::Save => {}
+			Field::HotspotName if text.is_empty() => {
+				self.notice = Some("The hotspot needs a name".into())
+			}
+			Field::HotspotName => self.draft.hotspot_name = text,
+			Field::HotspotPassword if Settings::is_hotspot_password(&text) => {
+				self.draft.hotspot_password = text
+			}
+			Field::HotspotPassword => {
+				self.notice = Some("Use 8 or more characters, or none".into())
+			}
+			Field::Bridge | Field::StatusPage | Field::Network | Field::Hotspot | Field::Save => {}
 		}
 	}
 

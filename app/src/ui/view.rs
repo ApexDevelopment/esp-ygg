@@ -84,6 +84,11 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 		Uplink::Connecting => "bridging… ",
 		Uplink::Connected => "bridged ",
 	});
+	match app.status.as_ref().and_then(|status| status.hotspot) {
+		Some(0) => right.push_str("hotspot "),
+		Some(devices) => right.push_str(&format!("hotspot {devices} ")),
+		None => {}
+	}
 	if let Some(time) = app.status.as_ref().and_then(|status| status.board.time) {
 		// While settings are open, preview the time zone being chosen.
 		let offset = if app.screen == Screen::Settings {
@@ -588,46 +593,64 @@ fn draw_console(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_settings(frame: &mut Frame, area: Rect, app: &App) {
 	let draft = &app.draft;
-	let lines: Vec<Line> = FIELDS
-		.iter()
-		.enumerate()
-		.map(|(index, field)| {
-			let (label, value) = match field {
-				Field::Name => ("Name", draft.name.clone()),
-				Field::Bridge => ("Bridge", on_off(draft.bridge)),
-				Field::Network => ("WiFi", draft.ssid.clone()),
-				Field::Password => ("Password", "•".repeat(draft.password.chars().count())),
-				Field::Peer => ("Peer", draft.peer.clone()),
-				Field::Channel => ("Channel", draft.channel.to_string()),
-				Field::TimeZone => (
-					"Time zone",
-					format!("UTC{}", format_offset(draft.utc_offset)),
-				),
-				Field::StatusPage => ("Status pages", on_off(draft.status_page)),
-				Field::Save => ("Save and restart", String::new()),
-			};
-			let selected = index == app.settings_selected;
-			if let (true, Some((editing, input))) = (selected, &app.editing)
-				&& editing == field
-			{
-				let text = visible_end(&input.display(), 25);
-				// The old value shows as selected until typing replaces it.
-				let value = if input.replaceable {
-					Span::styled(text, SELECTED)
-				} else {
-					Span::styled(
-						format!("{text}_"),
-						Style::new().add_modifier(Modifier::BOLD),
-					)
-				};
-				return Line::from(Vec::from([Span::raw(format!(" {label:<13}")), value]));
+	let mut lines = Vec::new();
+	let mut selected_line = 0;
+	for (index, field) in FIELDS.iter().enumerate() {
+		if let Some(heading) = field.heading() {
+			lines.push(Line::styled(format!(" {heading}"), DIM));
+		}
+		let (label, value) = match field {
+			Field::Name => ("Name", draft.name.clone()),
+			Field::Channel => ("Channel", draft.channel.to_string()),
+			Field::TimeZone => (
+				"Time zone",
+				format!("UTC{}", format_offset(draft.utc_offset)),
+			),
+			Field::StatusPage => ("Status pages", on_off(draft.status_page)),
+			Field::Bridge => ("Bridge", on_off(draft.bridge)),
+			Field::Network => ("Network", draft.ssid.clone()),
+			Field::Password => ("Password", "•".repeat(draft.password.chars().count())),
+			Field::Peer => ("Peer", draft.peer.clone()),
+			Field::Hotspot => ("Hotspot", on_off(draft.hotspot)),
+			Field::HotspotName => ("Network", draft.hotspot_name.clone()),
+			Field::HotspotPassword if draft.hotspot_password.is_empty() => {
+				("Password", "none, open".into())
 			}
-			let text = format!(" {label:<13}{value}");
-			let style = if selected { SELECTED } else { Style::new() };
-			Line::styled(pad(&text, area.width), style)
-		})
-		.collect();
-	frame.render_widget(Paragraph::new(lines), area);
+			Field::HotspotPassword => (
+				"Password",
+				"•".repeat(draft.hotspot_password.chars().count()),
+			),
+			Field::Save => ("Save and restart", String::new()),
+		};
+		let selected = index == app.settings_selected;
+		if selected {
+			selected_line = lines.len();
+		}
+		if let (true, Some((editing, input))) = (selected, &app.editing)
+			&& editing == field
+		{
+			let text = visible_end(&input.display(), 25);
+			// The old value shows as selected until typing replaces it.
+			let value = if input.replaceable {
+				Span::styled(text, SELECTED)
+			} else {
+				Span::styled(
+					format!("{text}_"),
+					Style::new().add_modifier(Modifier::BOLD),
+				)
+			};
+			lines.push(Line::from(Vec::from([
+				Span::raw(format!(" {label:<13}")),
+				value,
+			])));
+			continue;
+		}
+		let text = format!(" {label:<13}{value}");
+		let style = if selected { SELECTED } else { Style::new() };
+		lines.push(Line::styled(pad(&text, area.width), style));
+	}
+	let scroll = (selected_line + 1).saturating_sub(usize::from(area.height));
+	frame.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), area);
 }
 
 fn draw_networks(frame: &mut Frame, area: Rect, app: &App) {

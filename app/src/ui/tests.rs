@@ -42,6 +42,7 @@ fn status(peers: &[PublicKey], known: &[PublicKey]) -> Status {
 		peers: peers.to_vec(),
 		known: known.to_vec(),
 		uplink: Uplink::Off,
+		hotspot: None,
 		board: BoardInfo::default(),
 	}
 }
@@ -177,7 +178,7 @@ fn counts_unread_messages_on_the_home_screen() {
 }
 
 #[test]
-fn edits_and_saves_bridge_settings() {
+fn edits_and_saves_settings() {
 	let mut app = App::new(Settings::new(), at(0));
 	app.set_status(status(&[], &[]));
 	open(&mut app, "Settings");
@@ -185,6 +186,13 @@ fn edits_and_saves_bridge_settings() {
 	press(&mut app, &[Key::Enter]);
 	type_text(&mut app, "kitchen");
 	press(&mut app, &[Key::Enter]);
+	// A time zone, which replaces the old value, "+00:00", as it is typed
+	press(&mut app, &[Key::Down, Key::Down, Key::Enter]);
+	type_text(&mut app, "-5");
+	press(&mut app, &[Key::Enter]);
+	assert!(screen(&app).join("\n").contains("UTC-05:00"));
+	press(&mut app, &[Key::Down, Key::Enter]);
+	assert!(screen(&app).join("\n").contains("Status pages off"));
 	// Bridge on, then pick a network from a scan
 	press(&mut app, &[Key::Down, Key::Enter, Key::Down, Key::Enter]);
 	assert_eq!(commands(&mut app), [Command::ScanWifi]);
@@ -206,28 +214,31 @@ fn edits_and_saves_bridge_settings() {
 	type_text(&mut app, "secret");
 	press(&mut app, &[Key::Enter]);
 	assert!(screen(&app).join("\n").contains("••••••"));
-	let to_save = [
-		Key::Down,
-		Key::Down,
-		Key::Down,
-		Key::Down,
-		Key::Down,
-		Key::Enter,
-	];
-	press(&mut app, &to_save);
+	press(&mut app, &[Key::Down; 5]);
+	press(&mut app, &[Key::Enter]);
 	assert!(commands(&mut app).is_empty());
 	assert!(screen(&app).join("\n").contains("needs a network and peer"));
-	// Peer, a time zone, the status page off, then save
-	press(&mut app, &[Key::Up, Key::Up, Key::Up, Key::Up, Key::Enter]);
-	type_text(&mut app, "192.168.1.176:9001");
-	press(&mut app, &[Key::Enter, Key::Down, Key::Down, Key::Enter]);
-	// Typing replaces the old value, "+00:00".
-	type_text(&mut app, "-5");
+	// Peer
+	press(&mut app, &[Key::Up; 4]);
 	press(&mut app, &[Key::Enter]);
-	assert!(screen(&app).join("\n").contains("UTC-05:00"));
+	type_text(&mut app, "192.168.1.176:9001");
+	press(&mut app, &[Key::Enter]);
+	// The hotspot, under its own heading, with a password too short for WPA2
 	press(&mut app, &[Key::Down, Key::Enter]);
-	assert!(screen(&app).join("\n").contains("Status pages off"));
+	assert!(
+		screen(&app)
+			.join("\n")
+			.contains("Hotspot for phones and laptops")
+	);
 	press(&mut app, &[Key::Down, Key::Enter]);
+	type_text(&mut app, "pocket");
+	press(&mut app, &[Key::Enter, Key::Down, Key::Enter]);
+	type_text(&mut app, "short");
+	press(&mut app, &[Key::Enter]);
+	assert!(screen(&app).join("\n").contains("8 or more"));
+	press(&mut app, &[Key::Enter]);
+	type_text(&mut app, "hunter22");
+	press(&mut app, &[Key::Enter, Key::Down, Key::Enter]);
 	let expected = Settings {
 		name: "kitchen".into(),
 		bridge: true,
@@ -237,6 +248,9 @@ fn edits_and_saves_bridge_settings() {
 		channel: 1,
 		status_page: false,
 		utc_offset: -300,
+		hotspot: true,
+		hotspot_name: "pocket".into(),
+		hotspot_password: "hunter22".into(),
 	};
 	assert_eq!(commands(&mut app), [Command::Save(expected)]);
 }
@@ -309,15 +323,7 @@ fn typing_replaces_a_field_and_backspace_edits_it() {
 	let mut app = App::new(settings, at(0));
 	app.set_status(status(&[], &[]));
 	open(&mut app, "Settings");
-	let channel = [
-		Key::Down,
-		Key::Down,
-		Key::Down,
-		Key::Down,
-		Key::Down,
-		Key::Enter,
-	];
-	press(&mut app, &channel);
+	press(&mut app, &[Key::Down, Key::Enter]);
 	type_text(&mut app, "6");
 	press(&mut app, &[Key::Enter]);
 	assert!(screen(&app).join("\n").contains("Channel      6"));
