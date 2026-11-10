@@ -158,7 +158,12 @@ impl Phone {
 	}
 
 	pub fn call(&mut self, to: SocketAddrV6, now: Instant) -> Result<(), CallError> {
-		if self.call.is_some() {
+		// A call only waiting for its hangup to be acknowledged is over.
+		if self
+			.call
+			.as_ref()
+			.is_some_and(|call| call.state != State::Ending)
+		{
 			return Err(CallError::Busy);
 		}
 		let local = self.take_call_number();
@@ -320,15 +325,17 @@ impl Phone {
 			self.transmit.push_back((from, pong));
 			return;
 		}
-		let Some(call) = self
-			.call
-			.as_mut()
-			.filter(|call| call.peer == from && call.local == frame.destination)
-		else {
+		let Some(call) = self.call.as_mut().filter(|call| {
+			call.local == frame.destination
+				&& (call.peer == from || (call.remote == 0 && same_node(&call.peer, &from)))
+		}) else {
 			return;
 		};
 		if call.remote == 0 {
+			// The first reply names the other side's call, and the address
+			// it answers from, which may be another of the same node's.
 			call.remote = frame.source;
+			call.peer = from;
 		}
 		call.acknowledged(frame.in_sequence);
 		if frame.kind == IAX && frame.subclass == CALLTOKEN {
@@ -721,6 +728,15 @@ fn full_frame(
 	frame
 }
 
+/// Whether two addresses are surely the same node: they are equal, or in
+/// the same Yggdrasil subnet, which only that node's key can use. A computer
+/// called on one address in its subnet may answer from another, such as an
+/// IPv6 privacy address.
+fn same_node(a: &SocketAddrV6, b: &SocketAddrV6) -> bool {
+	let (a, b) = (a.ip().octets(), b.ip().octets());
+	a == b || (a[0] == 0x03 && a[..8] == b[..8])
+}
+
 /// A subclass in 7 bits, or as a power of two with the C bit for larger
 /// formats.
 fn encode_subclass(subclass: u32) -> u8 {
@@ -881,6 +897,32 @@ mod tests {
 			Line::events(&mut line.alice),
 			[CallEvent::Ended("Lost the connection".into())]
 		);
+	}
+
+	#[test]
+	fn takes_an_answer_from_another_address_of_the_same_subnet() {
+		let subnet =
+			|last| SocketAddrV6::new(Ipv6Addr::new(0x300, 1, 2, 3, 0, 0, 0, last), PORT, 0, 0);
+		let mut alice = Phone::new("alice", &[Codec::Ulaw], 1);
+		let mut bob = Phone::new("bob", &[Codec::Ulaw], 2);
+		alice.call(subnet(1), at(0)).unwrap();
+		let (_, new) = alice.poll_transmit().unwrap();
+		bob.receive(address(1), &new, at(1));
+		while let Some((_, datagram)) = bob.poll_transmit() {
+			// Bob answers from his privacy address.
+			alice.receive(subnet(2), &datagram, at(2));
+		}
+		assert_eq!(Line::events(&mut alice), [CallEvent::Ringing]);
+		// But a stranger cannot answer for him.
+		let mut alice = Phone::new("alice", &[Codec::Ulaw], 1);
+		alice.call(subnet(1), at(0)).unwrap();
+		let (_, new) = alice.poll_transmit().unwrap();
+		let mut bob = Phone::new("bob", &[Codec::Ulaw], 2);
+		bob.receive(address(1), &new, at(1));
+		while let Some((_, datagram)) = bob.poll_transmit() {
+			alice.receive(address(9), &datagram, at(2));
+		}
+		assert_eq!(Line::events(&mut alice), []);
 	}
 
 	#[test]

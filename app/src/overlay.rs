@@ -840,9 +840,16 @@ impl Overlay {
 	}
 
 	#[cfg(feature = "voice")]
+	/// Calls `to`. If that fails, an event says so, as for any call that ends.
 	pub fn call(&mut self, to: Ipv6Addr, now: Instant) -> Result<(), CallError> {
-		self.phone()?
-			.call(SocketAddrV6::new(to, iax2::PORT, 0, 0), now)
+		let result = self
+			.phone()?
+			.call(SocketAddrV6::new(to, iax2::PORT, 0, 0), now);
+		if result.is_err() {
+			let reason = "Already in a call".into();
+			self.events.push_back(Event::Call(CallEvent::Ended(reason)));
+		}
+		result
 	}
 
 	#[cfg(feature = "voice")]
