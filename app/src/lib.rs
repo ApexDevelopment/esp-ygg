@@ -5,6 +5,7 @@
 
 extern crate alloc;
 
+mod authority;
 pub mod device;
 pub mod gemini;
 pub mod gopher;

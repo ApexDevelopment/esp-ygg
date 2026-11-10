@@ -65,7 +65,7 @@ impl Url {
 			Some(slash) => text.split_at(slash),
 			None => (text, ""),
 		};
-		let (host, port) = split_host_port(authority)?;
+		let (host, port) = crate::authority::split_host_port(authority, PORT)?;
 		let mut path = path.strip_prefix('/').unwrap_or(path).chars();
 		let kind = path.next().unwrap_or('1');
 		Some(Url {
@@ -104,27 +104,6 @@ impl core::fmt::Display for Url {
 			write!(f, ":{}", self.port)?;
 		}
 		write!(f, "/{}{}", self.kind, self.selector)
-	}
-}
-
-fn split_host_port(authority: &str) -> Option<(String, u16)> {
-	if let Some(rest) = authority.strip_prefix('[') {
-		let (host, after) = rest.split_once(']')?;
-		let port = match after.strip_prefix(':') {
-			Some(port) => port.parse().ok()?,
-			None if after.is_empty() => PORT,
-			None => return None,
-		};
-		return Some((host.into(), port));
-	}
-	// A bare IPv6 address has several colons and no port.
-	if authority.matches(':').count() > 1 {
-		return Some((authority.into(), PORT));
-	}
-	match authority.split_once(':') {
-		Some((host, port)) => Some((host.into(), port.parse().ok()?)),
-		None if !authority.is_empty() => Some((authority.into(), PORT)),
-		None => None,
 	}
 }
 
