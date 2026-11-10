@@ -45,7 +45,8 @@ const LAYOUT: [[Cap; COLUMNS]; ROWS] = [
 		C('8', '*'),
 		C('9', '('),
 		C('0', ')'),
-		C('-', '_'),
+		// The keycap has these the other way round from a US keyboard.
+		C('_', '-'),
 		C('=', '+'),
 		Backspace,
 	],
