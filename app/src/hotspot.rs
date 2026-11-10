@@ -72,7 +72,10 @@ impl Hotspot {
 
 	/// How many devices have sent something recently.
 	pub fn devices(&self) -> usize {
-		self.neighbors.len()
+		let mut macs: Vec<Mac> = self.neighbors.values().map(|(mac, _)| *mac).collect();
+		macs.sort_unstable();
+		macs.dedup();
+		macs.len()
 	}
 
 	/// Takes a frame from the WiFi network. Returns the IPv6 packet inside
@@ -485,6 +488,13 @@ mod tests {
 		hotspot.send(reply.clone());
 		let sent = frames(&mut hotspot);
 		assert_eq!(sent, vec![ethernet(PHONE, BOARD, &reply)]);
+
+		// Phones use a second, temporary address too.
+		let mut temporary = phone_address();
+		temporary[15] = 8;
+		let outgoing = packet(temporary, remote_address(), UDP, 64, b"again");
+		hotspot.receive(&ethernet(BOARD, PHONE, &outgoing), at(2));
+		assert_eq!(hotspot.devices(), 1);
 	}
 
 	#[test]
