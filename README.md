@@ -111,7 +111,38 @@ With the `voice` feature, the Call screen calls other boards by address, with Ta
 
 An incoming call rings and brings up the Call screen from anywhere. Enter answers and Escape declines or hangs up. Talking is push-to-talk, like a walkie-talkie: hold G0 on the side of the board to talk, and let go to listen. Outside a call, holding G0 records a few seconds and plays them back on release, to check the speaker and microphone.
 
-Calls prefer G.726 at 32 kbit/s, which fits each 20 ms of voice in a single ESP-NOW frame, and fall back to G.711 μ-law for software without it. The G.726 codec matches Sun's reference implementation, which Asterisk's is built on, bit for bit.
+Calls prefer G.726 at 32 kbit/s, which fits each 20 ms of voice in a single ESP-NOW frame, and fall back to G.711 μ-law for software without it. The G.726 codec matches Sun's reference implementation, which Asterisk's is built on, bit for bit. Asterisk swapped the IAX2 format bits for G.726's two byte packings from what RFC 5456 lists, and the boards follow Asterisk, offering both packings.
+
+A computer on the same Yggdrasil network can call boards and take their calls with the `phone` example. It reads and writes raw audio, so ALSA's tools make it a softphone:
+
+```sh
+arecord -q -t raw -f S16_LE -r 8000 -c 1 \
+  | cargo run -p esp-ygg-app --features voice --example phone -- call <board address> \
+  | aplay -q -t raw -f S16_LE -r 8000 -c 1
+```
+
+`phone answer` instead waits for a board to call the computer. It talks continuously rather than push-to-talk, so use headphones.
+
+Asterisk can take the boards' calls too. They call without a username, so Asterisk treats them as its `guest` user. Asterisk's IAX2 dial strings cannot hold an IPv6 address, so call a board through a named peer:
+
+```ini
+; iax.conf
+[general]
+bindaddr=::
+disallow=all
+allow=g726
+allow=ulaw
+
+[guest]
+type=user
+context=boards
+
+[kitchen]
+type=peer
+host=<board address>
+```
+
+Then `Dial(IAX2/kitchen/s)` rings the board.
 
 
 A Cardputer stores the settings chosen in its interface in flash. Until then, and on boards without a screen, settings come from environment variables read when the firmware is built.

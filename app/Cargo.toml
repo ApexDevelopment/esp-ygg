@@ -45,3 +45,7 @@ yggdrasil-espnow = { path = "../node", features = ["sim"] }
 [[example]]
 name = "preview"
 required-features = ["ui"]
+
+[[example]]
+name = "phone"
+required-features = ["voice"]
