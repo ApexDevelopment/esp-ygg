@@ -23,7 +23,9 @@ use crate::platform::now;
 
 /// How often the UI runs its timers when nothing else happens.
 const TICK: Duration = Duration::from_millis(100);
-const STACK_SIZE: usize = 16 * 1024;
+/// TLS for Gemini goes deepest, at 14 KB in a handshake with an elliptic
+/// curve certificate. RSA certificates need more.
+const STACK_SIZE: usize = 24 * 1024;
 
 /// What the network side tells the UI.
 pub enum ToUi {
