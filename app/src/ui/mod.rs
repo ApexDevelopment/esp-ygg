@@ -188,9 +188,9 @@ enum Screen {
 		allow(dead_code)
 	)]
 	Apps,
-	Network,
+	Nodes,
 	Node(PublicKey),
-	Radio,
+	Neighbors,
 	Ping,
 	Console,
 	#[cfg_attr(not(feature = "gopher"), allow(dead_code))]
@@ -204,7 +204,7 @@ enum Screen {
 	Settings,
 	/// The settings in one group, opened from the main settings.
 	SettingsGroup(Group),
-	Networks,
+	WifiNetworks,
 }
 
 /// Settings that open as a menu of their own.
@@ -217,7 +217,7 @@ enum Group {
 impl Group {
 	fn fields(self) -> &'static [Field] {
 		match self {
-			Group::Bridge => &[Field::Bridge, Field::Network, Field::Password, Field::Peer],
+			Group::Bridge => &[Field::Bridge, Field::Ssid, Field::WifiPassword, Field::Peer],
 			Group::Hotspot => &[Field::Hotspot, Field::HotspotName, Field::HotspotPassword],
 		}
 	}
@@ -233,8 +233,8 @@ enum Field {
 	StatusPage,
 	Open(Group),
 	Bridge,
-	Network,
-	Password,
+	Ssid,
+	WifiPassword,
 	Peer,
 	Hotspot,
 	HotspotName,
@@ -263,8 +263,8 @@ enum ConsoleFocus {
 
 /// The home menu, without screens for services left out of the build.
 const MENU: &[(&str, Screen)] = &[
-	("Yggdrasil Nodes", Screen::Network),
-	("ESP-NOW Neighbors", Screen::Radio),
+	("Yggdrasil Nodes", Screen::Nodes),
+	("ESP-NOW Neighbors", Screen::Neighbors),
 	("Ping", Screen::Ping),
 	#[cfg(any(
 		feature = "console",
@@ -303,7 +303,7 @@ pub struct App {
 	completion: Option<Completion>,
 
 	lookups: BTreeMap<PublicKey, Lookup>,
-	network_selected: usize,
+	nodes_selected: usize,
 
 	ping_target: TextInput,
 	pinging: bool,
@@ -347,7 +347,7 @@ impl App {
 			notice: None,
 			completion: None,
 			lookups: BTreeMap::new(),
-			network_selected: 0,
+			nodes_selected: 0,
 			ping_target: TextInput::new("", 45),
 			pinging: false,
 			last_ping: None,
@@ -408,7 +408,7 @@ impl App {
 		// Names are looked up where they are shown or can be typed.
 		if matches!(
 			self.screen,
-			Screen::Network | Screen::Node(_) | Screen::Radio
+			Screen::Nodes | Screen::Node(_) | Screen::Neighbors
 		) || self.has_address_field()
 		{
 			self.start_lookups();
@@ -520,9 +520,9 @@ impl App {
 		match self.screen {
 			Screen::Home => self.home_key(key),
 			Screen::Apps => self.apps_key(key),
-			Screen::Network => self.network_key(key),
+			Screen::Nodes => self.nodes_key(key),
 			Screen::Node(node) => self.node_key(node, key),
-			Screen::Radio => {
+			Screen::Neighbors => {
 				if matches!(navigation(key), Some(Key::Escape | Key::Left)) {
 					self.screen = Screen::Home;
 				}
@@ -530,7 +530,7 @@ impl App {
 			Screen::Ping => self.ping_key(key),
 			Screen::Console => self.console_key(key),
 			Screen::Settings | Screen::SettingsGroup(_) => self.settings_key(key),
-			Screen::Networks => self.networks_key(key),
+			Screen::WifiNetworks => self.wifi_networks_key(key),
 			Screen::Irc => {
 				let mut commands = Vec::new();
 				let outcome = self.irc.handle_key(key, &mut commands);
@@ -611,15 +611,15 @@ impl App {
 		self.screen = screen;
 	}
 
-	fn network_key(&mut self, key: Key) {
+	fn nodes_key(&mut self, key: Key) {
 		let count = self.nodes().len();
 		match navigation(key) {
-			Some(Key::Up) => self.network_selected = self.network_selected.saturating_sub(1),
+			Some(Key::Up) => self.nodes_selected = self.nodes_selected.saturating_sub(1),
 			Some(Key::Down) => {
-				self.network_selected = (self.network_selected + 1).min(count.saturating_sub(1))
+				self.nodes_selected = (self.nodes_selected + 1).min(count.saturating_sub(1))
 			}
 			Some(Key::Enter | Key::Right) => {
-				if let Some(&node) = self.nodes().get(self.network_selected) {
+				if let Some(&node) = self.nodes().get(self.nodes_selected) {
 					self.screen = Screen::Node(node);
 				}
 			}
@@ -642,7 +642,7 @@ impl App {
 				self.open(Screen::Console);
 			}
 			_ if matches!(navigation(key), Some(Key::Escape | Key::Left)) => {
-				self.screen = Screen::Network
+				self.screen = Screen::Nodes
 			}
 			_ => {}
 		}
@@ -765,7 +765,7 @@ impl App {
 	fn activate(&mut self, field: Field) {
 		let input = match field {
 			Field::Name => TextInput::prefilled(&self.draft.name, 32),
-			Field::Password => TextInput::secret(&self.draft.password, 63),
+			Field::WifiPassword => TextInput::secret(&self.draft.password, 63),
 			Field::Peer => TextInput::prefilled(&self.draft.peer, 21),
 			Field::Channel => TextInput::prefilled(&self.draft.channel.to_string(), 2),
 			Field::TimeZone => TextInput::prefilled(&format_offset(self.draft.utc_offset), 6),
@@ -788,10 +788,10 @@ impl App {
 				self.screen = Screen::SettingsGroup(group);
 				return;
 			}
-			Field::Network => {
+			Field::Ssid => {
 				self.networks = None;
 				self.commands.push_back(Command::ScanWifi);
-				self.screen = Screen::Networks;
+				self.screen = Screen::WifiNetworks;
 				return;
 			}
 			Field::Save => {
@@ -811,7 +811,7 @@ impl App {
 	fn apply_field(&mut self, field: Field, text: String) {
 		match field {
 			Field::Name => self.draft.name = text,
-			Field::Password => self.draft.password = text,
+			Field::WifiPassword => self.draft.password = text,
 			Field::Peer => {
 				if text.is_empty() || text.parse::<core::net::SocketAddrV4>().is_ok() {
 					self.draft.peer = text;
@@ -839,14 +839,14 @@ impl App {
 			}
 			Field::Bridge
 			| Field::StatusPage
-			| Field::Network
+			| Field::Ssid
 			| Field::Hotspot
 			| Field::Open(_)
 			| Field::Save => {}
 		}
 	}
 
-	fn networks_key(&mut self, key: Key) {
+	fn wifi_networks_key(&mut self, key: Key) {
 		let count = self.networks.as_ref().map_or(0, Vec::len);
 		match navigation(key) {
 			Some(Key::Up) => self.networks_selected = self.networks_selected.saturating_sub(1),
@@ -994,7 +994,7 @@ impl App {
 			.count();
 		let wanted: Vec<PublicKey> = match self.screen {
 			Screen::Node(node) => Vec::from([node]),
-			Screen::Radio => self
+			Screen::Neighbors => self
 				.status
 				.iter()
 				.flat_map(|status| &status.neighbors)

@@ -33,9 +33,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
 	match app.screen {
 		Screen::Home => draw_home(frame, body, app),
 		Screen::Apps => draw_menu(frame, body, app, APPS, app.apps_selected),
-		Screen::Network => draw_network(frame, body, app),
+		Screen::Nodes => draw_nodes(frame, body, app),
 		Screen::Node(key) => draw_node(frame, body, app, key),
-		Screen::Radio => draw_radio(frame, body, app),
+		Screen::Neighbors => draw_neighbors(frame, body, app),
 		Screen::Gopher => draw_gopher(frame, body, app),
 		#[cfg(feature = "gemini")]
 		Screen::Gemini => draw_gemini(frame, body, app),
@@ -52,7 +52,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 		Screen::SettingsGroup(group) => {
 			draw_settings(frame, body, app, group.fields(), app.group_selected)
 		}
-		Screen::Networks => draw_networks(frame, body, app),
+		Screen::WifiNetworks => draw_wifi_networks(frame, body, app),
 	}
 	let footer_text = match &app.notice {
 		Some(notice) => Line::styled(notice.as_str(), Style::new().fg(Color::Yellow)),
@@ -65,8 +65,8 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 	let screen = match app.screen {
 		Screen::Home => "",
 		Screen::Apps => "Apps",
-		Screen::Network | Screen::Node(_) => "Nodes",
-		Screen::Radio => "Neighbors",
+		Screen::Nodes | Screen::Node(_) => "Nodes",
+		Screen::Neighbors => "Neighbors",
 		Screen::Gopher => "Gopher",
 		Screen::Gemini => "Gemini",
 		Screen::Call => "Call",
@@ -76,7 +76,7 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 		Screen::Settings => "Settings",
 		Screen::SettingsGroup(Group::Bridge) => "Bridge",
 		Screen::SettingsGroup(Group::Hotspot) => "Hotspot",
-		Screen::Networks => "WiFi networks",
+		Screen::WifiNetworks => "WiFi networks",
 	};
 	let name = if app.saved.name.is_empty() {
 		"esp-ygg"
@@ -128,9 +128,9 @@ fn hints(app: &App) -> &'static str {
 	match app.screen {
 		Screen::Home => "↑↓ select  enter open",
 		Screen::Apps => "↑↓ select  enter open  esc back",
-		Screen::Network => "↑↓ select  enter open  esc back",
+		Screen::Nodes => "↑↓ select  enter open  esc back",
 		Screen::Node(_) => "p ping  m message  esc back",
-		Screen::Radio => "esc back",
+		Screen::Neighbors => "esc back",
 		Screen::Irc if app.irc.phase == IrcPhase::Setup => "↑↓ field  enter connect  esc back",
 		Screen::Irc => "tab buffer  ↑↓ scroll  esc leave",
 		Screen::Gopher if app.gopher.search.is_some() => "type a search  enter go",
@@ -154,7 +154,7 @@ fn hints(app: &App) -> &'static str {
 			"enter done  esc cancel"
 		}
 		Screen::Settings | Screen::SettingsGroup(_) => "↑↓ select  enter change",
-		Screen::Networks => "enter choose  r rescan  esc back",
+		Screen::WifiNetworks => "enter choose  r rescan  esc back",
 	}
 }
 
@@ -235,7 +235,7 @@ fn short_uptime(seconds: u64) -> String {
 	}
 }
 
-fn draw_network(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_nodes(frame: &mut Frame, area: Rect, app: &App) {
 	let nodes = app.nodes();
 	if nodes.is_empty() {
 		let text = Line::styled(" No other nodes yet", DIM);
@@ -263,7 +263,7 @@ fn draw_network(frame: &mut Frame, area: Rect, app: &App) {
 		})
 		.collect();
 	let list = List::new(items).highlight_style(SELECTED);
-	let mut state = ListState::default().with_selected(Some(app.network_selected));
+	let mut state = ListState::default().with_selected(Some(app.nodes_selected));
 	frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -508,7 +508,7 @@ fn draw_gemini(frame: &mut Frame, area: Rect, app: &App) {
 	frame.render_widget(Paragraph::new(lines), body);
 }
 
-fn draw_radio(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_neighbors(frame: &mut Frame, area: Rect, app: &App) {
 	let neighbors = app
 		.status
 		.as_ref()
@@ -706,8 +706,8 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App, fields: &[Field], sel
 			Field::Open(Group::Bridge) => ("Bridge", on_off(draft.bridge)),
 			Field::Open(Group::Hotspot) => ("Hotspot", on_off(draft.hotspot)),
 			Field::Bridge => ("Bridge", on_off(draft.bridge)),
-			Field::Network => ("Network", draft.ssid.clone()),
-			Field::Password => ("Password", "•".repeat(draft.password.chars().count())),
+			Field::Ssid => ("Network", draft.ssid.clone()),
+			Field::WifiPassword => ("Password", "•".repeat(draft.password.chars().count())),
 			Field::Peer => ("Peer", draft.peer.clone()),
 			Field::Hotspot => ("Hotspot", on_off(draft.hotspot)),
 			Field::HotspotName => ("Network", draft.hotspot_name.clone()),
@@ -754,7 +754,7 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App, fields: &[Field], sel
 	frame.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), area);
 }
 
-fn draw_networks(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_wifi_networks(frame: &mut Frame, area: Rect, app: &App) {
 	let Some(networks) = &app.networks else {
 		frame.render_widget(Paragraph::new(Line::styled(" Scanning…", DIM)), area);
 		return;
