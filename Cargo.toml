@@ -2,3 +2,7 @@
 resolver = "3"
 members = ["app", "node"]
 exclude = ["firmware"]
+
+# The same rustls as the firmware, so tests run what boards run.
+[patch.crates-io]
+rustls = { git = "https://github.com/ApexDevelopment/rustls", branch = "xtensa-0.23.46" }

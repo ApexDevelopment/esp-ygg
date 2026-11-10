@@ -1826,8 +1826,7 @@ dependencies = [
 [[package]]
 name = "rustls"
 version = "0.23.46"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
+source = "git+https://github.com/ApexDevelopment/rustls?branch=xtensa-0.23.46#6727f0f64f3c122db962832e59410720cc1a5c3a"
 dependencies = [
  "log",
  "once_cell",

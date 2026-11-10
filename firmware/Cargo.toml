@@ -1,5 +1,3 @@
-cargo-features = ["profile-rustflags"]
-
 [package]
 name = "esp-ygg"
 version = "0.1.0"
@@ -107,12 +105,7 @@ debug = 2
 lto = "fat"
 opt-level = "s"
 
-# For builds with Gemini. Its TLS library trips a bug in the Xtensa compiler
-# (esp-rs/rust#282), which turning off the DAG combiner for it avoids. LTO
-# would compile it again without that, so it is off too.
-[profile.gemini]
-inherits = "release"
-lto = false
-
-[profile.gemini.package.rustls]
-rustflags = ["-C", "llvm-args=--combiner-disabled"]
+# rustls with a workaround for an Xtensa compiler bug (esp-rs/rust#282),
+# which it otherwise trips when optimized.
+[patch.crates-io]
+rustls = { git = "https://github.com/ApexDevelopment/rustls", branch = "xtensa-0.23.46" }

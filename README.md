@@ -62,13 +62,7 @@ Each service costs memory while the board runs, so the firmware can be built wit
 To add the larger ones, list them along with the board:
 
 ```sh
-cargo run --release --features cardputer,gopher,irc
-```
-
-Builds with Gemini need the `gemini` profile instead of `--release`, because the TLS library trips a bug in the Xtensa compiler ([esp-rs/rust#282](https://github.com/esp-rs/rust/issues/282)). The profile builds that library with the compiler's DAG combiner turned off, which avoids the bug, and without link-time optimization, which would bring it back. `cargo cardputer-gemini` builds and flashes a Cardputer with Gemini:
-
-```sh
-cargo run --profile gemini --features cardputer,gopher,irc,gemini
+cargo run --release --features cardputer,gopher,irc,gemini
 ```
 
 To leave out default ones too, turn off the defaults and list everything you want. For example, a Cardputer with only the console:
@@ -77,7 +71,7 @@ To leave out default ones too, turn off the defaults and list everything you wan
 cargo run --release --no-default-features --features cardputer,console
 ```
 
-Clients take memory only while they are in use, so most of the cost of a service is its server, if it has one. A Cardputer ADV acting as a gateway with every service has about 75 KB free.
+Clients take memory only while they are in use, so most of the cost of a service is its server, if it has one. A Cardputer ADV acting as a gateway with every service has about 70 KB free.
 
 ## On-device interface
 
