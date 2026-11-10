@@ -154,6 +154,13 @@ enum Lookup {
 	},
 }
 
+/// Nodes whose name or address start with what was typed, for Tab to
+/// cycle through.
+struct Completion {
+	matches: Vec<(Ipv6Addr, Option<String>)>,
+	index: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Screen {
 	Home,
@@ -232,6 +239,7 @@ pub struct App {
 	commands: VecDeque<Command>,
 	/// A short message about the last action, cleared by the next key.
 	notice: Option<String>,
+	completion: Option<Completion>,
 
 	lookups: BTreeMap<PublicKey, Lookup>,
 	network_selected: usize,
@@ -272,6 +280,7 @@ impl App {
 			menu: 0,
 			commands: VecDeque::new(),
 			notice: None,
+			completion: None,
 			lookups: BTreeMap::new(),
 			network_selected: 0,
 			ping_target: TextInput::new("", 45),
@@ -328,10 +337,12 @@ impl App {
 			self.last_ping = Some(now);
 			self.ping_sent += 1;
 		}
+		// Names are looked up where they are shown or can be typed.
 		if matches!(
 			self.screen,
 			Screen::Network | Screen::Node(_) | Screen::Radio
-		) {
+		) || self.has_address_field()
+		{
 			self.start_lookups();
 		}
 	}
@@ -427,6 +438,11 @@ impl App {
 
 	pub fn handle_key(&mut self, key: Key) {
 		self.notice = None;
+		if key != Key::Tab {
+			self.completion = None;
+		} else if self.complete_address() {
+			return;
+		}
 		match self.screen {
 			Screen::Home => self.home_key(key),
 			Screen::Network => self.network_key(key),
@@ -729,6 +745,95 @@ impl App {
 		}
 		nodes.sort_by_key(|key| (!status.peers.contains(key), addr_for_key(key).0));
 		nodes
+	}
+
+	fn has_address_field(&self) -> bool {
+		matches!(
+			self.screen,
+			Screen::Ping | Screen::Console | Screen::Gopher | Screen::Gemini | Screen::Irc
+		)
+	}
+
+	/// The field being typed in, if it takes a node's address.
+	fn address_field(&mut self) -> Option<&mut TextInput> {
+		match self.screen {
+			Screen::Ping if !self.pinging => Some(&mut self.ping_target),
+			Screen::Console if self.console_focus == ConsoleFocus::Target => {
+				Some(&mut self.console_target)
+			}
+			Screen::Gopher if self.gopher.editing && self.gopher.search.is_none() => {
+				Some(&mut self.gopher.address)
+			}
+			#[cfg(feature = "gemini")]
+			Screen::Gemini if self.gemini.editing && self.gemini.prompt.is_none() => {
+				Some(&mut self.gemini.address)
+			}
+			Screen::Irc if self.irc.phase == irc::Phase::Setup && self.irc.field == 0 => {
+				Some(&mut self.irc.form[0])
+			}
+			_ => None,
+		}
+	}
+
+	/// Fills in the address of a node whose name or address starts with what
+	/// was typed, or the next such node on another Tab. Returns whether
+	/// there was anything to complete, so Tab can do its usual job if not.
+	fn complete_address(&mut self) -> bool {
+		let Some(typed) = self.address_field().map(|field| field.text.clone()) else {
+			return false;
+		};
+		let cycling = self.completion.as_ref().is_some_and(|completion| {
+			completion.matches.len() > 1
+				&& completion.matches[completion.index].0.to_string() == typed
+		});
+		if cycling {
+			let completion = self.completion.as_mut().expect("checked above");
+			completion.index = (completion.index + 1) % completion.matches.len();
+		} else {
+			let matches = self.nodes_starting_with(&typed);
+			let done = matches.len() == 1 && matches[0].0.to_string() == typed;
+			if matches.is_empty() || done {
+				return false;
+			}
+			self.completion = Some(Completion { matches, index: 0 });
+		}
+		let Some(completion) = &self.completion else {
+			return false;
+		};
+		let (address, name) = &completion.matches[completion.index];
+		let count = completion.matches.len();
+		let position = completion.index + 1;
+		self.notice = match (name, count) {
+			(Some(name), 1) => Some(name.clone()),
+			(Some(name), _) => Some(format!("{name}  {position} of {count}")),
+			(None, 1) => None,
+			(None, _) => Some(format!("{position} of {count}")),
+		};
+		let address = address.to_string();
+		if let Some(field) = self.address_field() {
+			field.set(&address);
+		}
+		true
+	}
+
+	fn nodes_starting_with(&self, typed: &str) -> Vec<(Ipv6Addr, Option<String>)> {
+		let typed = typed.trim().trim_start_matches('[').to_ascii_lowercase();
+		if typed.is_empty() {
+			return Vec::new();
+		}
+		self.nodes()
+			.iter()
+			.map(|key| {
+				let address = Ipv6Addr::from(addr_for_key(key).0);
+				(address, self.name_of(key).map(String::from))
+			})
+			.filter(|(address, name)| {
+				address.to_string().starts_with(&typed)
+					|| name
+						.as_ref()
+						.is_some_and(|name| name.to_ascii_lowercase().starts_with(&typed))
+			})
+			.collect()
 	}
 
 	fn start_lookups(&mut self) {

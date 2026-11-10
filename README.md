@@ -94,6 +94,8 @@ On a Cardputer, the home screen shows the board's address and how many nodes it 
 
 Once the board knows the time, the title bar shows it. A bridged board gets the time from `pool.ntp.org`, and other boards ask their peers over Yggdrasil, so it spreads through the mesh. The time zone is a fixed offset from UTC, so it needs changing by hand for daylight saving time.
 
+In fields that take an address, typing the start of a known node's address or name and pressing Tab fills in its address, and pressing Tab again moves to the next node that matches. Names come from nodeinfo, which the board looks up while these screens are open.
+
 The arrow keys are Fn with `;` `.` `,` and `/`, and Escape is Fn with `` ` ``. In lists, the same keys work without Fn.
 
 To try the interface without a board, run `cargo run -p esp-ygg-app --example preview`. It shows the interface in a terminal as one of three simulated boards in a line, where the farthest one echoes console messages back.

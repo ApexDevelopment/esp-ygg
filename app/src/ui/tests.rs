@@ -574,3 +574,33 @@ fn browses_gemini_capsules() {
 	assert_eq!(serve_gemini(&mut app, respond), ["gemini://[200::1]/"]);
 	assert!(screen(&app).join("\n").contains("Capsule"));
 }
+
+#[test]
+fn completes_addresses_of_known_nodes_with_tab() {
+	let mut app = App::new(Settings::new(), at(0));
+	let (kitchen, other) = (key(2), key(3));
+	app.set_status(status(&[kitchen], &[kitchen, other]));
+	open(&mut app, "Console");
+	app.tick(at(1));
+	assert_eq!(commands(&mut app).len(), 2, "names are looked up");
+	app.handle_nodeinfo(kitchen, Some(br#"{"name":"Kitchen"}"#.to_vec()));
+	app.handle_nodeinfo(other, Some(b"{}".to_vec()));
+
+	// Every Yggdrasil address starts with 2, so Tab cycles through both.
+	type_text(&mut app, "2");
+	press(&mut app, &[Key::Tab]);
+	assert_eq!(app.console_target.text, address(&kitchen).to_string());
+	assert!(screen(&app).join("\n").contains("Kitchen  1 of 2"));
+	press(&mut app, &[Key::Tab]);
+	assert_eq!(app.console_target.text, address(&other).to_string());
+	press(&mut app, &[Key::Tab]);
+	assert_eq!(app.console_target.text, address(&kitchen).to_string());
+
+	// A name works too, and Tab on a whole address moves on as before.
+	app.console_target.clear();
+	type_text(&mut app, "kit");
+	press(&mut app, &[Key::Tab]);
+	assert_eq!(app.console_target.text, address(&kitchen).to_string());
+	press(&mut app, &[Key::Tab]);
+	assert_eq!(app.console_focus, ConsoleFocus::Message);
+}

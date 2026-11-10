@@ -114,7 +114,7 @@ fn hints(app: &App) -> &'static str {
 		Screen::Irc if app.irc.phase == IrcPhase::Setup => "↑↓ field  enter connect  esc back",
 		Screen::Irc => "tab buffer  ↑↓ scroll  esc leave",
 		Screen::Gopher if app.gopher.search.is_some() => "type a search  enter go",
-		Screen::Gopher if app.gopher.editing => "type an address  enter go",
+		Screen::Gopher if app.gopher.editing => "tab complete  enter go",
 		Screen::Gopher => match app.gopher.page.as_ref().map(|page| &page.content) {
 			Some(Content::Text { .. }) => "↑↓ scroll  g address  esc back",
 			_ => "enter open  g address  esc back",
@@ -124,7 +124,7 @@ fn hints(app: &App) -> &'static str {
 		#[cfg(not(feature = "gemini"))]
 		Screen::Gemini => "",
 		Screen::Ping if app.pinging => "enter stop  esc back",
-		Screen::Ping => "type an address  enter start",
+		Screen::Ping => "tab complete  enter start",
 		Screen::Console => "tab switch field  enter send",
 		Screen::Settings if app.editing.is_some() => "enter done  esc cancel",
 		Screen::Settings => "↑↓ select  enter change",
@@ -403,7 +403,7 @@ fn gemini_hints(browser: &super::gemini::Browser) -> &'static str {
 	if browser.prompt.is_some() {
 		"type an answer  enter send"
 	} else if browser.editing {
-		"type an address  enter go"
+		"tab complete  enter go"
 	} else if browser.is_loading() {
 		"esc stop"
 	} else {

@@ -53,6 +53,12 @@ impl TextInput {
 		self.text.pop();
 	}
 
+	/// Replaces the text, as far as it fits.
+	pub fn set(&mut self, text: &str) {
+		self.text = text.chars().take(self.max_len).collect();
+		self.replaceable = false;
+	}
+
 	pub fn clear(&mut self) {
 		self.text.clear();
 	}
