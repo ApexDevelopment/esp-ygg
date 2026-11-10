@@ -57,14 +57,23 @@ fn press(app: &mut App, keys: &[Key]) {
 	}
 }
 
-/// Opens a screen from the home menu by its name.
+/// Opens a screen from the home menu, or the apps menu, by its name.
 fn open(app: &mut App, name: &str) {
-	let index = MENU
+	press(app, &[Key::Escape, Key::Escape, Key::Escape]);
+	if APPS.iter().any(|(label, _)| *label == name) {
+		choose(app, MENU, "Apps");
+		choose(app, APPS, name);
+	} else {
+		choose(app, MENU, name);
+	}
+}
+
+fn choose(app: &mut App, items: &[(&str, Screen)], name: &str) {
+	let index = items
 		.iter()
 		.position(|(label, _)| *label == name)
 		.expect("no such menu item");
-	press(app, &[Key::Escape, Key::Escape]);
-	for _ in 0..MENU.len() {
+	for _ in 0..items.len() {
 		app.handle_key(Key::Up);
 	}
 	for _ in 0..index {
@@ -171,10 +180,16 @@ fn counts_unread_messages_on_the_home_screen() {
 		from: SocketAddrV6::new("200::2".parse().unwrap(), 4242, 0, 0),
 		data: b"ping?".to_vec(),
 	});
+	assert!(screen(&app).join("\n").contains("Apps (1 new)"));
+	press(&mut app, &[Key::Down, Key::Down, Key::Down, Key::Enter]);
 	assert!(screen(&app).join("\n").contains("Console (1 new)"));
 	open(&mut app, "Console");
 	press(&mut app, &[Key::Escape]);
-	assert!(!screen(&app).join("\n").contains("new"));
+	let shown = screen(&app).join("\n");
+	assert!(
+		shown.contains("Gopher") && !shown.contains("new"),
+		"{shown}"
+	);
 }
 
 #[test]
@@ -382,8 +397,8 @@ fn browses_gopher_menus_and_goes_back() {
 			.contains("Can't look up other.example")
 	);
 	press(&mut app, &[Key::Escape]);
-	// Out of history, so back to the home screen.
-	assert_eq!(screen(&app)[0].trim(), "esp-ygg");
+	// Out of history, so back to the apps menu.
+	assert_eq!(screen(&app)[0].trim(), "esp-ygg / Apps");
 }
 
 fn irc_line(app: &mut App, line: &str) {

@@ -177,6 +177,17 @@ struct Completion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Screen {
 	Home,
+	#[cfg_attr(
+		not(any(
+			feature = "console",
+			feature = "voice",
+			feature = "irc",
+			feature = "gemini",
+			feature = "gopher"
+		)),
+		allow(dead_code)
+	)]
+	Apps,
 	Network,
 	Node(PublicKey),
 	Radio,
@@ -255,6 +266,19 @@ const MENU: &[(&str, Screen)] = &[
 	("Network", Screen::Network),
 	("Radio", Screen::Radio),
 	("Ping", Screen::Ping),
+	#[cfg(any(
+		feature = "console",
+		feature = "voice",
+		feature = "irc",
+		feature = "gemini",
+		feature = "gopher"
+	))]
+	("Apps", Screen::Apps),
+	("Settings", Screen::Settings),
+];
+
+/// The apps menu, opened from the home menu.
+const APPS: &[(&str, Screen)] = &[
 	#[cfg(feature = "console")]
 	("Console", Screen::Console),
 	#[cfg(feature = "voice")]
@@ -265,7 +289,6 @@ const MENU: &[(&str, Screen)] = &[
 	("Gemini", Screen::Gemini),
 	#[cfg(feature = "gopher")]
 	("Gopher", Screen::Gopher),
-	("Settings", Screen::Settings),
 ];
 
 pub struct App {
@@ -273,6 +296,7 @@ pub struct App {
 	status: Option<Status>,
 	screen: Screen,
 	menu: usize,
+	apps_selected: usize,
 	commands: VecDeque<Command>,
 	/// A short message about the last action, cleared by the next key.
 	notice: Option<String>,
@@ -318,6 +342,7 @@ impl App {
 			status: None,
 			screen: Screen::Home,
 			menu: 0,
+			apps_selected: 0,
 			commands: VecDeque::new(),
 			notice: None,
 			completion: None,
@@ -494,6 +519,7 @@ impl App {
 		}
 		match self.screen {
 			Screen::Home => self.home_key(key),
+			Screen::Apps => self.apps_key(key),
 			Screen::Network => self.network_key(key),
 			Screen::Node(node) => self.node_key(node, key),
 			Screen::Radio => {
@@ -510,7 +536,7 @@ impl App {
 				let outcome = self.irc.handle_key(key, &mut commands);
 				self.commands.extend(commands);
 				if let irc::Outcome::Leave = outcome {
-					self.screen = Screen::Home;
+					self.screen = Screen::Apps;
 				}
 			}
 			Screen::Call => {
@@ -520,7 +546,7 @@ impl App {
 					let outcome = self.call.handle_key(key, self.now, &mut commands);
 					self.commands.extend(commands);
 					if let call::Outcome::Leave = outcome {
-						self.screen = Screen::Home;
+						self.screen = Screen::Apps;
 					}
 				}
 			}
@@ -531,7 +557,7 @@ impl App {
 					let outcome = self.gemini.handle_key(key, &mut commands);
 					self.commands.extend(commands);
 					if let gemini::Outcome::Leave = outcome {
-						self.screen = Screen::Home;
+						self.screen = Screen::Apps;
 					}
 				}
 			}
@@ -540,7 +566,7 @@ impl App {
 				let outcome = self.gopher.handle_key(key, &mut commands);
 				self.commands.extend(commands);
 				if let gopher::Outcome::Leave = outcome {
-					self.screen = Screen::Home;
+					self.screen = Screen::Apps;
 				}
 			}
 		}
@@ -551,6 +577,22 @@ impl App {
 			Some(Key::Up) => self.menu = self.menu.saturating_sub(1),
 			Some(Key::Down) => self.menu = (self.menu + 1).min(MENU.len() - 1),
 			Some(Key::Enter | Key::Right) => self.open(MENU[self.menu].1),
+			_ => {}
+		}
+	}
+
+	fn apps_key(&mut self, key: Key) {
+		match navigation(key) {
+			Some(Key::Up) => self.apps_selected = self.apps_selected.saturating_sub(1),
+			Some(Key::Down) => {
+				self.apps_selected = (self.apps_selected + 1).min(APPS.len().saturating_sub(1))
+			}
+			Some(Key::Enter | Key::Right) => {
+				if let Some(&(_, screen)) = APPS.get(self.apps_selected) {
+					self.open(screen);
+				}
+			}
+			Some(Key::Escape | Key::Left) => self.screen = Screen::Home,
 			_ => {}
 		}
 	}
@@ -645,7 +687,7 @@ impl App {
 			ConsoleFocus::Message => &mut self.console_message,
 		};
 		match key {
-			Key::Escape => self.screen = Screen::Home,
+			Key::Escape => self.screen = Screen::Apps,
 			Key::Tab | Key::Up | Key::Down => {
 				self.console_focus = match self.console_focus {
 					ConsoleFocus::Target => ConsoleFocus::Message,

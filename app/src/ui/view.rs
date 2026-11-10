@@ -12,7 +12,9 @@ use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
 use super::gopher::Content;
 use super::irc::Phase as IrcPhase;
-use super::{App, ConsoleFocus, FIELDS, Field, Group, Lookup, MENU, Screen, TextInput, Uplink};
+use super::{
+	APPS, App, ConsoleFocus, FIELDS, Field, Group, Lookup, MENU, Screen, TextInput, Uplink,
+};
 use crate::time::{DateTime, format_offset};
 
 const ACCENT: Color = Color::Green;
@@ -30,6 +32,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 	draw_title(frame, title, app);
 	match app.screen {
 		Screen::Home => draw_home(frame, body, app),
+		Screen::Apps => draw_menu(frame, body, app, APPS, app.apps_selected),
 		Screen::Network => draw_network(frame, body, app),
 		Screen::Node(key) => draw_node(frame, body, app, key),
 		Screen::Radio => draw_radio(frame, body, app),
@@ -61,6 +64,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 	let screen = match app.screen {
 		Screen::Home => "",
+		Screen::Apps => "Apps",
 		Screen::Network | Screen::Node(_) => "Network",
 		Screen::Radio => "Radio",
 		Screen::Gopher => "Gopher",
@@ -123,6 +127,7 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 fn hints(app: &App) -> &'static str {
 	match app.screen {
 		Screen::Home => "↑↓ select  enter open",
+		Screen::Apps => "↑↓ select  enter open  esc back",
 		Screen::Network => "↑↓ select  enter open  esc back",
 		Screen::Node(_) => "p ping  m message  esc back",
 		Screen::Radio => "esc back",
@@ -183,27 +188,42 @@ fn draw_home(frame: &mut Frame, area: Rect, app: &App) {
 	let [status_area, menu_area] =
 		Layout::vertical([Constraint::Length(lines.len() as u16), Constraint::Fill(1)]).areas(area);
 	frame.render_widget(Paragraph::new(lines), status_area);
+	draw_menu(frame, menu_area, app, MENU, app.menu);
+}
+
+fn draw_menu(frame: &mut Frame, area: Rect, app: &App, items: &[(&str, Screen)], selected: usize) {
 	let mut lines = Vec::new();
-	for (index, (label, screen)) in MENU.iter().enumerate() {
+	for (index, &(label, screen)) in items.iter().enumerate() {
 		let mut text = format!(" {label}");
-		let unread = match screen {
-			Screen::Console => app.unread,
-			Screen::Irc => app.irc.unread(),
-			_ => 0,
-		};
-		if unread > 0 {
-			text.push_str(&format!(" ({unread} new)"));
+		let count = unread(app, screen);
+		if count > 0 {
+			text.push_str(&format!(" ({count} new)"));
 		}
-		let style = if index == app.menu {
+		let text = if screen == Screen::Apps {
+			pad(&text, area.width.saturating_sub(2)) + "› "
+		} else {
+			pad(&text, area.width)
+		};
+		let style = if index == selected {
 			SELECTED
 		} else {
 			Style::new()
 		};
-		lines.push(Line::styled(pad(&text, area.width), style));
+		lines.push(Line::styled(text, style));
 	}
 	// Keep the selection on screen when the menu is longer than the space.
-	let scroll = (app.menu + 1).saturating_sub(usize::from(menu_area.height));
-	frame.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), menu_area);
+	let scroll = (selected + 1).saturating_sub(usize::from(area.height));
+	frame.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), area);
+}
+
+/// New messages waiting on a menu item's screen.
+fn unread(app: &App, screen: Screen) -> usize {
+	match screen {
+		Screen::Console => app.unread,
+		Screen::Irc => app.irc.unread(),
+		Screen::Apps => APPS.iter().map(|&(_, screen)| unread(app, screen)).sum(),
+		_ => 0,
+	}
 }
 
 fn short_uptime(seconds: u64) -> String {
