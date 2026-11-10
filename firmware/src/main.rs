@@ -226,6 +226,7 @@ async fn main(spawner: Spawner) -> ! {
 		)
 		.await;
 		let woke = Instant::now();
+		let cause = cause(&event);
 		match event {
 			Either4::First(received) => {
 				radio::record_signal(received.info.src_address, received.info.rx_control.rssi);
@@ -257,6 +258,7 @@ async fn main(spawner: Spawner) -> ! {
 			#[cfg(not(feature = "cardputer"))]
 			Either4::Fourth(Either::Second(never)) => match never {},
 		}
+		let handled = Instant::now();
 		// Whatever woke the loop, run expired timers, or a steady stream of
 		// frames would starve them.
 		if node
@@ -265,6 +267,7 @@ async fn main(spawner: Spawner) -> ! {
 		{
 			node.handle_timeout();
 		}
+		let timers_run = Instant::now();
 		if let Some((unix_micros, stratum, received)) = uplink::WIFI_TIME.try_take() {
 			let since = (Instant::now() - received).as_micros();
 			overlay.set_time(unix_micros + since, stratum.saturating_add(1), node.now());
@@ -277,6 +280,7 @@ async fn main(spawner: Spawner) -> ! {
 			time: overlay.unix_micros(node.now()),
 		};
 		overlay.poll(&mut node, &board);
+		let services_run = Instant::now();
 
 		#[cfg(feature = "cardputer")]
 		{
@@ -316,12 +320,30 @@ async fn main(spawner: Spawner) -> ! {
 
 		let busy = (waited - started) + (Instant::now() - woke);
 		if busy > STALL_WARNING {
-			warn!("Main loop was busy for {} ms", busy.as_millis());
+			warn!(
+				"Main loop was busy for {} ms: {} before waiting, {} handling {cause}, {} on timers, {} on services",
+				busy.as_millis(),
+				(waited - started).as_millis(),
+				(handled - woke).as_millis(),
+				(timers_run - handled).as_millis(),
+				(services_run - timers_run).as_millis(),
+			);
 		}
 		if Instant::now() >= next_save {
 			store.save_time(unix_base + Instant::now().as_secs());
 			next_save = Instant::now() + Duration::from_secs(SAVE_INTERVAL_SECS);
 		}
+	}
+}
+
+/// What woke the main loop, for the stall warning.
+fn cause<A, B, C, D, E>(event: &Either4<A, B, C, Either<D, E>>) -> &'static str {
+	match event {
+		Either4::First(_) => "a radio frame",
+		Either4::Second(_) => "a timer",
+		Either4::Third(_) => "the bridge",
+		Either4::Fourth(Either::First(_)) => "a lost frame",
+		Either4::Fourth(Either::Second(_)) => "the UI",
 	}
 }
 
