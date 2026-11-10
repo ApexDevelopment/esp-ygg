@@ -42,6 +42,8 @@ cargo esp32  # original ESP32
 
 Each builds a release image, flashes it with espflash and opens the serial monitor. The log shows the board's public key and address on startup.
 
+`firmware/espflash.toml` sets the flash to quad I/O at 80 MHz, which the Stamp-S3 in the Cardputers supports. The firmware runs its code straight from flash, so this makes everything about four times faster than espflash's default of dual I/O at 40 MHz. Flash from the `firmware` directory so espflash finds it. A board whose flash cannot run that fast will not boot, so remove the file for such boards.
+
 On boards that use the ESP32-S3's built-in USB port, the reset after flashing sometimes leaves the chip waiting for another download, and the monitor shows `waiting for download`. Press the board's reset button to start the firmware. If the board has a button on GPIO0, such as the Cardputer's G0, do not hold it while resetting.
 
 On first boot, the board creates a private key and saves it in the flash `nvs` partition. It keeps that key across reflashing. To give a board a new identity, erase its flash with `espflash erase-flash`.

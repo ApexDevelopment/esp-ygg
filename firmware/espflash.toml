@@ -1,0 +1,6 @@
+# The Stamp-S3 flash runs quad I/O at 80 MHz. Code runs from flash through
+# the cache, so this makes everything about four times faster than the
+# default dual I/O at 40 MHz.
+[flash]
+mode = "qio"
+frequency = "80MHz"
