@@ -22,7 +22,7 @@ use esp_hal::i2s::pdm::PdmSlotMask;
 use esp_hal::peripherals::{DMA_CH0, GPIO0, GPIO41, GPIO42, GPIO43, GPIO46, I2S0};
 use esp_hal::time::Rate;
 use esp_ygg_app::voice::{
-	Codec, DcBlocker, Decoder, Encoder, FRAME_SAMPLES, JitterBuffer, SAMPLE_RATE, mulaw, ring,
+	Codec, DcBlocker, Decoder, Encoder, FRAME_SAMPLES, JitterBuffer, SAMPLE_RATE, ring,
 };
 use log::{info, warn};
 
@@ -176,6 +176,8 @@ pub async fn run(pins: Pins, model: Model) {
 					if frame.len() == FRAME_SAMPLES {
 						let _ = VOICE_OUT.try_send(encoder.encode(&frame));
 						frame.clear();
+						// Push-to-talk: what arrives while talking goes unheard.
+						while VOICE_IN.try_receive().is_ok() {}
 					}
 					true
 				})
@@ -206,19 +208,37 @@ pub async fn run(pins: Pins, model: Model) {
 				.await;
 			}
 			CallState::None if talking() => {
-				let mut recording = Vec::new();
+				// Kept as G.726, and reserved at once, so memory never runs
+				// out partway.
 				let limit = SAMPLE_RATE as usize * LONGEST_RECORDING.as_secs() as usize;
+				let mut recording = Vec::new();
+				if recording.try_reserve_exact(limit / 2).is_err() {
+					warn!("Not enough memory to record");
+					while talking() {
+						Timer::after(BUTTON_POLL).await;
+					}
+					continue;
+				}
+				let mut encoder = Encoder::new(Codec::G726);
+				let mut frame = Vec::with_capacity(FRAME_SAMPLES);
 				let levels = bus
 					.capture(talking, |sample| {
-						recording.push(mulaw::encode(sample));
-						recording.len() < limit
+						frame.push(sample);
+						if frame.len() == FRAME_SAMPLES {
+							recording.extend(encoder.encode(&frame));
+							frame.clear();
+						}
+						recording.len() < limit / 2
 					})
 					.await;
 				info!(
 					"Recorded {} ms, {levels}",
-					recording.len() as u32 * 1000 / SAMPLE_RATE
+					recording.len() as u32 * 2000 / SAMPLE_RATE
 				);
-				let mut played = recording.iter().map(|&byte| mulaw::decode(byte));
+				let mut decoder = Decoder::new(Codec::G726);
+				let mut played = recording
+					.chunks(FRAME_SAMPLES / 2)
+					.flat_map(|chunk| decoder.decode(chunk));
 				bus.play(|| call_state() == CallState::None, || played.next())
 					.await;
 			}

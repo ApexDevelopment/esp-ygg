@@ -182,6 +182,9 @@ async fn main(spawner: Spawner) -> ! {
 	// Voice frames sent and received in the current call
 	#[cfg(feature = "voice")]
 	let mut voice_frames = (0u32, 0u32);
+	// Warn about dropped voice once per call
+	#[cfg(feature = "voice")]
+	let mut voice_overflowed = false;
 	if hotspot_on {
 		let access_point = Interface::access_point();
 		overlay.start_hotspot(&node, access_point.mac_address());
@@ -373,6 +376,7 @@ async fn main(spawner: Spawner) -> ! {
 						CallEvent::Ended(reason) => {
 							ringing = false;
 							let (sent, received) = core::mem::take(&mut voice_frames);
+							voice_overflowed = false;
 							info!(
 								"Call ended ({reason}): {sent} voice frames sent, {received} received"
 							);
@@ -386,7 +390,8 @@ async fn main(spawner: Spawner) -> ! {
 			{
 				while let Some(voice) = overlay.poll_voice() {
 					voice_frames.1 += 1;
-					if audio::VOICE_IN.try_send(voice).is_err() {
+					if audio::VOICE_IN.try_send(voice).is_err() && !voice_overflowed {
+						voice_overflowed = true;
 						warn!("Voice arrived faster than it played, so some was dropped");
 					}
 				}
