@@ -127,7 +127,9 @@ impl Store {
 		let mut record = (encoded.len() as u16).to_le_bytes().to_vec();
 		record.extend_from_slice(&encoded);
 		let offset = self.flash.offset + SETTINGS_OFFSET;
-		if let Err(error) = self.flash.flash.write(offset, &record) {
+		if let Some(Err(error)) =
+			crate::park::while_parked(|| self.flash.flash.write(offset, &record))
+		{
 			warn!("Saving settings failed: {error:?}");
 		}
 	}
@@ -137,7 +139,9 @@ impl Store {
 		record[..4].copy_from_slice(&CLOCK_MAGIC);
 		record[4..].copy_from_slice(&unix_time.to_le_bytes());
 		let offset = self.flash.offset + CLOCK_OFFSETS[self.next_clock];
-		if let Err(error) = self.flash.flash.write(offset, &record) {
+		if let Some(Err(error)) =
+			crate::park::while_parked(|| self.flash.flash.write(offset, &record))
+		{
 			warn!("Saving the clock failed: {error:?}");
 		}
 		self.next_clock ^= 1;

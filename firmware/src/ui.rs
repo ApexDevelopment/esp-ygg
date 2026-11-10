@@ -13,7 +13,7 @@ use embassy_time::{Duration, Timer};
 use embedded_io_async::Read;
 #[cfg(feature = "voice")]
 use esp_hal::peripherals::FROM_CPU_INTR2;
-use esp_hal::peripherals::{CPU_CTRL, FROM_CPU_INTR1, USB_DEVICE};
+use esp_hal::peripherals::{CPU_CTRL, FROM_CPU_INTR1, FROM_CPU_INTR3, USB_DEVICE};
 use esp_hal::system::Stack;
 use esp_hal::usb::usb_serial_jtag::UsbSerialJtag;
 use esp_rtos::embassy::Executor;
@@ -71,7 +71,7 @@ fn stack_used() -> usize {
 /// Starts the screen, the keyboard and the UI on the second core.
 pub fn start(
 	cpu_control: CPU_CTRL<'static>,
-	interrupt: FROM_CPU_INTR1<'static>,
+	(interrupt, park): (FROM_CPU_INTR1<'static>, FROM_CPU_INTR3<'static>),
 	pins: Pins,
 	usb: USB_DEVICE<'static>,
 	#[cfg(feature = "voice")] audio: (crate::audio::Pins, FROM_CPU_INTR2<'static>),
@@ -90,6 +90,7 @@ pub fn start(
 	STACK_BOTTOM.store(stack.mem.as_ptr() as usize, Ordering::Relaxed);
 	esp_rtos::start_second_core(cpu_control, interrupt, stack, move || {
 		static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+		crate::park::arm(park);
 		EXECUTOR.init(Executor::new()).run(|spawner| {
 			let (model, screen) = cardputer::start(&spawner, pins);
 			MODEL.store(model as u8 + 1, Ordering::Relaxed);
