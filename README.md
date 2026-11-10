@@ -132,7 +132,7 @@ The bridge and the hotspot both use WiFi, in opposite directions. The bridge joi
 
 Devices that join the hotspot get an address in the board's `300:` subnet and a route to the rest of Yggdrasil through the board. They can then reach any Yggdrasil address, such as the status page of a board across the mesh. The hotspot only carries Yggdrasil traffic. It has no IPv4 and no internet, so phones may warn that the network has no internet and need telling to stay connected. Laptops on another network as well keep using it for everything else.
 
-The hotspot runs on the board's ESP-NOW channel, or on the bridge's network's channel when bridging. Linux ignores the route to `200::/7` that the board advertises unless `net.ipv6.conf.<interface>.accept_ra_rt_info_max_plen` is at least 7, so a Linux laptop on another IPv6 network as well needs that set. One that also runs Yggdrasil already has that route through its own node.
+The hotspot runs on the board's ESP-NOW channel, or on the bridge's network's channel when bridging. NetworkManager installs the route to `200::/7` that the board advertises. Where the Linux kernel handles advertisements itself, it ignores that route unless `net.ipv6.conf.<interface>.accept_ra_rt_info_max_plen` is at least 7, which matters on a laptop that has IPv6 from another network as well.
 
 ## Trying it out
 
