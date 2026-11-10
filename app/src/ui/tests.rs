@@ -607,3 +607,14 @@ fn completes_addresses_of_known_nodes_with_tab() {
 	press(&mut app, &[Key::Tab]);
 	assert_eq!(app.console_focus, ConsoleFocus::Message);
 }
+
+#[test]
+fn home_menu_follows_the_selection() {
+	let mut app = App::new(Settings::new(), at(0));
+	app.set_status(status(&[], &[]));
+	press(&mut app, &[Key::Down; 20]);
+	let shown = screen(&app).join("\n");
+	let (last, _) = MENU[MENU.len() - 1];
+	assert!(shown.contains(&format!(" {last}")), "{shown}");
+	assert!(shown.contains(&address(&key(1)).to_string()));
+}

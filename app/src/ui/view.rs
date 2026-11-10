@@ -164,6 +164,10 @@ fn draw_home(frame: &mut Frame, area: Rect, app: &App) {
 		None => lines.push(Line::styled(" Starting…", DIM)),
 	}
 	lines.push(Line::raw(""));
+	let [status_area, menu_area] =
+		Layout::vertical([Constraint::Length(lines.len() as u16), Constraint::Fill(1)]).areas(area);
+	frame.render_widget(Paragraph::new(lines), status_area);
+	let mut lines = Vec::new();
 	for (index, (label, screen)) in MENU.iter().enumerate() {
 		let mut text = format!(" {label}");
 		let unread = match screen {
@@ -181,7 +185,9 @@ fn draw_home(frame: &mut Frame, area: Rect, app: &App) {
 		};
 		lines.push(Line::styled(pad(&text, area.width), style));
 	}
-	frame.render_widget(Paragraph::new(lines), area);
+	// Keep the selection on screen when the menu is longer than the space.
+	let scroll = (app.menu + 1).saturating_sub(usize::from(menu_area.height));
+	frame.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), menu_area);
 }
 
 fn short_uptime(seconds: u64) -> String {
