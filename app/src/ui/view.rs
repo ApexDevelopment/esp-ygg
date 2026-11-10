@@ -10,7 +10,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
-use super::{APPS, App, FIELDS, Field, Group, Lookup, MENU, Screen, TextInput, Uplink};
+#[cfg(feature = "apps")]
+use super::APPS;
+use super::{App, FIELDS, Field, Group, Lookup, MENU, MENUS, Screen, TextInput, Uplink};
 use crate::time::{DateTime, format_offset};
 
 pub(super) const ACCENT: Color = Color::Green;
@@ -28,15 +30,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
 	draw_title(frame, title, app);
 	match app.screen {
 		Screen::Home => draw_home(frame, body, app),
+		#[cfg(feature = "apps")]
 		Screen::Apps => draw_menu(frame, body, app, APPS, app.apps_selected),
 		Screen::Nodes => draw_nodes(frame, body, app),
 		Screen::Node(key) => draw_node(frame, body, app, key),
 		Screen::Neighbors => draw_neighbors(frame, body, app),
+		#[cfg(feature = "gopher")]
 		Screen::Gopher => app.gopher.draw(frame, body),
 		#[cfg(feature = "gemini")]
 		Screen::Gemini => app.gemini.draw(frame, body),
-		#[cfg(not(feature = "gemini"))]
-		Screen::Gemini => {}
 		#[cfg(feature = "voice")]
 		Screen::Call => {
 			let who = app.call.peer.as_ref().map(|(address, name)| {
@@ -46,10 +48,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
 			app.call
 				.draw(frame, body, app.now, who.as_deref().unwrap_or_default())
 		}
-		#[cfg(not(feature = "voice"))]
-		Screen::Call => {}
+		#[cfg(feature = "irc")]
 		Screen::Irc => app.irc.draw(frame, body),
 		Screen::Ping => app.ping.draw(frame, body),
+		#[cfg(feature = "console")]
 		Screen::Console => app.console.draw(frame, body),
 		Screen::Settings => draw_settings(frame, body, app, FIELDS, app.settings_selected),
 		Screen::SettingsGroup(group) => {
@@ -67,14 +69,20 @@ pub fn draw(frame: &mut Frame, app: &App) {
 fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 	let screen = match app.screen {
 		Screen::Home => "",
+		#[cfg(feature = "apps")]
 		Screen::Apps => "Apps",
 		Screen::Nodes | Screen::Node(_) => "Nodes",
 		Screen::Neighbors => "Neighbors",
+		#[cfg(feature = "gopher")]
 		Screen::Gopher => "Gopher",
+		#[cfg(feature = "gemini")]
 		Screen::Gemini => "Gemini",
+		#[cfg(feature = "voice")]
 		Screen::Call => "Call",
+		#[cfg(feature = "irc")]
 		Screen::Irc => "IRC",
 		Screen::Ping => "Ping",
+		#[cfg(feature = "console")]
 		Screen::Console => "Console",
 		Screen::Settings => "Settings",
 		Screen::SettingsGroup(Group::Bridge) => "Bridge",
@@ -130,21 +138,21 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 fn hints(app: &App) -> &'static str {
 	match app.screen {
 		Screen::Home => "↑↓ select  enter open",
+		#[cfg(feature = "apps")]
 		Screen::Apps => "↑↓ select  enter open  esc back",
 		Screen::Nodes => "↑↓ select  enter open  esc back",
 		Screen::Node(_) => "p ping  m message  esc back",
 		Screen::Neighbors => "esc back",
+		#[cfg(feature = "irc")]
 		Screen::Irc => app.irc.hints(),
+		#[cfg(feature = "gopher")]
 		Screen::Gopher => app.gopher.hints(),
 		#[cfg(feature = "gemini")]
 		Screen::Gemini => app.gemini.hints(),
-		#[cfg(not(feature = "gemini"))]
-		Screen::Gemini => "",
 		#[cfg(feature = "voice")]
 		Screen::Call => app.call.hints(),
-		#[cfg(not(feature = "voice"))]
-		Screen::Call => "",
 		Screen::Ping => app.ping.hints(),
+		#[cfg(feature = "console")]
 		Screen::Console => app.console.hints(),
 		Screen::Settings | Screen::SettingsGroup(_) if app.editing.is_some() => {
 			"enter done  esc cancel"
@@ -195,7 +203,7 @@ fn draw_menu(frame: &mut Frame, area: Rect, app: &App, items: &[(&str, Screen)],
 		if count > 0 {
 			text.push_str(&format!(" ({count} new)"));
 		}
-		let text = if screen == Screen::Apps {
+		let text = if MENUS.contains(&screen) {
 			pad(&text, area.width.saturating_sub(2)) + "› "
 		} else {
 			pad(&text, area.width)
@@ -212,12 +220,28 @@ fn draw_menu(frame: &mut Frame, area: Rect, app: &App, items: &[(&str, Screen)],
 	frame.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), area);
 }
 
-/// New messages waiting on a menu item's screen.
+/// New messages waiting on a menu item's screen, or in the apps it opens.
 fn unread(app: &App, screen: Screen) -> usize {
+	#[cfg(feature = "apps")]
+	if screen == Screen::Apps {
+		return APPS
+			.iter()
+			.map(|&(_, app_screen)| app_unread(app, app_screen))
+			.sum();
+	}
+	app_unread(app, screen)
+}
+
+#[cfg_attr(
+	not(any(feature = "console", feature = "irc")),
+	allow(unused_variables)
+)]
+fn app_unread(app: &App, screen: Screen) -> usize {
 	match screen {
+		#[cfg(feature = "console")]
 		Screen::Console => app.console.unread,
+		#[cfg(feature = "irc")]
 		Screen::Irc => app.irc.unread(),
-		Screen::Apps => APPS.iter().map(|&(_, screen)| unread(app, screen)).sum(),
 		_ => 0,
 	}
 }
@@ -286,6 +310,7 @@ fn draw_node(frame: &mut Frame, area: Rect, app: &App, key: yggdrasil_espnow::Pu
 
 /// Breaks `text` into lines of at most `width` characters, at spaces where
 /// it can.
+#[cfg(any(feature = "irc", feature = "gemini"))]
 pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
 	let mut lines = Vec::new();
 	let mut line = String::new();
@@ -527,7 +552,7 @@ impl core::fmt::Display for Hex<'_> {
 	}
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "irc", feature = "gemini")))]
 mod tests {
 	use super::wrap;
 

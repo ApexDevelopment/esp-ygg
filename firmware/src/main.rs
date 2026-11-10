@@ -8,6 +8,8 @@ mod audio;
 #[cfg(feature = "cardputer")]
 mod cardputer;
 mod hotspot;
+#[cfg(feature = "ntp")]
+mod ntp;
 mod park;
 mod platform;
 mod radio;
@@ -150,9 +152,8 @@ async fn main(spawner: Spawner) -> ! {
 		);
 		spawner.spawn(uplink::network(runner).expect("spawning the network task"));
 		spawner.spawn(uplink::tcp(stack, peer).expect("spawning the TCP task"));
-		if cfg!(feature = "ntp") {
-			spawner.spawn(uplink::ntp(stack).expect("spawning the NTP task"));
-		}
+		#[cfg(feature = "ntp")]
+		spawner.spawn(ntp::ntp(stack).expect("spawning the NTP task"));
 		info!("Peering with {peer} over WiFi network {}", settings.ssid);
 	}
 
@@ -346,7 +347,8 @@ async fn main(spawner: Spawner) -> ! {
 			node.handle_timeout();
 		}
 		let timers_run = Instant::now();
-		if let Some((unix_micros, stratum, received)) = uplink::WIFI_TIME.try_take() {
+		#[cfg(feature = "ntp")]
+		if let Some((unix_micros, stratum, received)) = ntp::WIFI_TIME.try_take() {
 			let since = (Instant::now() - received).as_micros();
 			overlay.set_time(unix_micros + since, stratum.saturating_add(1), node.now());
 		}
@@ -418,9 +420,11 @@ async fn main(spawner: Spawner) -> ! {
 				next_status = Instant::now() + STATUS_INTERVAL;
 			}
 		}
+		// Without a screen, the console's messages go to the log.
 		#[cfg(not(feature = "cardputer"))]
-		while let Some(event) = overlay.poll_event() {
-			if let esp_ygg_app::Event::Datagram { from, data } = event {
+		while let Some(_event) = overlay.poll_event() {
+			#[cfg(feature = "console")]
+			if let esp_ygg_app::Event::Datagram { from, data } = _event {
 				info!(
 					"Console message from {from}: {}",
 					alloc::string::String::from_utf8_lossy(&data).trim_end()
@@ -532,27 +536,32 @@ fn carry_out(
 		Command::Ping(target) => {
 			let _ = overlay.ping(target, node.now());
 		}
+		#[cfg(feature = "console")]
 		Command::SendDatagram(to, data) => {
 			if let Err(error) = overlay.send_datagram(to, &data) {
 				warn!("Sending to {to} failed: {error:?}");
 			}
 		}
 		Command::RequestNodeInfo(key) => node.request_nodeinfo(key),
+		#[cfg(feature = "gopher")]
 		Command::Fetch(to, request) => {
 			if let Err(error) = overlay.fetch(to, request, node.now()) {
 				warn!("Fetching from {to} failed: {error:?}");
 			}
 		}
+		#[cfg(any(feature = "irc", feature = "gemini"))]
 		Command::OpenStream(stream, to) => {
 			if let Err(error) = overlay.open_stream(stream, to) {
 				warn!("Connecting to {to} failed: {error:?}");
 			}
 		}
+		#[cfg(any(feature = "irc", feature = "gemini"))]
 		Command::StreamSend(stream, data) => {
 			if let Err(error) = overlay.stream_send(stream, &data) {
 				warn!("Sending on a stream failed: {error:?}");
 			}
 		}
+		#[cfg(any(feature = "irc", feature = "gemini"))]
 		Command::CloseStream(stream) => overlay.close_stream(stream),
 		#[cfg(feature = "voice")]
 		Command::Call(to) => {

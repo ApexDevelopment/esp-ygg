@@ -68,5 +68,7 @@ fn spin(request: u32) {
 		return;
 	}
 	PARKED.store(request, Ordering::Release);
-	while RELEASED.load(Ordering::Acquire) != request {}
+	while RELEASED.load(Ordering::Acquire) != request {
+		core::hint::spin_loop();
+	}
 }

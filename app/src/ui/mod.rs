@@ -5,11 +5,14 @@
 
 #[cfg(feature = "voice")]
 mod call;
+#[cfg(feature = "console")]
 mod console;
 #[cfg(feature = "gemini")]
 mod gemini;
+#[cfg(feature = "gopher")]
 mod gopher;
 mod input;
+#[cfg(feature = "irc")]
 mod irc;
 pub mod keyboard;
 mod ping;
@@ -20,13 +23,22 @@ use alloc::collections::{BTreeMap, VecDeque};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::net::{Ipv6Addr, SocketAddrV6};
+use core::net::Ipv6Addr;
+#[cfg(any(
+	feature = "console",
+	feature = "gopher",
+	feature = "irc",
+	feature = "gemini"
+))]
+use core::net::SocketAddrV6;
 
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 use yggdrasil_espnow::{Instant, Mac, Node, Platform, PublicKey};
 
 use crate::BoardInfo;
-use crate::overlay::{Event, Stream};
+use crate::overlay::Event;
+#[cfg(any(feature = "irc", feature = "gemini"))]
+use crate::overlay::Stream;
 use crate::settings::Settings;
 use crate::time::{format_offset, parse_offset};
 pub use input::TextInput;
@@ -67,13 +79,18 @@ enum Outcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
 	Ping(Ipv6Addr),
+	#[cfg(feature = "console")]
 	SendDatagram(SocketAddrV6, Vec<u8>),
 	RequestNodeInfo(PublicKey),
 	/// Send a request to a TCP server and collect its whole response.
+	#[cfg(feature = "gopher")]
 	Fetch(SocketAddrV6, Vec<u8>),
 	/// Open a lasting TCP connection, send on it, and close it.
+	#[cfg(any(feature = "irc", feature = "gemini"))]
 	OpenStream(Stream, SocketAddrV6),
+	#[cfg(any(feature = "irc", feature = "gemini"))]
 	StreamSend(Stream, Vec<u8>),
+	#[cfg(any(feature = "irc", feature = "gemini"))]
 	CloseStream(Stream),
 	ScanWifi,
 	/// Store these settings and restart to apply them.
@@ -187,29 +204,21 @@ struct Completion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Screen {
 	Home,
-	#[cfg_attr(
-		not(any(
-			feature = "console",
-			feature = "voice",
-			feature = "irc",
-			feature = "gemini",
-			feature = "gopher"
-		)),
-		allow(dead_code)
-	)]
+	#[cfg(feature = "apps")]
 	Apps,
 	Nodes,
 	Node(PublicKey),
 	Neighbors,
 	Ping,
+	#[cfg(feature = "console")]
 	Console,
-	#[cfg_attr(not(feature = "gopher"), allow(dead_code))]
+	#[cfg(feature = "gopher")]
 	Gopher,
-	#[cfg_attr(not(feature = "irc"), allow(dead_code))]
+	#[cfg(feature = "irc")]
 	Irc,
-	#[cfg_attr(not(feature = "gemini"), allow(dead_code))]
+	#[cfg(feature = "gemini")]
 	Gemini,
-	#[cfg_attr(not(feature = "voice"), allow(dead_code))]
+	#[cfg(feature = "voice")]
 	Call,
 	Settings,
 	/// The settings in one group, opened from the main settings.
@@ -270,18 +279,19 @@ const MENU: &[(&str, Screen)] = &[
 	("Yggdrasil Nodes", Screen::Nodes),
 	("ESP-NOW Neighbors", Screen::Neighbors),
 	("Ping", Screen::Ping),
-	#[cfg(any(
-		feature = "console",
-		feature = "voice",
-		feature = "irc",
-		feature = "gemini",
-		feature = "gopher"
-	))]
+	#[cfg(feature = "apps")]
 	("Apps", Screen::Apps),
 	("Settings", Screen::Settings),
 ];
 
+/// Menu items that open a menu of their own.
+const MENUS: &[Screen] = &[
+	#[cfg(feature = "apps")]
+	Screen::Apps,
+];
+
 /// The apps menu, opened from the home menu.
+#[cfg(feature = "apps")]
 const APPS: &[(&str, Screen)] = &[
 	#[cfg(feature = "console")]
 	("UDP Console", Screen::Console),
@@ -310,9 +320,12 @@ pub struct App {
 	nodes_selected: usize,
 
 	ping: ping::Ping,
+	#[cfg(feature = "console")]
 	console: console::Console,
 
+	#[cfg(feature = "gopher")]
 	gopher: gopher::Browser,
+	#[cfg(feature = "irc")]
 	irc: irc::Client,
 	#[cfg(feature = "gemini")]
 	gemini: gemini::Browser,
@@ -342,8 +355,11 @@ impl App {
 			lookups: BTreeMap::new(),
 			nodes_selected: 0,
 			ping: ping::Ping::new(),
+			#[cfg(feature = "console")]
 			console: console::Console::new(),
+			#[cfg(feature = "gopher")]
 			gopher: gopher::Browser::new(),
+			#[cfg(feature = "irc")]
 			irc: irc::Client::new(&default_nick(&settings.name)),
 			#[cfg(feature = "gemini")]
 			gemini: gemini::Browser::new(),
@@ -403,11 +419,15 @@ impl App {
 				round_trip,
 			} => self.ping.replied(from, sequence, round_trip),
 			Event::PingTimeout { target, sequence } => self.ping.timed_out(target, sequence),
+			#[cfg(feature = "gopher")]
 			Event::Fetched { data } => self.gopher.fetched(&data),
+			#[cfg(feature = "gopher")]
 			Event::FetchFailed => self.gopher.failed(),
+			#[cfg(feature = "irc")]
 			Event::StreamOpened(Stream::Irc) => {
 				self.irc.opened(&mut self.commands);
 			}
+			#[cfg(feature = "irc")]
 			Event::StreamData {
 				stream: Stream::Irc,
 				data,
@@ -415,6 +435,7 @@ impl App {
 				let viewing = self.screen == Screen::Irc;
 				self.irc.received(&data, viewing, &mut self.commands);
 			}
+			#[cfg(feature = "irc")]
 			Event::StreamClosed(Stream::Irc) => self.irc.closed(),
 			#[cfg(feature = "gemini")]
 			Event::StreamOpened(Stream::Gemini) => {
@@ -431,6 +452,7 @@ impl App {
 			Event::StreamClosed(Stream::Gemini) => {
 				self.gemini.closed(&mut self.commands);
 			}
+			#[cfg(feature = "console")]
 			Event::Datagram { from, data } => {
 				let sender = self.short_name_of_address(from.ip());
 				let viewing = self.screen == Screen::Console;
@@ -466,6 +488,7 @@ impl App {
 		}
 		let outcome = match self.screen {
 			Screen::Home => self.home_key(key),
+			#[cfg(feature = "apps")]
 			Screen::Apps => self.apps_key(key),
 			Screen::Nodes => self.nodes_key(key),
 			Screen::Node(node) => self.node_key(node, key),
@@ -476,17 +499,16 @@ impl App {
 			Screen::Settings | Screen::SettingsGroup(_) => self.settings_key(key),
 			Screen::WifiNetworks => self.wifi_networks_key(key),
 			Screen::Ping => self.ping.handle_key(key),
+			#[cfg(feature = "console")]
 			Screen::Console => self.console.handle_key(key, &mut self.commands),
+			#[cfg(feature = "irc")]
 			Screen::Irc => self.irc.handle_key(key, &mut self.commands),
+			#[cfg(feature = "gopher")]
 			Screen::Gopher => self.gopher.handle_key(key, &mut self.commands),
 			#[cfg(feature = "gemini")]
 			Screen::Gemini => self.gemini.handle_key(key, &mut self.commands),
 			#[cfg(feature = "voice")]
 			Screen::Call => self.call.handle_key(key, self.now, &mut self.commands),
-			#[cfg(not(feature = "gemini"))]
-			Screen::Gemini => Outcome::Stay,
-			#[cfg(not(feature = "voice"))]
-			Screen::Call => Outcome::Stay,
 		};
 		match outcome {
 			Outcome::Stay => {}
@@ -501,6 +523,7 @@ impl App {
 			Screen::Node(_) => Screen::Nodes,
 			Screen::SettingsGroup(_) => Screen::Settings,
 			Screen::WifiNetworks => Screen::SettingsGroup(Group::Bridge),
+			#[cfg(feature = "apps")]
 			screen if APPS.iter().any(|&(_, app)| app == screen) => Screen::Apps,
 			_ => Screen::Home,
 		}
@@ -516,6 +539,7 @@ impl App {
 		Outcome::Stay
 	}
 
+	#[cfg(feature = "apps")]
 	fn apps_key(&mut self, key: Key) -> Outcome {
 		match navigation(key) {
 			Some(Key::Up) => self.apps_selected = self.apps_selected.saturating_sub(1),
@@ -535,7 +559,9 @@ impl App {
 
 	fn open(&mut self, screen: Screen) {
 		match screen {
+			#[cfg(feature = "console")]
 			Screen::Console => self.console.unread = 0,
+			#[cfg(feature = "irc")]
 			Screen::Irc => self.irc.mark_read(),
 			Screen::Settings => {
 				self.draft = self.saved.clone();
@@ -571,6 +597,7 @@ impl App {
 				self.ping.start_at(address);
 				self.screen = Screen::Ping;
 			}
+			#[cfg(feature = "console")]
 			Key::Char('m') => {
 				self.console.write_to(address);
 				self.open(Screen::Console);
@@ -748,24 +775,31 @@ impl App {
 	}
 
 	fn has_address_field(&self) -> bool {
-		matches!(
-			self.screen,
-			Screen::Ping
-				| Screen::Console
-				| Screen::Gopher
-				| Screen::Gemini
-				| Screen::Irc
-				| Screen::Call
-		)
+		match self.screen {
+			Screen::Ping => true,
+			#[cfg(feature = "console")]
+			Screen::Console => true,
+			#[cfg(feature = "gopher")]
+			Screen::Gopher => true,
+			#[cfg(feature = "gemini")]
+			Screen::Gemini => true,
+			#[cfg(feature = "irc")]
+			Screen::Irc => true,
+			#[cfg(feature = "voice")]
+			Screen::Call => true,
+			_ => false,
+		}
 	}
 
 	/// The field being typed in, if it takes a node's address.
 	fn address_field(&mut self) -> Option<&mut TextInput> {
 		match self.screen {
 			Screen::Ping if !self.ping.running => Some(&mut self.ping.target),
+			#[cfg(feature = "console")]
 			Screen::Console if self.console.focus == console::Focus::Target => {
 				Some(&mut self.console.target)
 			}
+			#[cfg(feature = "gopher")]
 			Screen::Gopher if self.gopher.editing && self.gopher.search.is_none() => {
 				Some(&mut self.gopher.address)
 			}
@@ -775,6 +809,7 @@ impl App {
 			}
 			#[cfg(feature = "voice")]
 			Screen::Call if self.call.phase == call::Phase::Idle => Some(&mut self.call.address),
+			#[cfg(feature = "irc")]
 			Screen::Irc if self.irc.phase == irc::Phase::Setup && self.irc.field == 0 => {
 				Some(&mut self.irc.form[0])
 			}
@@ -886,6 +921,7 @@ impl App {
 	}
 
 	/// A node's name if known, or its address.
+	#[cfg(any(feature = "console", feature = "voice"))]
 	fn short_name_of_address(&self, address: &Ipv6Addr) -> String {
 		self.lookups
 			.iter()
@@ -896,6 +932,7 @@ impl App {
 }
 
 /// A nick from the board's name, keeping only what IRC allows.
+#[cfg(feature = "irc")]
 fn default_nick(name: &str) -> String {
 	let nick: String = name
 		.chars()
@@ -922,7 +959,6 @@ fn navigation(key: Key) -> Option<Key> {
 	})
 }
 
-/// `[address]:port`, or a bare address for the console port.
 type NodeInfoFields = (Option<String>, Vec<(String, String)>);
 
 fn parse_nodeinfo(json: &[u8]) -> Option<NodeInfoFields> {

@@ -24,13 +24,15 @@ ui = ["dep:ratatui"]
 # Services, each of which costs memory while the board runs. Gopher, IRC
 # and Gemini are larger, so they are off by default.
 http = []
-gopher = []
-console = []
+gopher = ["apps"]
+console = ["apps"]
 ntp = []
-irc = []
-gemini = ["dep:rustls", "dep:rustls-rustcrypto", "dep:sha2"]
+irc = ["apps"]
+gemini = ["apps", "dep:rustls", "dep:rustls-rustcrypto", "dep:sha2"]
 # Voice calls, on boards with a speaker and microphone
-voice = []
+voice = ["apps"]
+# Turned on by each app above, for the menu that gathers them
+apps = []
 
 [dev-dependencies]
 # Turns on every service for this crate's own tests

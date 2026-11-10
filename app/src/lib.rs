@@ -5,15 +5,20 @@
 
 extern crate alloc;
 
+#[cfg(any(feature = "gopher", feature = "gemini"))]
 mod authority;
 pub mod device;
+#[cfg(feature = "gemini")]
 pub mod gemini;
+#[cfg(feature = "gopher")]
 pub mod gopher;
 pub mod hotspot;
 pub mod http;
+#[cfg(feature = "irc")]
 pub mod irc;
 mod overlay;
 pub mod settings;
+#[cfg(feature = "ntp")]
 pub mod sntp;
 pub mod time;
 #[cfg(feature = "gemini")]
@@ -25,5 +30,11 @@ pub mod voice;
 
 pub use device::MTU;
 pub use http::BoardInfo;
-pub use overlay::{CONSOLE_PORT, Event, HTTP_PORT, Overlay, PING_TIMEOUT, SendError, Stream};
+#[cfg(feature = "console")]
+pub use overlay::CONSOLE_PORT;
+#[cfg(any(feature = "http", feature = "gopher"))]
+pub use overlay::HTTP_PORT;
+#[cfg(any(feature = "irc", feature = "gemini"))]
+pub use overlay::Stream;
+pub use overlay::{Event, Overlay, PING_TIMEOUT, SendError};
 pub use settings::Settings;
