@@ -125,6 +125,29 @@ impl JitterBuffer {
 	}
 }
 
+/// Removes a steady offset from samples, such as a microphone without its
+/// own high-pass filter has, keeping the voice band.
+#[derive(Default)]
+pub struct DcBlocker {
+	/// None until the first sample, which sets the offset to remove.
+	previous_input: Option<i32>,
+	/// The output, scaled up by 2^15 to keep precision.
+	previous_output: i64,
+}
+
+impl DcBlocker {
+	pub fn filter(&mut self, sample: i16) -> i16 {
+		// y[n] = x[n] - x[n-1] + 0.995 y[n-1], with a cut-off near 6 Hz
+		const POLE: i64 = 32604;
+		let input = i32::from(sample);
+		let previous = self.previous_input.unwrap_or(input);
+		let output = i64::from(input - previous) * 32768 + self.previous_output * POLE / 32768;
+		self.previous_input = Some(input);
+		self.previous_output = output;
+		(output / 32768).clamp(i16::MIN.into(), i16::MAX.into()) as i16
+	}
+}
+
 /// A telephone-style ring: two short bursts, then a pause. Returns the
 /// sample at `index` of the repeating pattern.
 pub fn ring(index: usize) -> i16 {
@@ -159,7 +182,9 @@ mod tests {
 		assert_eq!(buffer.next_sample(), 0, "too little to start");
 		buffer.push(&[2; FRAME_SAMPLES]);
 		buffer.push(&[3; FRAME_SAMPLES]);
-		let played: Vec<i16> = (0..3 * FRAME_SAMPLES).map(|_| buffer.next_sample()).collect();
+		let played: Vec<i16> = (0..3 * FRAME_SAMPLES)
+			.map(|_| buffer.next_sample())
+			.collect();
 		assert_eq!(played[0], 1);
 		assert_eq!(played[3 * FRAME_SAMPLES - 1], 3);
 		assert_eq!(buffer.next_sample(), 0, "silence once dry");
@@ -172,6 +197,27 @@ mod tests {
 			buffer.push(&[frame; FRAME_SAMPLES]);
 		}
 		assert_eq!(buffer.next_sample(), 10);
+	}
+
+	#[test]
+	fn dc_blocker_removes_an_offset_and_keeps_a_tone() {
+		let mut blocker = DcBlocker::default();
+		let tone = |index: usize| if index % 20 < 10 { 1000 } else { -1000 };
+		let output: Vec<i16> = (0..8000)
+			.map(|index| blocker.filter(1500 + tone(index)))
+			.collect();
+		let settled = &output[4000..];
+		let mean =
+			settled.iter().map(|&sample| i64::from(sample)).sum::<i64>() / settled.len() as i64;
+		assert!(mean.abs() < 20, "offset left: {mean}");
+		let peak = settled.iter().map(|sample| sample.abs()).max().unwrap();
+		assert!(peak > 900, "tone lost: {peak}");
+	}
+
+	#[test]
+	fn dc_blocker_starts_without_a_click() {
+		let mut blocker = DcBlocker::default();
+		assert!((0..100).all(|_| blocker.filter(1500) == 0));
 	}
 
 	#[test]

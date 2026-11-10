@@ -15,11 +15,14 @@ use embassy_time::{Duration, Instant, Timer};
 use esp_hal::dma::aligned::DmaAlignedMut;
 use esp_hal::dma::{DmaDescriptor, DmaRxStreamBuf, DmaTxStreamBuf};
 use esp_hal::gpio::{Input, InputConfig, Pull};
-use esp_hal::i2s::master::{Channels, DataFormat, I2s, TdmConfig};
+use esp_hal::i2s::master::{
+	Channels, DataFormat, I2s, PdmConfig, PdmRxConfig, PdmSlotMode, TdmConfig,
+};
+use esp_hal::i2s::pdm::PdmSlotMask;
 use esp_hal::peripherals::{DMA_CH0, GPIO0, GPIO41, GPIO42, GPIO43, GPIO46, I2S0};
 use esp_hal::time::Rate;
 use esp_ygg_app::voice::{
-	Codec, Decoder, Encoder, FRAME_SAMPLES, JitterBuffer, SAMPLE_RATE, mulaw, ring,
+	Codec, DcBlocker, Decoder, Encoder, FRAME_SAMPLES, JitterBuffer, SAMPLE_RATE, mulaw, ring,
 };
 use log::{info, warn};
 
@@ -230,6 +233,15 @@ impl Bus {
 			.with_channels(Channels::STEREO)
 	}
 
+	/// The original Cardputer's SPM1423 microphone, in the right slot as
+	/// M5Unified reads it.
+	fn pdm_config() -> PdmRxConfig {
+		let mut config =
+			PdmRxConfig::new_pcm_default(Rate::from_hz(SAMPLE_RATE), PdmSlotMode::Mono);
+		config.slot = config.slot.with_slot_mask(PdmSlotMask::RIGHT);
+		config
+	}
+
 	/// Hands microphone samples to `sink` while `keep` holds and `sink`
 	/// returns true. Returns how loud they were.
 	async fn capture(
@@ -238,23 +250,35 @@ impl Bus {
 		mut sink: impl FnMut(i16) -> bool,
 	) -> Level {
 		let mut level = Level::default();
-		if self.model != Model::Adv {
-			warn!("The original Cardputer's microphone is not supported yet");
-			while keep() {
-				TALKING.store(true, Ordering::Relaxed);
-				Timer::after(BUTTON_POLL).await;
+		// The ADV's codec sends stereo frames; the original's PDM
+		// microphone, converted in hardware, sends one sample at a time.
+		let (rx, frame_bytes, at) = match self.model {
+			Model::Adv => {
+				let i2s = I2s::new(self.i2s.reborrow(), self.dma.reborrow(), Self::config())
+					.expect("configuring I2S")
+					.into_async();
+				let rx = i2s
+					.i2s_rx
+					.with_bclk(self.bclk.reborrow())
+					.with_ws(self.ws.reborrow())
+					.with_din(self.din.reborrow())
+					.build();
+				(rx, 4, 2 * MICROPHONE_SLOT)
 			}
-			return level;
-		}
-		let i2s = I2s::new(self.i2s.reborrow(), self.dma.reborrow(), Self::config())
-			.expect("configuring I2S")
-			.into_async();
-		let rx = i2s
-			.i2s_rx
-			.with_bclk(self.bclk.reborrow())
-			.with_ws(self.ws.reborrow())
-			.with_din(self.din.reborrow())
-			.build();
+			Model::Original => {
+				let config = PdmConfig::rx_only(Self::pdm_config());
+				let i2s = I2s::new_pdm(self.i2s.reborrow(), self.dma.reborrow(), config)
+					.expect("configuring PDM")
+					.into_async();
+				let rx = i2s
+					.i2s_rx
+					.with_clk(self.ws.reborrow())
+					.with_din_line(0, self.din.reborrow())
+					.expect("PDM has a first data line")
+					.build();
+				(rx, 2, 0)
+			}
+		};
 		let buffer = self.rx_buffer.take().expect("returned after each capture");
 		let mut transfer = match rx.read(buffer) {
 			Ok(transfer) => transfer,
@@ -266,10 +290,20 @@ impl Bus {
 		};
 		let started = Instant::now();
 		let mut armings = 0;
+		let mut dc_blocker = DcBlocker::default();
+		// The PDM converter needs a moment to settle after starting.
+		let mut settling = if self.model == Model::Original {
+			FRAME_SAMPLES
+		} else {
+			0
+		};
 		let mut chunk = [0u8; FRAME_BYTES];
 		'capturing: while keep() {
 			TALKING.store(true, Ordering::Relaxed);
-			if armings < 3 && started.elapsed() >= Duration::from_millis(30 * (armings + 1)) {
+			if self.model == Model::Adv
+				&& armings < 3
+				&& started.elapsed() >= Duration::from_millis(30 * (armings + 1))
+			{
 				let _ = CODEC_WRITES.try_send(CODEC_ARM);
 				armings += 1;
 			}
@@ -279,13 +313,17 @@ impl Bus {
 			}
 			// Take everything waiting, or the DMA runs out of room.
 			loop {
-				let length = transfer.pop(&mut chunk) / 4 * 4;
+				let length = transfer.pop(&mut chunk) / frame_bytes * frame_bytes;
 				if length == 0 {
 					break;
 				}
-				for frame in chunk[..length].chunks_exact(4) {
-					let at = 2 * MICROPHONE_SLOT;
+				for frame in chunk[..length].chunks_exact(frame_bytes) {
 					let sample = i16::from_le_bytes([frame[at], frame[at + 1]]);
+					if settling > 0 {
+						settling -= 1;
+						continue;
+					}
+					let sample = dc_blocker.filter(sample);
 					level.add(sample);
 					if !sink(sample) {
 						break 'capturing;
