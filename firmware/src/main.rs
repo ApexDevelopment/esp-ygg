@@ -76,6 +76,10 @@ async fn main(spawner: Spawner) -> ! {
 	// The random number generator is only truly random once the radio runs,
 	// so the identity is read or created after WiFi starts.
 	let flash = FlashStorage::new(peripherals.FLASH);
+	// Writing to flash stops the code cache both cores run from, so pause
+	// the other core, which runs the UI, for the length of each write.
+	#[cfg(any(feature = "esp32s3", feature = "esp32"))]
+	let flash = flash.multicore_auto_park();
 	let mut settings_store = storage::Flash::new(flash);
 	let settings = settings_store
 		.settings()
