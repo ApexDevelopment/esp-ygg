@@ -60,6 +60,7 @@ Each service costs memory while the board runs, so the firmware can be built wit
 | `gopher` | Gopher menu, and the Gopher screen | off |
 | `irc` | The IRC screen | off |
 | `gemini` | The Gemini screen | off |
+| `voice` | Voice calls, on the Cardputers | off |
 
 To add the larger ones, list them along with the board:
 
@@ -100,9 +101,18 @@ The interface can also be driven from a computer over the USB serial port, for t
 python3 firmware/drive.py /dev/ttyACM0 "key down down enter" "type 200::1" "key enter" "wait 3" screen
 ```
 
+In voice builds, `talk on` and `talk off` hold and release push-to-talk, and `mute on` silences the speaker for quiet testing.
+
 To try the interface without a board, run `cargo run -p esp-ygg-app --example preview`. It shows the interface in a terminal as one of three simulated boards in a line, where the farthest one echoes console messages back.
 
-## Settings
+## Voice calls
+
+With the `voice` feature, the Call screen calls other boards by address, with Tab completion like the other address fields. Calls use IAX2, the protocol Asterisk speaks, on UDP port 4569, so other IAX2 software over Yggdrasil should be able to call in too. Yggdrasil already encrypts and authenticates traffic by address, so calls use no IAX2 passwords.
+
+An incoming call rings and brings up the Call screen from anywhere. Enter answers and Escape declines or hangs up. Talking is push-to-talk, like a walkie-talkie: hold G0 on the side of the board to talk, and let go to listen. Outside a call, holding G0 records a few seconds and plays them back on release, to check the speaker and microphone.
+
+Voice is G.711 μ-law for now, 64 kbit/s in 20 ms frames. The original Cardputer's microphone is not supported yet, so it can listen but not talk.
+
 
 A Cardputer stores the settings chosen in its interface in flash. Until then, and on boards without a screen, settings come from environment variables read when the firmware is built.
 

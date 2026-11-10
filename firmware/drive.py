@@ -6,6 +6,8 @@ Each command is one of:
 	type <text>      types the text
 	key <name>...    presses keys: enter, esc, tab, backspace, space, up, down, left, right
 	screen           prints the screen
+	talk on|off      holds or releases push-to-talk
+	mute on|off      silences the speaker
 	wait <seconds>   waits, printing whatever the board logs meanwhile
 
 For example:

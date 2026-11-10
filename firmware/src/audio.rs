@@ -2,10 +2,12 @@
 //! one direction at a time, which suits push-to-talk. The ADV routes both
 //! through an ES8311 codec, set up over the keyboard's I2C bus.
 //!
-//! For now, holding the G0 button records, and letting go plays it back.
+//! In a call, the speaker plays what arrives until the G0 button is held,
+//! and then the microphone sends instead. Outside a call, holding G0
+//! records, and letting go plays it back, to check both work.
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -16,7 +18,9 @@ use esp_hal::gpio::{Input, InputConfig, Pull};
 use esp_hal::i2s::master::{Channels, DataFormat, I2s, TdmConfig};
 use esp_hal::peripherals::{DMA_CH0, GPIO0, GPIO41, GPIO42, GPIO43, GPIO46, I2S0};
 use esp_hal::time::Rate;
-use esp_ygg_app::voice::{FRAME_SAMPLES, SAMPLE_RATE, mulaw};
+use esp_ygg_app::voice::{
+	Codec, Decoder, Encoder, FRAME_SAMPLES, JitterBuffer, SAMPLE_RATE, mulaw, ring,
+};
 use log::{info, warn};
 
 use crate::cardputer::Model;
@@ -27,6 +31,45 @@ pub static CODEC_WRITES: Channel<CriticalSectionRawMutex, (u8, u8), 16> = Channe
 pub const CODEC: u8 = 0x18;
 /// Set while the serial port holds push-to-talk down.
 pub static REMOTE_TALK: AtomicBool = AtomicBool::new(false);
+/// Set over the serial port to silence the speaker while testing.
+pub static MUTED: AtomicBool = AtomicBool::new(false);
+/// Set while push-to-talk is held, for the screen.
+pub static TALKING: AtomicBool = AtomicBool::new(false);
+
+/// Voice from the call, and voice for it, one 20 ms frame each.
+pub static VOICE_IN: Channel<CriticalSectionRawMutex, (Codec, Vec<u8>), 16> = Channel::new();
+pub static VOICE_OUT: Channel<CriticalSectionRawMutex, Vec<u8>, 8> = Channel::new();
+
+/// The call as the network side sees it: none, ringing here, or up, with
+/// the codec's format bits.
+static CALL: AtomicU8 = AtomicU8::new(NO_CALL);
+const NO_CALL: u8 = 0;
+const RINGING: u8 = 1;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CallState {
+	None,
+	Ringing,
+	Up(Codec),
+}
+
+/// Called by the network side whenever the call changes.
+pub fn set_call(ringing: bool, up: Option<Codec>) {
+	let value = match (up, ringing) {
+		(Some(codec), _) => codec.format() as u8,
+		(None, true) => RINGING,
+		(None, false) => NO_CALL,
+	};
+	CALL.store(value, Ordering::Relaxed);
+}
+
+fn call_state() -> CallState {
+	match CALL.load(Ordering::Relaxed) {
+		NO_CALL => CallState::None,
+		RINGING => CallState::Ringing,
+		format => Codec::from_format(u32::from(format)).map_or(CallState::None, CallState::Up),
+	}
+}
 
 /// Each sample goes out in both slots, left and right, of 16 bits each.
 const FRAME_BYTES: usize = FRAME_SAMPLES * 4;
@@ -52,8 +95,9 @@ const CODEC_SETUP: &[(u8, u8)] = &[
 	(0x13, 0x10),
 	(0x32, 0xbf),
 	(0x37, 0x08),
-	// Microphone input at the lowest gain, 0 dB, without the DC offset
-	(0x14, 0x10),
+	// Microphone input with +18 dB of analog gain, ADC at 0 dB, without
+	// the DC offset
+	(0x14, 0x16),
 	(0x17, 0xbf),
 	(0x1c, 0x6a),
 ];
@@ -71,7 +115,8 @@ pub struct Pins {
 	pub din: GPIO46<'static>,
 }
 
-/// The pins the I2S bus uses, which recording and playing take in turn.
+/// The I2S bus, which the microphone and speaker take in turn, with a DMA
+/// buffer for each.
 struct Bus {
 	i2s: I2S0<'static>,
 	dma: DMA_CH0<'static>,
@@ -79,12 +124,7 @@ struct Bus {
 	dout: GPIO42<'static>,
 	ws: GPIO43<'static>,
 	din: GPIO46<'static>,
-}
-
-struct Audio {
-	pins: Bus,
 	model: Model,
-	button: Input<'static>,
 	rx_buffer: Option<DmaRxStreamBuf>,
 	tx_buffer: Option<DmaTxStreamBuf>,
 }
@@ -92,23 +132,19 @@ struct Audio {
 #[embassy_executor::task]
 pub async fn run(pins: Pins, model: Model) {
 	let button = Input::new(pins.button, InputConfig::default().with_pull(Pull::Up));
-	let bus = Bus {
+	if model == Model::Adv {
+		for &write in CODEC_SETUP {
+			CODEC_WRITES.send(write).await;
+		}
+	}
+	let mut bus = Bus {
 		i2s: pins.i2s,
 		dma: pins.dma,
 		bclk: pins.bclk,
 		dout: pins.dout,
 		ws: pins.ws,
 		din: pins.din,
-	};
-	if model == Model::Adv {
-		for &write in CODEC_SETUP {
-			CODEC_WRITES.send(write).await;
-		}
-	}
-	let mut audio = Audio {
-		pins: bus,
 		model,
-		button,
 		rx_buffer: Some(
 			DmaRxStreamBuf::new(descriptors(8), dma_memory(8 * FRAME_BYTES))
 				.expect("making the microphone's buffer"),
@@ -118,20 +154,75 @@ pub async fn run(pins: Pins, model: Model) {
 				.expect("making the speaker's buffer"),
 		),
 	};
+	let talking = || button.is_low() || REMOTE_TALK.load(Ordering::Relaxed);
 	loop {
-		while !audio.talking() {
-			Timer::after(BUTTON_POLL).await;
+		TALKING.store(talking(), Ordering::Relaxed);
+		match call_state() {
+			CallState::Up(codec) if talking() => {
+				let mut encoder = Encoder::new(codec);
+				let mut frame = Vec::with_capacity(FRAME_SAMPLES);
+				let keep = || talking() && call_state() == CallState::Up(codec);
+				bus.capture(keep, |sample| {
+					frame.push(sample);
+					if frame.len() == FRAME_SAMPLES {
+						let _ = VOICE_OUT.try_send(encoder.encode(&frame));
+						frame.clear();
+					}
+					true
+				})
+				.await;
+			}
+			CallState::Up(codec) => {
+				let mut decoder = Decoder::new(codec);
+				let mut jitter = JitterBuffer::default();
+				let keep = || !talking() && call_state() == CallState::Up(codec);
+				bus.play(keep, || {
+					while let Ok((codec, data)) = VOICE_IN.try_receive() {
+						if codec != decoder.codec() {
+							decoder = Decoder::new(codec);
+						}
+						jitter.push(&decoder.decode(&data));
+					}
+					Some(jitter.next_sample())
+				})
+				.await;
+			}
+			CallState::Ringing => {
+				let mut index = 0;
+				let keep = || call_state() == CallState::Ringing;
+				bus.play(keep, || {
+					index += 1;
+					Some(ring(index))
+				})
+				.await;
+			}
+			CallState::None if talking() => {
+				let mut recording = Vec::new();
+				let limit = SAMPLE_RATE as usize * LONGEST_RECORDING.as_secs() as usize;
+				let levels = bus
+					.capture(talking, |sample| {
+						recording.push(mulaw::encode(sample));
+						recording.len() < limit
+					})
+					.await;
+				info!(
+					"Recorded {} ms, {levels}",
+					recording.len() as u32 * 1000 / SAMPLE_RATE
+				);
+				let mut played = recording.iter().map(|&byte| mulaw::decode(byte));
+				bus.play(|| call_state() == CallState::None, || played.next())
+					.await;
+			}
+			CallState::None => {
+				// Whatever arrives between calls has nowhere to go.
+				while VOICE_IN.try_receive().is_ok() {}
+				Timer::after(BUTTON_POLL).await;
+			}
 		}
-		let recording = audio.record().await;
-		audio.play(&recording).await;
 	}
 }
 
-impl Audio {
-	fn talking(&self) -> bool {
-		self.button.is_low() || REMOTE_TALK.load(Ordering::Relaxed)
-	}
-
+impl Bus {
 	fn config() -> TdmConfig {
 		TdmConfig::new_tdm_philips()
 			.with_sample_rate(Rate::from_hz(SAMPLE_RATE))
@@ -139,44 +230,45 @@ impl Audio {
 			.with_channels(Channels::STEREO)
 	}
 
-	/// Records while push-to-talk is held, as μ-law.
-	async fn record(&mut self) -> Vec<u8> {
-		let mut recording = Vec::new();
+	/// Hands microphone samples to `sink` while `keep` holds and `sink`
+	/// returns true. Returns how loud they were.
+	async fn capture(
+		&mut self,
+		keep: impl Fn() -> bool,
+		mut sink: impl FnMut(i16) -> bool,
+	) -> Level {
+		let mut level = Level::default();
 		if self.model != Model::Adv {
-			warn!("Recording needs the ADV's microphone for now");
-			while self.talking() {
+			warn!("The original Cardputer's microphone is not supported yet");
+			while keep() {
+				TALKING.store(true, Ordering::Relaxed);
 				Timer::after(BUTTON_POLL).await;
 			}
-			return recording;
+			return level;
 		}
-		let pins = &mut self.pins;
-		let i2s = I2s::new(pins.i2s.reborrow(), pins.dma.reborrow(), Self::config())
+		let i2s = I2s::new(self.i2s.reborrow(), self.dma.reborrow(), Self::config())
 			.expect("configuring I2S")
 			.into_async();
 		let rx = i2s
 			.i2s_rx
-			.with_bclk(pins.bclk.reborrow())
-			.with_ws(pins.ws.reborrow())
-			.with_din(pins.din.reborrow())
+			.with_bclk(self.bclk.reborrow())
+			.with_ws(self.ws.reborrow())
+			.with_din(self.din.reborrow())
 			.build();
-		let buffer = self
-			.rx_buffer
-			.take()
-			.expect("returned after each recording");
+		let buffer = self.rx_buffer.take().expect("returned after each capture");
 		let mut transfer = match rx.read(buffer) {
 			Ok(transfer) => transfer,
 			Err((error, _, buffer)) => {
 				warn!("Starting the microphone failed: {error:?}");
 				self.rx_buffer = Some(buffer);
-				return recording;
+				return level;
 			}
 		};
 		let started = Instant::now();
 		let mut armings = 0;
 		let mut chunk = [0u8; FRAME_BYTES];
-		let mut levels = [Level::default(); 2];
-		let limit = SAMPLE_RATE as usize * LONGEST_RECORDING.as_secs() as usize;
-		'recording: while self.button.is_low() || REMOTE_TALK.load(Ordering::Relaxed) {
+		'capturing: while keep() {
+			TALKING.store(true, Ordering::Relaxed);
 			if armings < 3 && started.elapsed() >= Duration::from_millis(30 * (armings + 1)) {
 				let _ = CODEC_WRITES.try_send(CODEC_ARM);
 				armings += 1;
@@ -192,53 +284,49 @@ impl Audio {
 					break;
 				}
 				for frame in chunk[..length].chunks_exact(4) {
-					for (slot, level) in levels.iter_mut().enumerate() {
-						level.add(i16::from_le_bytes([frame[2 * slot], frame[2 * slot + 1]]));
-					}
 					let at = 2 * MICROPHONE_SLOT;
 					let sample = i16::from_le_bytes([frame[at], frame[at + 1]]);
-					if recording.len() >= limit {
-						break 'recording;
+					level.add(sample);
+					if !sink(sample) {
+						break 'capturing;
 					}
-					recording.push(mulaw::encode(sample));
 				}
 			}
 		}
 		let (_, buffer) = transfer.stop();
 		self.rx_buffer = Some(buffer);
-		info!(
-			"Recorded {} ms; left {}, right {}",
-			recording.len() as u32 * 1000 / SAMPLE_RATE,
-			levels[0],
-			levels[1],
-		);
-		recording
+		level
 	}
 
-	/// Plays μ-law audio to the end.
-	async fn play(&mut self, audio: &[u8]) {
-		if audio.is_empty() {
-			return;
-		}
-		let pins = &mut self.pins;
-		let i2s = I2s::new(pins.i2s.reborrow(), pins.dma.reborrow(), Self::config())
+	/// Plays what `source` gives until it runs out, or until `keep` no
+	/// longer holds, when it stops at once.
+	async fn play(&mut self, keep: impl Fn() -> bool, mut source: impl FnMut() -> Option<i16>) {
+		let i2s = I2s::new(self.i2s.reborrow(), self.dma.reborrow(), Self::config())
 			.expect("configuring I2S")
 			.into_async();
 		let tx = i2s
 			.i2s_tx
-			.with_bclk(pins.bclk.reborrow())
-			.with_ws(pins.ws.reborrow())
-			.with_dout(pins.dout.reborrow())
+			.with_bclk(self.bclk.reborrow())
+			.with_ws(self.ws.reborrow())
+			.with_dout(self.dout.reborrow())
 			.build();
 		let mut buffer = self.tx_buffer.take().expect("returned after playing");
-		let mut samples = audio
-			.iter()
-			.map(|&byte| mulaw::decode(byte))
-			.chain(core::iter::repeat_n(0, 2 * FRAME_SAMPLES));
+		let finished = core::cell::Cell::new(false);
 		let mut fill = |space: &mut [u8]| {
 			let mut written = 0;
 			for frame in space.chunks_exact_mut(4) {
-				let Some(sample) = samples.next() else { break };
+				let Some(sample) = (if finished.get() { None } else { source() }) else {
+					finished.set(true);
+					// Silence, so the end is not cut short
+					frame.fill(0);
+					written += 4;
+					continue;
+				};
+				let sample = if MUTED.load(Ordering::Relaxed) {
+					0
+				} else {
+					sample
+				};
 				frame[..2].copy_from_slice(&sample.to_le_bytes());
 				frame[2..].copy_from_slice(&sample.to_le_bytes());
 				written += 4;
@@ -254,14 +342,18 @@ impl Audio {
 				return;
 			}
 		};
-		loop {
+		let mut drained = 0;
+		while keep() {
 			if transfer.wait_for_available_async().await.is_err() {
 				break;
 			}
-			if transfer.push_with(&mut fill) == 0 {
-				// Everything is queued; let the buffer play out.
-				Timer::after(Duration::from_millis(150)).await;
-				break;
+			transfer.push_with(&mut fill);
+			// Once the source ends, let the queued audio play out.
+			if finished.get() {
+				drained += 1;
+				if drained > 8 {
+					break;
+				}
 			}
 		}
 		let (_, buffer) = transfer.stop();

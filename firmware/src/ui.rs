@@ -141,6 +141,8 @@ async fn run(mut screen: Screen, settings: Settings) {
 			Either3::Second(message) => handle_message(&mut app, message),
 			Either3::Third(()) => {}
 		}
+		#[cfg(feature = "voice")]
+		app.set_talking(crate::audio::TALKING.load(Ordering::Relaxed));
 		app.tick(now());
 		while let Some(command) = app.poll_command() {
 			FROM_UI.send(command).await;
@@ -183,8 +185,10 @@ async fn serial(usb: USB_DEVICE<'static>) {
 				Ok(Remote::Screen) => SCREEN_WANTED.store(true, Ordering::Relaxed),
 				#[cfg(feature = "voice")]
 				Ok(Remote::Talk(on)) => crate::audio::REMOTE_TALK.store(on, Ordering::Relaxed),
+				#[cfg(feature = "voice")]
+				Ok(Remote::Mute(on)) => crate::audio::MUTED.store(on, Ordering::Relaxed),
 				#[cfg(not(feature = "voice"))]
-				Ok(Remote::Talk(_)) => warn!("Voice is not in this build"),
+				Ok(Remote::Talk(_) | Remote::Mute(_)) => warn!("Voice is not in this build"),
 				Err(error) => warn!("{error}"),
 			}
 			line.clear();

@@ -19,8 +19,6 @@ use alloc::vec::Vec;
 use core::net::Ipv6Addr;
 
 use embassy_executor::Spawner;
-#[cfg(feature = "cardputer")]
-use embassy_futures::select::{Either, select};
 use embassy_futures::select::{Either3, Either4, select3, select4};
 use embassy_net::StackResources;
 use embassy_time::{Duration, Instant, Timer};
@@ -170,6 +168,20 @@ async fn main(spawner: Spawner) -> ! {
 		u64::from(rng.random()) << 32 | u64::from(rng.random()),
 		settings.status_page,
 	);
+	#[cfg(feature = "voice")]
+	{
+		let name = if settings.name.is_empty() {
+			"esp-ygg"
+		} else {
+			&settings.name
+		};
+		overlay.start_phone(name, rng.random() as u16);
+	}
+	#[cfg(feature = "voice")]
+	let mut ringing = false;
+	// Voice frames sent and received in the current call
+	#[cfg(feature = "voice")]
+	let mut voice_frames = (0u32, 0u32);
 	if hotspot_on {
 		let access_point = Interface::access_point();
 		overlay.start_hotspot(&node, access_point.mac_address());
@@ -290,11 +302,19 @@ async fn main(spawner: Spawner) -> ! {
 				overlay.receive_hotspot_frame(&mut node, &frame);
 			}
 			#[cfg(feature = "cardputer")]
-			Either4::Fourth(Either3::Third(Either::First(command))) => {
+			Either4::Fourth(Either3::Third(UiInput::Command(command))) => {
 				carry_out(command, &mut node, &mut overlay, &mut store);
 			}
 			#[cfg(feature = "cardputer")]
-			Either4::Fourth(Either3::Third(Either::Second(networks))) => {
+			Either4::Fourth(Either3::Third(UiInput::Voice(_frame))) => {
+				#[cfg(feature = "voice")]
+				{
+					overlay.send_voice(&_frame, node.now());
+					voice_frames.0 += 1;
+				}
+			}
+			#[cfg(feature = "cardputer")]
+			Either4::Fourth(Either3::Third(UiInput::Networks(networks))) => {
 				if !bridge {
 					// Scanning hops channels, so return to the mesh's.
 					let _ = manager.set_channel(settings.channel);
@@ -344,7 +364,33 @@ async fn main(spawner: Spawner) -> ! {
 			// If the UI falls behind, it misses some updates rather than
 			// holding up the network.
 			while let Some(event) = overlay.poll_event() {
+				#[cfg(feature = "voice")]
+				if let esp_ygg_app::Event::Call(event) = &event {
+					use esp_ygg_app::voice::iax2::CallEvent;
+					match event {
+						CallEvent::Incoming { .. } => ringing = true,
+						CallEvent::Answered => ringing = false,
+						CallEvent::Ended(reason) => {
+							ringing = false;
+							let (sent, received) = core::mem::take(&mut voice_frames);
+							info!(
+								"Call ended ({reason}): {sent} voice frames sent, {received} received"
+							);
+						}
+						CallEvent::Ringing => {}
+					}
+				}
 				let _ = ui::TO_UI.try_send(ui::ToUi::Event(event));
+			}
+			#[cfg(feature = "voice")]
+			{
+				while let Some(voice) = overlay.poll_voice() {
+					voice_frames.1 += 1;
+					if audio::VOICE_IN.try_send(voice).is_err() {
+						warn!("Voice arrived faster than it played, so some was dropped");
+					}
+				}
+				audio::set_call(ringing, overlay.call_codec());
 			}
 			while let Some((key, info)) = node.poll_nodeinfo() {
 				let _ = ui::TO_UI.try_send(ui::ToUi::NodeInfo(key, info));
@@ -406,10 +452,38 @@ fn cause<A, B, C, D, E, F>(event: &Either4<A, B, C, Either3<D, E, F>>) -> &'stat
 	}
 }
 
-/// A command from the UI, or the results of a scan it asked for.
 #[cfg(feature = "cardputer")]
-async fn next_ui_input() -> Either<Command, Vec<uplink::ScannedNetwork>> {
-	select(ui::FROM_UI.receive(), uplink::SCAN_RESULTS.receive()).await
+enum UiInput {
+	Command(Command),
+	Networks(Vec<uplink::ScannedNetwork>),
+	/// A frame from the microphone, for the call
+	Voice(Vec<u8>),
+}
+
+/// A command from the UI, the results of a scan it asked for, or voice.
+#[cfg(feature = "cardputer")]
+async fn next_ui_input() -> UiInput {
+	match select3(
+		ui::FROM_UI.receive(),
+		uplink::SCAN_RESULTS.receive(),
+		next_voice(),
+	)
+	.await
+	{
+		Either3::First(command) => UiInput::Command(command),
+		Either3::Second(networks) => UiInput::Networks(networks),
+		Either3::Third(frame) => UiInput::Voice(frame),
+	}
+}
+
+#[cfg(feature = "voice")]
+async fn next_voice() -> Vec<u8> {
+	audio::VOICE_OUT.receive().await
+}
+
+#[cfg(all(feature = "cardputer", not(feature = "voice")))]
+async fn next_voice() -> Vec<u8> {
+	core::future::pending().await
 }
 
 #[cfg(feature = "cardputer")]
@@ -474,6 +548,20 @@ fn carry_out(
 			}
 		}
 		Command::CloseStream(stream) => overlay.close_stream(stream),
+		#[cfg(feature = "voice")]
+		Command::Call(to) => {
+			if let Err(error) = overlay.call(to, node.now()) {
+				warn!("Calling {to} failed: {error:?}");
+			}
+		}
+		#[cfg(feature = "voice")]
+		Command::Answer => {
+			let _ = overlay.answer(node.now());
+		}
+		#[cfg(feature = "voice")]
+		Command::HangUp => {
+			let _ = overlay.hang_up(node.now());
+		}
 		Command::ScanWifi => {
 			let _ = uplink::SCANS.try_send(());
 		}
