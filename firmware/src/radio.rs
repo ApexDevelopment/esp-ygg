@@ -91,7 +91,10 @@ pub async fn sender(mut sender: EspNowSender) {
 	loop {
 		let outgoing = OUTBOX.receive().await;
 		let send = sender.send_async(&outgoing.mac, &outgoing.frame);
-		let lost = match with_timeout(SEND_TIMEOUT, send).await {
+		let began = Instant::now();
+		let result = with_timeout(SEND_TIMEOUT, send).await;
+		stats.busy_micros += began.elapsed().as_micros();
+		let lost = match result {
 			Ok(Ok(())) => false,
 			// Broadcasts are never acknowledged, so they never fail this way.
 			Ok(Err(EspNowError::SendFailed)) => {
@@ -130,6 +133,7 @@ struct SendStats {
 	timed_out: u32,
 	min_free_heap: usize,
 	since: Instant,
+	busy_micros: u64,
 }
 
 impl SendStats {
@@ -141,6 +145,7 @@ impl SendStats {
 			timed_out: 0,
 			min_free_heap: usize::MAX,
 			since: Instant::now(),
+			busy_micros: 0,
 		}
 	}
 
@@ -150,8 +155,9 @@ impl SendStats {
 		}
 		if self.refused > 0 || self.unacknowledged > 0 || self.timed_out > 0 {
 			warn!(
-				"ESP-NOW sends in the last {} s: {} sent, {} refused, {} unacknowledged, {} timed out; lowest free heap {} KB",
+				"ESP-NOW sends in the last {} s ({} us each): {} sent, {} refused, {} unacknowledged, {} timed out; lowest free heap {} KB",
 				(Instant::now() - self.since).as_secs(),
+				self.busy_micros / u64::from(self.sent.max(1)),
 				self.sent,
 				self.refused,
 				self.unacknowledged,
