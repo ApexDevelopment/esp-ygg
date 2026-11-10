@@ -40,6 +40,8 @@ ratatui = { version = "0.30.2", default-features = false, features = ["crossterm
 rustls = { version = "0.23.46", default-features = false, features = ["std", "tls12"] }
 rustls-rustcrypto = { version = "0.1.0-pre.0", features = ["std", "tls12"] }
 smoltcp = { version = "0.13.1", default-features = false, features = ["alloc", "medium-ip", "proto-ipv6", "socket-tcp"] }
+# Lets the phone example keep to one network interface
+socket2 = { version = "0.6.5", features = ["all"] }
 yggdrasil-espnow = { path = "../node", features = ["sim"] }
 
 [[example]]

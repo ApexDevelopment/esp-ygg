@@ -11,6 +11,9 @@
 //! `phone call <address>` calls a board, or anything else speaking IAX2.
 //! `phone answer` waits on port 4569 and answers the first call. Either way
 //! it hangs up when stdin ends, and exits when the call does.
+//!
+//! `--interface <name>` keeps the call to one network interface, such as a
+//! board's hotspot when another interface also routes to Yggdrasil.
 
 use std::io::{self, Read, Write};
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6, UdpSocket};
@@ -22,13 +25,24 @@ use esp_ygg_app::voice::{CODECS, Decoder, Encoder, FRAME_SAMPLES};
 use yggdrasil_espnow::Instant;
 
 fn main() -> io::Result<()> {
-	let arguments: Vec<String> = std::env::args().skip(1).collect();
+	let mut arguments: Vec<String> = std::env::args().skip(1).collect();
+	let interface = match arguments
+		.iter()
+		.position(|argument| argument == "--interface")
+	{
+		Some(index) if index + 1 < arguments.len() => {
+			let name = arguments.remove(index + 1);
+			arguments.remove(index);
+			Some(name)
+		}
+		_ => None,
+	};
 	let (socket, mut phone) = match arguments.iter().map(String::as_str).collect::<Vec<_>>()[..] {
 		["call", address] => {
 			let to: Ipv6Addr = address
 				.parse()
 				.map_err(|_| io::Error::other("not an IPv6 address"))?;
-			let socket = UdpSocket::bind("[::]:0")?;
+			let socket = bind(0, interface.as_deref())?;
 			let mut phone = Phone::new("computer", CODECS, std::process::id() as u16);
 			phone
 				.call(
@@ -39,11 +53,11 @@ fn main() -> io::Result<()> {
 			(socket, phone)
 		}
 		["answer"] => (
-			UdpSocket::bind(("::", PORT))?,
+			bind(PORT, interface.as_deref())?,
 			Phone::new("computer", CODECS, std::process::id() as u16),
 		),
 		_ => {
-			eprintln!("usage: phone call <address> | phone answer");
+			eprintln!("usage: phone [--interface <name>] call <address> | answer");
 			std::process::exit(2);
 		}
 	};
@@ -80,7 +94,13 @@ fn main() -> io::Result<()> {
 				CallEvent::Incoming { .. } => {
 					let _ = phone.answer(now());
 				}
-				CallEvent::Ended(_) => return Ok(()),
+				CallEvent::Ended(_) => {
+					// Acknowledge the other side's hangup before leaving.
+					while let Some((to, datagram)) = phone.poll_transmit() {
+						socket.send_to(&datagram, SocketAddr::V6(to))?;
+					}
+					return Ok(());
+				}
 				_ => {}
 			}
 		}
@@ -120,6 +140,16 @@ fn main() -> io::Result<()> {
 			stdout.flush()?;
 		}
 	}
+}
+
+fn bind(port: u16, interface: Option<&str>) -> io::Result<UdpSocket> {
+	use socket2::{Domain, Socket, Type};
+	let socket = Socket::new(Domain::IPV6, Type::DGRAM, None)?;
+	if let Some(interface) = interface {
+		socket.bind_device(Some(interface.as_bytes()))?;
+	}
+	socket.bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)).into())?;
+	Ok(socket.into())
 }
 
 /// Reads 20 ms frames from stdin on a thread of its own.

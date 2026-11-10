@@ -37,9 +37,12 @@ def open_port(path):
 
 
 def write_all(port, data):
-	"""Writes everything, waiting while the board catches up."""
+	"""Writes everything, waiting while the board catches up, but not for
+	a board that has stopped reading, such as after a crash."""
 	while data:
-		select.select([], [port], [])
+		_, writable, _ = select.select([], [port], [], 2)
+		if not writable:
+			sys.exit("The board stopped reading the serial port")
 		try:
 			data = data[os.write(port, data):]
 		except BlockingIOError:
