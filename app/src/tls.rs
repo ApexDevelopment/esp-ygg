@@ -57,6 +57,8 @@ pub struct Session {
 	/// Data waiting for the handshake to finish.
 	pending: Vec<u8>,
 	connected: bool,
+	/// The server closed, so say goodbye too, once.
+	closing: bool,
 }
 
 impl Session {
@@ -69,6 +71,7 @@ impl Session {
 			incoming: Vec::new(),
 			pending: Vec::new(),
 			connected: false,
+			closing: false,
 		})
 	}
 
@@ -100,7 +103,10 @@ impl Session {
 						output.received.extend_from_slice(record.payload);
 					}
 				}
-				ConnectionState::PeerClosed => output.closed = true,
+				ConnectionState::PeerClosed => {
+					output.closed = true;
+					self.closing = true;
+				}
 				ConnectionState::Closed => {
 					output.closed = true;
 					stop = true;
@@ -120,7 +126,17 @@ impl Session {
 						self.connected = true;
 						output.connected = true;
 					}
-					if !self.pending.is_empty() {
+					if self.closing {
+						self.closing = false;
+						grow_until_fits(&mut output.send, |buffer| {
+							writer
+								.queue_close_notify(buffer)
+								.map_err(|error| match error {
+									EncryptError::InsufficientSize(size) => Ok(size),
+									other => Err(other.to_string()),
+								})
+						})?;
+					} else if !self.pending.is_empty() {
 						let pending = core::mem::take(&mut self.pending);
 						grow_until_fits(&mut output.send, |buffer| {
 							writer
@@ -261,6 +277,10 @@ pub(crate) mod tests {
 				output.send.extend(client.process().unwrap().send);
 			}
 			if output.closed {
+				// The client says goodbye too.
+				server.read_tls(&mut &output.send[..]).unwrap();
+				let state = server.process_new_packets().unwrap();
+				assert!(state.peer_has_closed());
 				return (received, client.fingerprint());
 			}
 			server.read_tls(&mut &output.send[..]).unwrap();
