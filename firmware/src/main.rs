@@ -5,6 +5,8 @@ extern crate alloc;
 
 #[cfg(feature = "voice")]
 mod audio;
+#[cfg(feature = "voice")]
+mod call;
 #[cfg(feature = "cardputer")]
 mod cardputer;
 mod hotspot;
@@ -29,7 +31,9 @@ use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::rng::Rng;
 use esp_hal::timer::timg::TimerGroup;
-use esp_radio::esp_now::{BROADCAST_ADDRESS, EspNowManager, EspNowWifiInterface, PeerInfo};
+use esp_radio::esp_now::{
+	BROADCAST_ADDRESS, EspNowManager, EspNowReceiver, EspNowWifiInterface, PeerInfo, ReceivedData,
+};
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{Config as WifiConfig, ControllerConfig, Interface, WifiController};
 use esp_storage::FlashStorage;
@@ -179,14 +183,6 @@ async fn main(spawner: Spawner) -> ! {
 		};
 		overlay.start_phone(name, rng.random() as u16);
 	}
-	#[cfg(feature = "voice")]
-	let mut ringing = false;
-	// Voice frames sent and received in the current call
-	#[cfg(feature = "voice")]
-	let mut voice_frames = (0u32, 0u32);
-	// Warn about dropped voice once per call
-	#[cfg(feature = "voice")]
-	let mut voice_overflowed = false;
 	if hotspot_on {
 		let access_point = Interface::access_point();
 		overlay.start_hotspot(&node, access_point.mac_address());
@@ -239,29 +235,15 @@ async fn main(spawner: Spawner) -> ! {
 	}
 	#[cfg(feature = "cardputer")]
 	let mut next_status = Instant::now();
+	#[cfg(feature = "voice")]
+	let mut call = call::CallLink::default();
 
 	let mut frame = alloc::vec![0u8; FRAME_LEN];
 	let mut stream: Option<StreamId> = None;
 	let mut next_save = Instant::now() + Duration::from_secs(SAVE_INTERVAL_SECS);
 	loop {
 		let started = Instant::now();
-		while !radio::OUTBOX.is_full() {
-			let Some((destination, len)) = node.poll_transmit(&mut frame) else {
-				break;
-			};
-			let mac = match destination {
-				Destination::Broadcast => BROADCAST_ADDRESS,
-				Destination::Unicast(mac) => {
-					register_peer(&manager, &node, mac);
-					mac
-				}
-			};
-			let outgoing = radio::Outgoing {
-				mac,
-				frame: frame[..len].to_vec(),
-			};
-			let _ = radio::OUTBOX.try_send(outgoing);
-		}
+		send_frames(&mut node, &manager, &mut frame);
 		let backlogged = flush_stream(&mut node, &mut stream) || radio::OUTBOX.is_full();
 
 		let mut wake = [
@@ -282,62 +264,32 @@ async fn main(spawner: Spawner) -> ! {
 			wake = wake.min(Instant::now() + Duration::from_millis(5));
 		}
 		let waited = Instant::now();
-		let event = select4(
-			receiver.receive_async(),
-			Timer::at(wake),
-			TO_NODE.receive(),
-			select3(
-				radio::LOST.receive(),
-				hotspot::FROM_HOTSPOT.receive(),
-				next_ui_input(),
-			),
-		)
-		.await;
+		let woken_by = next_wake(&mut receiver, wake).await;
 		let woke = Instant::now();
-		let cause = cause(&event);
-		match event {
-			Either4::First(received) => {
+		match woken_by {
+			Wake::Frame(received) => {
 				radio::record_signal(received.info.src_address, received.info.rx_control.rssi);
 				node.handle_frame(received.info.src_address, received.data())
 			}
-			Either4::Second(()) => {}
-			Either4::Third(message) => handle_uplink(&mut node, &mut stream, message),
-			Either4::Fourth(Either3::First(lost)) => node.frame_lost(lost.mac, &lost.frame),
-			Either4::Fourth(Either3::Second(frame)) => {
-				overlay.receive_hotspot_frame(&mut node, &frame);
-			}
+			Wake::Timer => {}
+			Wake::Uplink(message) => handle_uplink(&mut node, &mut stream, message),
+			Wake::Lost(lost) => node.frame_lost(lost.mac, &lost.frame),
+			Wake::Hotspot(frame) => overlay.receive_hotspot_frame(&mut node, &frame),
 			#[cfg(feature = "cardputer")]
-			Either4::Fourth(Either3::Third(UiInput::Command(command))) => {
+			Wake::Ui(UiInput::Command(command)) => {
 				carry_out(command, &mut node, &mut overlay, &mut store);
 			}
+			#[cfg(feature = "voice")]
+			Wake::Ui(UiInput::Voice(frame)) => call.send(&mut overlay, &frame, node.now()),
 			#[cfg(feature = "cardputer")]
-			Either4::Fourth(Either3::Third(UiInput::Voice(_frame))) => {
-				#[cfg(feature = "voice")]
-				{
-					overlay.send_voice(&_frame, node.now());
-					voice_frames.0 += 1;
-				}
-			}
-			#[cfg(feature = "cardputer")]
-			Either4::Fourth(Either3::Third(UiInput::Networks(networks))) => {
+			Wake::Ui(UiInput::Networks(networks)) => {
 				if !bridge {
 					// Scanning hops channels, so return to the mesh's.
 					let _ = manager.set_channel(settings.channel);
 				}
-				let networks = networks
-					.into_iter()
-					.map(|network| WifiNetwork {
-						ssid: network.ssid,
-						signal: network.signal,
-						secured: network.secured,
-					})
-					.collect();
-				let _ = ui::TO_UI.try_send(ui::ToUi::Networks(networks));
+				show_networks(networks);
 			}
-			#[cfg(not(feature = "cardputer"))]
-			Either4::Fourth(Either3::Third(never)) => match never {},
 		}
-		let handled = Instant::now();
 		// Whatever woke the loop, run expired timers, or a steady stream of
 		// frames would starve them.
 		if node
@@ -346,7 +298,6 @@ async fn main(spawner: Spawner) -> ! {
 		{
 			node.handle_timeout();
 		}
-		let timers_run = Instant::now();
 		#[cfg(feature = "ntp")]
 		if let Some((unix_micros, stratum, received)) = ntp::WIFI_TIME.try_take() {
 			let since = (Instant::now() - received).as_micros();
@@ -360,7 +311,6 @@ async fn main(spawner: Spawner) -> ! {
 			time: overlay.unix_micros(node.now()),
 		};
 		overlay.poll(&mut node, &board);
-		let services_run = Instant::now();
 		while let Some(frame) = overlay.poll_hotspot_frame() {
 			let _ = hotspot::TO_HOTSPOT.try_send(frame);
 		}
@@ -372,51 +322,18 @@ async fn main(spawner: Spawner) -> ! {
 			while let Some(event) = overlay.poll_event() {
 				#[cfg(feature = "voice")]
 				if let esp_ygg_app::Event::Call(event) = &event {
-					use esp_ygg_app::voice::iax2::CallEvent;
-					match event {
-						CallEvent::Incoming { .. } => ringing = true,
-						CallEvent::Answered => ringing = false,
-						CallEvent::Ended(reason) => {
-							ringing = false;
-							let (sent, received) = core::mem::take(&mut voice_frames);
-							voice_overflowed = false;
-							info!(
-								"Call ended ({reason}): {sent} voice frames sent, {received} received"
-							);
-						}
-						CallEvent::Ringing => {}
-					}
+					call.handle_event(event);
 				}
 				let _ = ui::TO_UI.try_send(ui::ToUi::Event(event));
 			}
 			#[cfg(feature = "voice")]
-			{
-				while let Some(voice) = overlay.poll_voice() {
-					voice_frames.1 += 1;
-					if audio::VOICE_IN.try_send(voice).is_err() && !voice_overflowed {
-						voice_overflowed = true;
-						warn!("Voice arrived faster than it played, so some was dropped");
-					}
-				}
-				audio::set_call(ringing, overlay.call_codec());
-			}
+			call.deliver(&mut overlay);
 			while let Some((key, info)) = node.poll_nodeinfo() {
 				let _ = ui::TO_UI.try_send(ui::ToUi::NodeInfo(key, info));
 			}
 			if Instant::now() >= next_status {
 				let uplink = uplink_state(bridge, &node, stream);
-				let mut status = Status::from_node(&node, &board, uplink);
-				status.hotspot = overlay.hotspot_devices();
-				for neighbor in &mut status.neighbors {
-					(neighbor.signal, neighbor.loss) = radio::quality(&neighbor.mac);
-				}
-				let macs: Vec<Mac> = status
-					.neighbors
-					.iter()
-					.map(|neighbor| neighbor.mac)
-					.collect();
-				radio::forget_others(&macs);
-				let _ = ui::TO_UI.try_send(ui::ToUi::Status(status));
+				send_status(&node, &board, uplink, overlay.hotspot_devices());
 				next_status = Instant::now() + STATUS_INTERVAL;
 			}
 		}
@@ -434,14 +351,7 @@ async fn main(spawner: Spawner) -> ! {
 
 		let busy = (waited - started) + (Instant::now() - woke);
 		if busy > STALL_WARNING {
-			warn!(
-				"Main loop was busy for {} ms: {} before waiting, {} handling {cause}, {} on timers, {} on services",
-				busy.as_millis(),
-				(waited - started).as_millis(),
-				(handled - woke).as_millis(),
-				(timers_run - handled).as_millis(),
-				(services_run - timers_run).as_millis(),
-			);
+			warn!("Main loop was busy for {} ms", busy.as_millis());
 		}
 		if Instant::now() >= next_save {
 			store.save_time(unix_base + Instant::now().as_secs());
@@ -450,15 +360,57 @@ async fn main(spawner: Spawner) -> ! {
 	}
 }
 
-/// What woke the main loop, for the stall warning.
-fn cause<A, B, C, D, E, F>(event: &Either4<A, B, C, Either3<D, E, F>>) -> &'static str {
-	match event {
-		Either4::First(_) => "a radio frame",
-		Either4::Second(_) => "a timer",
-		Either4::Third(_) => "the bridge",
-		Either4::Fourth(Either3::First(_)) => "a lost frame",
-		Either4::Fourth(Either3::Second(_)) => "a hotspot frame",
-		Either4::Fourth(Either3::Third(_)) => "the UI",
+/// Hands the node's frames to the radio task, as many as it has room for.
+fn send_frames(node: &mut Node<EspPlatform>, manager: &EspNowManager, frame: &mut [u8]) {
+	while !radio::OUTBOX.is_full() {
+		let Some((destination, len)) = node.poll_transmit(frame) else {
+			break;
+		};
+		let mac = match destination {
+			Destination::Broadcast => BROADCAST_ADDRESS,
+			Destination::Unicast(mac) => {
+				register_peer(manager, node, mac);
+				mac
+			}
+		};
+		let outgoing = radio::Outgoing {
+			mac,
+			frame: frame[..len].to_vec(),
+		};
+		let _ = radio::OUTBOX.try_send(outgoing);
+	}
+}
+
+/// What the main loop woke for.
+enum Wake {
+	Frame(ReceivedData),
+	Timer,
+	Uplink(ToNode),
+	/// A frame the radio could not deliver
+	Lost(radio::Outgoing),
+	Hotspot(Vec<u8>),
+	#[cfg(feature = "cardputer")]
+	Ui(UiInput),
+}
+
+async fn next_wake(receiver: &mut EspNowReceiver, at: Instant) -> Wake {
+	let frame = async { Wake::Frame(receiver.receive_async().await) };
+	let timer = async {
+		Timer::at(at).await;
+		Wake::Timer
+	};
+	let uplink = async { Wake::Uplink(TO_NODE.receive().await) };
+	let lost = async { Wake::Lost(radio::LOST.receive().await) };
+	let hotspot = async { Wake::Hotspot(hotspot::FROM_HOTSPOT.receive().await) };
+	#[cfg(feature = "cardputer")]
+	let ui = async { Wake::Ui(next_ui_input().await) };
+	#[cfg(not(feature = "cardputer"))]
+	let ui = core::future::pending::<Wake>();
+	match select4(frame, timer, uplink, select3(lost, hotspot, ui)).await {
+		Either4::First(wake)
+		| Either4::Second(wake)
+		| Either4::Third(wake)
+		| Either4::Fourth(Either3::First(wake) | Either3::Second(wake) | Either3::Third(wake)) => wake,
 	}
 }
 
@@ -467,33 +419,57 @@ enum UiInput {
 	Command(Command),
 	Networks(Vec<uplink::ScannedNetwork>),
 	/// A frame from the microphone, for the call
+	#[cfg(feature = "voice")]
 	Voice(Vec<u8>),
 }
 
 /// A command from the UI, the results of a scan it asked for, or voice.
 #[cfg(feature = "cardputer")]
 async fn next_ui_input() -> UiInput {
-	match select3(
-		ui::FROM_UI.receive(),
-		uplink::SCAN_RESULTS.receive(),
-		next_voice(),
-	)
-	.await
-	{
-		Either3::First(command) => UiInput::Command(command),
-		Either3::Second(networks) => UiInput::Networks(networks),
-		Either3::Third(frame) => UiInput::Voice(frame),
+	let command = async { UiInput::Command(ui::FROM_UI.receive().await) };
+	let networks = async { UiInput::Networks(uplink::SCAN_RESULTS.receive().await) };
+	#[cfg(feature = "voice")]
+	let voice = async { UiInput::Voice(audio::VOICE_OUT.receive().await) };
+	#[cfg(not(feature = "voice"))]
+	let voice = core::future::pending::<UiInput>();
+	match select3(command, networks, voice).await {
+		Either3::First(input) | Either3::Second(input) | Either3::Third(input) => input,
 	}
 }
 
-#[cfg(feature = "voice")]
-async fn next_voice() -> Vec<u8> {
-	audio::VOICE_OUT.receive().await
+#[cfg(feature = "cardputer")]
+fn show_networks(networks: Vec<uplink::ScannedNetwork>) {
+	let networks = networks
+		.into_iter()
+		.map(|network| WifiNetwork {
+			ssid: network.ssid,
+			signal: network.signal,
+			secured: network.secured,
+		})
+		.collect();
+	let _ = ui::TO_UI.try_send(ui::ToUi::Networks(networks));
 }
 
-#[cfg(all(feature = "cardputer", not(feature = "voice")))]
-async fn next_voice() -> Vec<u8> {
-	core::future::pending().await
+/// Gives the UI the node's state, with each neighbor's radio quality.
+#[cfg(feature = "cardputer")]
+fn send_status(
+	node: &Node<EspPlatform>,
+	board: &BoardInfo,
+	uplink: Uplink,
+	hotspot: Option<usize>,
+) {
+	let mut status = Status::from_node(node, board, uplink);
+	status.hotspot = hotspot;
+	for neighbor in &mut status.neighbors {
+		(neighbor.signal, neighbor.loss) = radio::quality(&neighbor.mac);
+	}
+	let macs: Vec<Mac> = status
+		.neighbors
+		.iter()
+		.map(|neighbor| neighbor.mac)
+		.collect();
+	radio::forget_others(&macs);
+	let _ = ui::TO_UI.try_send(ui::ToUi::Status(status));
 }
 
 #[cfg(feature = "cardputer")]
@@ -504,12 +480,6 @@ fn model_name() -> &'static str {
 #[cfg(not(feature = "cardputer"))]
 fn model_name() -> &'static str {
 	CHIP
-}
-
-/// Without a UI there is no input, so this never finishes.
-#[cfg(not(feature = "cardputer"))]
-async fn next_ui_input() -> core::convert::Infallible {
-	core::future::pending().await
 }
 
 #[cfg(feature = "cardputer")]
