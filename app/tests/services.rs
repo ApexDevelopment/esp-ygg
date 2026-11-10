@@ -508,7 +508,7 @@ fn boards_call_each_other_across_the_mesh() {
 	assert_eq!(
 		heard,
 		(0..5u8)
-			.map(|frame| (Codec::Ulaw, vec![frame; 160]))
+			.map(|frame| (Codec::G726, vec![frame; 160]))
 			.collect::<Vec<_>>()
 	);
 }

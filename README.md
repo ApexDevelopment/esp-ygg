@@ -111,7 +111,7 @@ With the `voice` feature, the Call screen calls other boards by address, with Ta
 
 An incoming call rings and brings up the Call screen from anywhere. Enter answers and Escape declines or hangs up. Talking is push-to-talk, like a walkie-talkie: hold G0 on the side of the board to talk, and let go to listen. Outside a call, holding G0 records a few seconds and plays them back on release, to check the speaker and microphone.
 
-Voice is G.711 μ-law for now, 64 kbit/s in 20 ms frames.
+Calls prefer G.726 at 32 kbit/s, which fits each 20 ms of voice in a single ESP-NOW frame, and fall back to G.711 μ-law for software without it. The G.726 codec matches Sun's reference implementation, which Asterisk's is built on, bit for bit.
 
 
 A Cardputer stores the settings chosen in its interface in flash. Until then, and on boards without a screen, settings come from environment variables read when the firmware is built.

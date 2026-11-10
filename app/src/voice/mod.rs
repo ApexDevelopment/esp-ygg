@@ -4,11 +4,12 @@
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
+pub mod g726;
 pub mod iax2;
 pub mod mulaw;
 
 /// The codecs this build offers in calls, most preferred first.
-pub const CODECS: &[Codec] = &[Codec::Ulaw];
+pub const CODECS: &[Codec] = &[Codec::G726, Codec::Ulaw];
 
 /// Samples per second, the telephone rate every codec here uses.
 pub const SAMPLE_RATE: u32 = 8000;
@@ -44,11 +45,15 @@ impl Codec {
 /// Turns samples into a codec's bytes, one stream at a time.
 pub struct Encoder {
 	codec: Codec,
+	g726: g726::State,
 }
 
 impl Encoder {
 	pub fn new(codec: Codec) -> Self {
-		Encoder { codec }
+		Encoder {
+			codec,
+			g726: g726::State::default(),
+		}
 	}
 
 	pub fn codec(&self) -> Codec {
@@ -61,8 +66,7 @@ impl Encoder {
 				.iter()
 				.map(|&sample| mulaw::encode(sample))
 				.collect(),
-			// Not offered until it is built.
-			Codec::G726 => Vec::new(),
+			Codec::G726 => g726::encode(&mut self.g726, samples),
 		}
 	}
 }
@@ -70,11 +74,15 @@ impl Encoder {
 /// Turns a codec's bytes back into samples, one stream at a time.
 pub struct Decoder {
 	codec: Codec,
+	g726: g726::State,
 }
 
 impl Decoder {
 	pub fn new(codec: Codec) -> Self {
-		Decoder { codec }
+		Decoder {
+			codec,
+			g726: g726::State::default(),
+		}
 	}
 
 	pub fn codec(&self) -> Codec {
@@ -84,7 +92,7 @@ impl Decoder {
 	pub fn decode(&mut self, data: &[u8]) -> Vec<i16> {
 		match self.codec {
 			Codec::Ulaw => data.iter().map(|&byte| mulaw::decode(byte)).collect(),
-			Codec::G726 => Vec::new(),
+			Codec::G726 => g726::decode(&mut self.g726, data),
 		}
 	}
 }
