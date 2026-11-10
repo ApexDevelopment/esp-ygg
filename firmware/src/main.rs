@@ -169,6 +169,7 @@ async fn main(spawner: Spawner) -> ! {
 			peripherals.CPU_CTRL,
 			peripherals.FROM_CPU_INTR1,
 			pins,
+			peripherals.USB_DEVICE,
 			settings.clone(),
 		);
 	}

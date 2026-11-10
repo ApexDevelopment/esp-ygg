@@ -92,6 +92,12 @@ In fields that take an address, typing the start of a known node's address or na
 
 The arrow keys are Fn with `;` `.` `,` and `/`, and Escape is Fn with `` ` ``. In lists, the same keys work without Fn.
 
+The interface can also be driven from a computer over the USB serial port, for testing without someone at the keyboard. `firmware/drive.py` sends lines such as `type 200::1`, `key down enter` and `screen`, which prints what the screen shows, and it does so without resetting the board:
+
+```sh
+python3 firmware/drive.py /dev/ttyACM0 "key down down enter" "type 200::1" "key enter" "wait 3" screen
+```
+
 To try the interface without a board, run `cargo run -p esp-ygg-app --example preview`. It shows the interface in a terminal as one of three simulated boards in a line, where the farthest one echoes console messages back.
 
 ## Settings

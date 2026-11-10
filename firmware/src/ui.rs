@@ -3,18 +3,22 @@
 //! messages through channels.
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use alloc::string::String;
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
 use embassy_futures::select::{Either3, select3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
-use esp_hal::peripherals::{CPU_CTRL, FROM_CPU_INTR1};
+use embedded_io_async::Read;
+use esp_hal::peripherals::{CPU_CTRL, FROM_CPU_INTR1, USB_DEVICE};
+use esp_hal::usb::usb_serial_jtag::UsbSerialJtag;
 use esp_hal::system::Stack;
 use esp_rtos::embassy::Executor;
+use esp_ygg_app::ui::remote::{self, Remote};
 use esp_ygg_app::ui::{self, App, Command, Status, WifiNetwork};
 use esp_ygg_app::{Event, Settings};
-use log::info;
+use log::{info, warn};
 use static_cell::StaticCell;
 use yggdrasil_espnow::PublicKey;
 
@@ -41,6 +45,10 @@ pub static FROM_UI: Channel<CriticalSectionRawMutex, Command, 8> = Channel::new(
 
 /// 0 until the second core has detected the board.
 static MODEL: AtomicU8 = AtomicU8::new(0);
+/// Whether the serial port asked to see the screen.
+static SCREEN_WANTED: AtomicBool = AtomicBool::new(false);
+/// The longest command line read from the serial port.
+const MAX_COMMAND: usize = 512;
 /// Fills the UI's stack at first, to tell later how deep it has been used.
 const UNUSED: u8 = 0xa5;
 static STACK_BOTTOM: AtomicUsize = AtomicUsize::new(0);
@@ -63,6 +71,7 @@ pub fn start(
 	cpu_control: CPU_CTRL<'static>,
 	interrupt: FROM_CPU_INTR1<'static>,
 	pins: Pins,
+	usb: USB_DEVICE<'static>,
 	settings: Settings,
 ) {
 	static STACK: StaticCell<Stack<STACK_SIZE>> = StaticCell::new();
@@ -86,6 +95,7 @@ pub fn start(
 				let (model, screen) = cardputer::start(&spawner, pins);
 				MODEL.store(model as u8 + 1, Ordering::Relaxed);
 				spawner.spawn(run(screen, settings).expect("spawning the UI task"));
+				spawner.spawn(serial(usb).expect("spawning the serial task"));
 			});
 		},
 	);
@@ -119,7 +129,46 @@ async fn run(mut screen: Screen, settings: Settings) {
 		while let Some(command) = app.poll_command() {
 			FROM_UI.send(command).await;
 		}
-		let _ = screen.draw(|frame| ui::draw(frame, &app));
+		if let Ok(frame) = screen.draw(|frame| ui::draw(frame, &app))
+			&& SCREEN_WANTED.swap(false, Ordering::Relaxed)
+		{
+			esp_println::println!("{}", remote::SCREEN_START);
+			for line in remote::marked_screen_text(frame.buffer) {
+				esp_println::println!("{line}");
+			}
+			esp_println::println!("{}", remote::SCREEN_END);
+		}
+	}
+}
+
+/// Takes commands from the USB serial port, as [`remote`] describes, so the
+/// interface can be driven from a computer.
+#[embassy_executor::task]
+async fn serial(usb: USB_DEVICE<'static>) {
+	let (mut receiver, _transmitter) = UsbSerialJtag::new(usb).into_async().split();
+	let mut line = Vec::new();
+	let mut buffer = [0u8; 64];
+	loop {
+		let Ok(count) = receiver.read(&mut buffer).await;
+		for &byte in &buffer[..count] {
+			if byte != b'\n' {
+				if line.len() < MAX_COMMAND {
+					line.push(byte);
+				}
+				continue;
+			}
+			let text = String::from_utf8_lossy(&line);
+			match remote::parse(&text) {
+				Ok(Remote::Keys(keys)) => {
+					for key in keys {
+						KEYS.send(key).await;
+					}
+				}
+				Ok(Remote::Screen) => SCREEN_WANTED.store(true, Ordering::Relaxed),
+				Err(error) => warn!("{error}"),
+			}
+			line.clear();
+		}
 	}
 }
 

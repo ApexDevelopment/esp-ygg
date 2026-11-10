@@ -82,10 +82,7 @@ fn type_text(app: &mut App, text: &str) {
 fn screen(app: &App) -> Vec<String> {
 	let mut terminal = Terminal::new(TestBackend::new(40, 13)).unwrap();
 	terminal.draw(|frame| draw(frame, app)).unwrap();
-	let buffer = terminal.backend().buffer();
-	(0..13)
-		.map(|y| (0..40).map(|x| buffer[(x, y)].symbol()).collect())
-		.collect()
+	super::remote::screen_text(terminal.backend().buffer())
 }
 
 #[test]

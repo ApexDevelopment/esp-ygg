@@ -9,6 +9,7 @@ mod gopher;
 mod input;
 mod irc;
 pub mod keyboard;
+pub mod remote;
 mod view;
 
 use alloc::collections::{BTreeMap, VecDeque};
