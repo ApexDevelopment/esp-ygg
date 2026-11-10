@@ -622,3 +622,35 @@ fn home_menu_follows_the_selection() {
 	assert!(shown.contains(&format!(" {last}")), "{shown}");
 	assert!(shown.contains(&address(&key(1)).to_string()));
 }
+
+#[cfg(feature = "voice")]
+#[test]
+fn takes_and_places_calls() {
+	use crate::voice::iax2::CallEvent;
+
+	let mut app = App::new(Settings::new(), at(0));
+	app.set_status(status(&[], &[]));
+	// An incoming call brings up the screen from anywhere.
+	let caller = address(&key(2));
+	app.handle_event(Event::Call(CallEvent::Incoming {
+		from: caller,
+		name: Some("kitchen".into()),
+	}));
+	assert!(screen(&app).join("\n").contains("kitchen"));
+	press(&mut app, &[Key::Enter]);
+	assert_eq!(commands(&mut app), [Command::Answer]);
+	app.set_talking(true);
+	assert!(screen(&app).join("\n").contains("Talking"));
+	app.handle_event(Event::Call(CallEvent::Ended(
+		"The other side hung up".into(),
+	)));
+	assert!(screen(&app).join("\n").contains("The other side hung up"));
+
+	type_text(&mut app, &caller.to_string());
+	press(&mut app, &[Key::Enter]);
+	assert_eq!(commands(&mut app), [Command::Call(caller)]);
+	app.handle_event(Event::Call(CallEvent::Ringing));
+	assert!(screen(&app).join("\n").contains("Ringing"));
+	press(&mut app, &[Key::Escape]);
+	assert_eq!(commands(&mut app), [Command::HangUp]);
+}

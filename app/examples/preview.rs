@@ -1,5 +1,6 @@
 //! Runs the on-device UI in a terminal, as board 0 of a simulated mesh of
-//! three boards in a line. Board 2 echoes console messages back.
+//! three boards in a line. Board 2 echoes console messages back, and in
+//! voice builds answers calls.
 //!
 //! `cargo run -p esp-ygg-app --example preview`, then quit with Ctrl+C.
 
@@ -35,6 +36,10 @@ fn main() -> io::Result<()> {
 		.duration_since(std::time::UNIX_EPOCH)
 		.unwrap_or_default();
 	overlays[0].set_time(since_epoch.as_micros() as u64, 2, radio.nodes[0].now());
+	#[cfg(feature = "voice")]
+	for (index, overlay) in overlays.iter_mut().enumerate() {
+		overlay.start_phone(BOARDS[index], index as u16);
+	}
 	let mut settings = Settings::new();
 	settings.name = BOARDS[0].into();
 	let mut app = App::new(settings, radio.nodes[0].now());
@@ -70,7 +75,8 @@ fn run(
 			let board = board_info(index, started, time);
 			overlay.poll(&mut radio.nodes[index], &board);
 		}
-		echo_datagrams(&mut overlays[2]);
+		let now = radio.nodes[2].now();
+		echo_datagrams(&mut overlays[2], now);
 		while let Some(event) = overlays[0].poll_event() {
 			app.handle_event(event);
 		}
@@ -146,17 +152,37 @@ fn carry_out(command: Command, radio: &mut Radio, overlay: &mut Overlay, app: &m
 		]),
 		// A board would store the settings and restart.
 		Command::Save(_) => {}
+		#[cfg(feature = "voice")]
+		Command::Call(to) => {
+			let _ = overlay.call(to, radio.nodes[0].now());
+		}
+		#[cfg(feature = "voice")]
+		Command::Answer => {
+			let _ = overlay.answer(radio.nodes[0].now());
+		}
+		#[cfg(feature = "voice")]
+		Command::HangUp => {
+			let _ = overlay.hang_up(radio.nodes[0].now());
+		}
 	}
 }
 
-fn echo_datagrams(overlay: &mut Overlay) {
+fn echo_datagrams(overlay: &mut Overlay, now: yggdrasil_espnow::Instant) {
 	while let Some(event) = overlay.poll_event() {
-		if let Event::Datagram { from, data } = event {
-			let mut reply = b"echo: ".to_vec();
-			reply.extend_from_slice(&data);
-			let _ = overlay.send_datagram(from, &reply);
+		match event {
+			Event::Datagram { from, data } => {
+				let mut reply = b"echo: ".to_vec();
+				reply.extend_from_slice(&data);
+				let _ = overlay.send_datagram(from, &reply);
+			}
+			#[cfg(feature = "voice")]
+			Event::Call(esp_ygg_app::voice::iax2::CallEvent::Incoming { .. }) => {
+				let _ = overlay.answer(now);
+			}
+			_ => {}
 		}
 	}
+	let _ = now;
 }
 
 fn map_key(code: KeyCode) -> Option<Key> {

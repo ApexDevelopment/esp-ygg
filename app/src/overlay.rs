@@ -18,6 +18,10 @@ use crate::gopher;
 use crate::hotspot::{Hotspot, Mac};
 use crate::http::{self, BoardInfo};
 use crate::sntp;
+#[cfg(feature = "voice")]
+use crate::voice::iax2::{self, CallError, CallEvent, Phone};
+#[cfg(feature = "voice")]
+use crate::voice::{CODECS, Codec};
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
 pub const HTTP_PORT: u16 = 80;
@@ -122,6 +126,8 @@ pub enum Event {
 	},
 	/// The stream ended, or could not be opened.
 	StreamClosed(Stream),
+	#[cfg(feature = "voice")]
+	Call(CallEvent),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -191,6 +197,8 @@ pub struct Overlay {
 	time_requests: BTreeMap<Ipv6Addr, Instant>,
 	next_time_request: Instant,
 	hotspot: Option<Hotspot>,
+	#[cfg(feature = "voice")]
+	phone: Option<(Phone, SocketHandle)>,
 }
 
 impl Overlay {
@@ -288,6 +296,8 @@ impl Overlay {
 			time_requests: BTreeMap::new(),
 			next_time_request: node.now(),
 			hotspot: None,
+			#[cfg(feature = "voice")]
+			phone: None,
 		}
 	}
 
@@ -313,6 +323,8 @@ impl Overlay {
 		self.progress_streams();
 		self.free_closed_sockets();
 		self.receive_datagrams();
+		#[cfg(feature = "voice")]
+		self.run_phone(now);
 		self.receive_pings(now);
 		self.expire_pings(now);
 		self.keep_time(node, now);
@@ -372,6 +384,7 @@ impl Overlay {
 			.chain(pings)
 			.chain([self.next_time_request])
 			.chain(self.hotspot.as_ref().map(Hotspot::poll_at))
+			.chain(self.phone_poll_at())
 			.chain(
 				self.fetch
 					.as_ref()
@@ -764,6 +777,102 @@ impl Overlay {
 				data: data.to_vec(),
 			});
 		}
+	}
+
+	#[cfg(feature = "voice")]
+	fn phone_poll_at(&self) -> Option<Instant> {
+		self.phone.as_ref().and_then(|(phone, _)| phone.poll_at())
+	}
+
+	#[cfg(not(feature = "voice"))]
+	fn phone_poll_at(&self) -> Option<Instant> {
+		None
+	}
+
+	/// Moves IAX2 datagrams between the phone and its socket.
+	#[cfg(feature = "voice")]
+	fn run_phone(&mut self, now: Instant) {
+		let Some((phone, handle)) = &mut self.phone else {
+			return;
+		};
+		let socket = self.sockets.get_mut::<udp::Socket>(*handle);
+		while let Ok((data, meta)) = socket.recv() {
+			#[allow(irrefutable_let_patterns)]
+			let IpAddress::Ipv6(address) = meta.endpoint.addr else {
+				continue;
+			};
+			phone.receive(
+				SocketAddrV6::new(address, meta.endpoint.port, 0, 0),
+				data,
+				now,
+			);
+		}
+		if phone.poll_at().is_some_and(|due| due <= now) {
+			phone.handle_timeout(now);
+		}
+		while let Some((to, datagram)) = phone.poll_transmit() {
+			let endpoint = IpEndpoint::new(IpAddress::Ipv6(*to.ip()), to.port());
+			// A full buffer drops the datagram; IAX2 resends what matters.
+			let _ = socket.send_slice(&datagram, endpoint);
+		}
+		while let Some(event) = phone.poll_event() {
+			self.events.push_back(Event::Call(event));
+		}
+	}
+
+	/// Starts taking calls on the IAX2 port, under `name`.
+	#[cfg(feature = "voice")]
+	pub fn start_phone(&mut self, name: &str, seed: u16) {
+		let buffer =
+			|| udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 16], vec![0; 16 * 256]);
+		let mut socket = udp::Socket::new(buffer(), buffer());
+		socket.bind(iax2::PORT).expect("binding the IAX2 port");
+		let handle = self.sockets.add(socket);
+		self.phone = Some((Phone::new(name, CODECS, seed), handle));
+	}
+
+	#[cfg(feature = "voice")]
+	fn phone(&mut self) -> Result<&mut Phone, CallError> {
+		self.phone
+			.as_mut()
+			.map(|(phone, _)| phone)
+			.ok_or(CallError::NoCall)
+	}
+
+	#[cfg(feature = "voice")]
+	pub fn call(&mut self, to: Ipv6Addr, now: Instant) -> Result<(), CallError> {
+		self.phone()?
+			.call(SocketAddrV6::new(to, iax2::PORT, 0, 0), now)
+	}
+
+	#[cfg(feature = "voice")]
+	pub fn answer(&mut self, now: Instant) -> Result<(), CallError> {
+		self.phone()?.answer(now)
+	}
+
+	#[cfg(feature = "voice")]
+	pub fn hang_up(&mut self, now: Instant) -> Result<(), CallError> {
+		self.phone()?.hang_up(now)
+	}
+
+	/// The codec of the call that is up, if any.
+	#[cfg(feature = "voice")]
+	pub fn call_codec(&self) -> Option<Codec> {
+		self.phone.as_ref().and_then(|(phone, _)| phone.codec())
+	}
+
+	/// Sends one frame of encoded voice. It goes out on the next poll.
+	#[cfg(feature = "voice")]
+	pub fn send_voice(&mut self, data: &[u8], now: Instant) {
+		if let Ok(phone) = self.phone() {
+			phone.send_voice(data, now);
+		}
+	}
+
+	/// Voice that arrived, with its codec.
+	#[cfg(feature = "voice")]
+	pub fn poll_voice(&mut self) -> Option<(Codec, Vec<u8>)> {
+		self.phone().ok()?.poll_voice()
 	}
 
 	fn receive_pings(&mut self, now: Instant) {

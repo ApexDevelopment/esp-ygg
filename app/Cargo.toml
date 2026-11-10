@@ -34,7 +34,7 @@ voice = []
 
 [dev-dependencies]
 # Turns on every service for this crate's own tests
-esp-ygg-app = { path = ".", features = ["gopher", "irc", "gemini"] }
+esp-ygg-app = { path = ".", features = ["gopher", "irc", "gemini", "voice"] }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 # A server for the TLS client to talk to
 rustls = { version = "0.23.46", default-features = false, features = ["std", "tls12"] }

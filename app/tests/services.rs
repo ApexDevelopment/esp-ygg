@@ -441,3 +441,74 @@ fn hotspot_devices_reach_the_mesh_and_hear_back() {
 	// An echo reply
 	assert_eq!(reply.expect("no ping reply")[14 + 40], 129);
 }
+
+#[test]
+fn boards_call_each_other_across_the_mesh() {
+	use esp_ygg_app::voice::Codec;
+	use esp_ygg_app::voice::iax2::CallEvent;
+
+	let (mut radio, mut overlays) = mesh(3, &[0, 2]);
+	overlays[0].1.start_phone("near", 1);
+	overlays[1].1.start_phone("far", 2);
+	let far = address(&radio, 2);
+	let now = radio.nodes[0].now();
+	overlays[0].1.call(far, now).unwrap();
+	let incoming = wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(30),
+		|_, overlays| match overlays[1].1.poll_event() {
+			Some(Event::Call(event @ CallEvent::Incoming { .. })) => Some(event),
+			_ => None,
+		},
+	);
+	assert_eq!(
+		incoming,
+		Some(CallEvent::Incoming {
+			from: address(&radio, 0),
+			name: Some("near".into())
+		})
+	);
+	let now = radio.nodes[2].now();
+	overlays[1].1.answer(now).unwrap();
+	let answered = wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(5),
+		|_, overlays| {
+			std::iter::from_fn(|| overlays[0].1.poll_event())
+				.find(|event| *event == Event::Call(CallEvent::Answered))
+		},
+	);
+	assert!(answered.is_some(), "the call was not answered");
+
+	let mut heard = Vec::new();
+	for frame in 0..5u8 {
+		let now = radio.nodes[0].now();
+		overlays[0].1.send_voice(&[frame; 160], now);
+		wait_for(
+			&mut radio,
+			&mut overlays,
+			Duration::from_millis(20),
+			|_, overlays| -> Option<()> {
+				heard.extend(std::iter::from_fn(|| overlays[1].1.poll_voice()));
+				None
+			},
+		);
+	}
+	wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(1),
+		|_, overlays| -> Option<()> {
+			heard.extend(std::iter::from_fn(|| overlays[1].1.poll_voice()));
+			None
+		},
+	);
+	assert_eq!(
+		heard,
+		(0..5u8)
+			.map(|frame| (Codec::Ulaw, vec![frame; 160]))
+			.collect::<Vec<_>>()
+	);
+}

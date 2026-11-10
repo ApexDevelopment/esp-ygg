@@ -6,6 +6,7 @@
 //!   `backspace`, `space`, `up`, `down`, `left` and `right`.
 //! - `screen` asks for the screen as text.
 //! - `talk on` and `talk off` hold and release the push-to-talk button.
+//! - `mute on` and `mute off` silence the speaker, for quiet testing.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -24,6 +25,7 @@ pub enum Remote {
 	Keys(Vec<Key>),
 	Screen,
 	Talk(bool),
+	Mute(bool),
 }
 
 /// Reads one line, or returns why it could not.
@@ -40,6 +42,8 @@ pub fn parse(line: &str) -> Result<Remote, String> {
 		"screen" => Ok(Remote::Screen),
 		"talk" if rest == "on" => Ok(Remote::Talk(true)),
 		"talk" if rest == "off" => Ok(Remote::Talk(false)),
+		"mute" if rest == "on" => Ok(Remote::Mute(true)),
+		"mute" if rest == "off" => Ok(Remote::Mute(false)),
 		_ => Err(alloc::format!("Unknown command: {line}")),
 	}
 }

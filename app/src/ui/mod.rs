@@ -3,6 +3,8 @@
 //! with Ratatui. Another renderer could replace [`draw`] without touching
 //! the rest.
 
+#[cfg(feature = "voice")]
+mod call;
 #[cfg(feature = "gemini")]
 mod gemini;
 mod gopher;
@@ -66,6 +68,13 @@ pub enum Command {
 	ScanWifi,
 	/// Store these settings and restart to apply them.
 	Save(Settings),
+	#[cfg(feature = "voice")]
+	Call(Ipv6Addr),
+	#[cfg(feature = "voice")]
+	Answer,
+	/// Hang up, or decline a call.
+	#[cfg(feature = "voice")]
+	HangUp,
 }
 
 /// The state of the bridge to the wider network.
@@ -179,6 +188,8 @@ enum Screen {
 	Irc,
 	#[cfg_attr(not(feature = "gemini"), allow(dead_code))]
 	Gemini,
+	#[cfg_attr(not(feature = "voice"), allow(dead_code))]
+	Call,
 	Settings,
 	/// The settings in one group, opened from the main settings.
 	SettingsGroup(Group),
@@ -246,6 +257,8 @@ const MENU: &[(&str, Screen)] = &[
 	("Ping", Screen::Ping),
 	#[cfg(feature = "console")]
 	("Console", Screen::Console),
+	#[cfg(feature = "voice")]
+	("Call", Screen::Call),
 	#[cfg(feature = "irc")]
 	("IRC", Screen::Irc),
 	#[cfg(feature = "gemini")]
@@ -286,6 +299,8 @@ pub struct App {
 	irc: irc::Client,
 	#[cfg(feature = "gemini")]
 	gemini: gemini::Browser,
+	#[cfg(feature = "voice")]
+	call: call::Phone,
 
 	saved: Settings,
 	draft: Settings,
@@ -324,6 +339,8 @@ impl App {
 			irc: irc::Client::new(&default_nick(&settings.name)),
 			#[cfg(feature = "gemini")]
 			gemini: gemini::Browser::new(),
+			#[cfg(feature = "voice")]
+			call: call::Phone::new(),
 			draft: settings.clone(),
 			saved: settings,
 			settings_selected: 0,
@@ -375,6 +392,12 @@ impl App {
 
 	pub fn handle_event(&mut self, event: Event) {
 		match event {
+			#[cfg(feature = "voice")]
+			Event::Call(event) => {
+				if self.call.handle_event(event, self.now) {
+					self.screen = Screen::Call;
+				}
+			}
 			Event::PingReply {
 				from,
 				sequence,
@@ -488,6 +511,17 @@ impl App {
 				self.commands.extend(commands);
 				if let irc::Outcome::Leave = outcome {
 					self.screen = Screen::Home;
+				}
+			}
+			Screen::Call => {
+				#[cfg(feature = "voice")]
+				{
+					let mut commands = Vec::new();
+					let outcome = self.call.handle_key(key, self.now, &mut commands);
+					self.commands.extend(commands);
+					if let call::Outcome::Leave = outcome {
+						self.screen = Screen::Home;
+					}
 				}
 			}
 			Screen::Gemini => {
@@ -817,7 +851,12 @@ impl App {
 	fn has_address_field(&self) -> bool {
 		matches!(
 			self.screen,
-			Screen::Ping | Screen::Console | Screen::Gopher | Screen::Gemini | Screen::Irc
+			Screen::Ping
+				| Screen::Console
+				| Screen::Gopher
+				| Screen::Gemini
+				| Screen::Irc
+				| Screen::Call
 		)
 	}
 
@@ -835,6 +874,8 @@ impl App {
 			Screen::Gemini if self.gemini.editing && self.gemini.prompt.is_none() => {
 				Some(&mut self.gemini.address)
 			}
+			#[cfg(feature = "voice")]
+			Screen::Call if self.call.phase == call::Phase::Idle => Some(&mut self.call.address),
 			Screen::Irc if self.irc.phase == irc::Phase::Setup && self.irc.field == 0 => {
 				Some(&mut self.irc.form[0])
 			}
@@ -937,6 +978,12 @@ impl App {
 			}) => Some(name),
 			_ => None,
 		}
+	}
+
+	/// Shows whether push-to-talk is held.
+	#[cfg(feature = "voice")]
+	pub fn set_talking(&mut self, talking: bool) {
+		self.call.talking = talking;
 	}
 
 	/// A node's name if known, or its address.

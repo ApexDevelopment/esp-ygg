@@ -38,6 +38,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
 		Screen::Gemini => draw_gemini(frame, body, app),
 		#[cfg(not(feature = "gemini"))]
 		Screen::Gemini => {}
+		#[cfg(feature = "voice")]
+		Screen::Call => draw_call(frame, body, app),
+		#[cfg(not(feature = "voice"))]
+		Screen::Call => {}
 		Screen::Irc => draw_irc(frame, body, app),
 		Screen::Ping => draw_ping(frame, body, app),
 		Screen::Console => draw_console(frame, body, app),
@@ -61,6 +65,7 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 		Screen::Radio => "Radio",
 		Screen::Gopher => "Gopher",
 		Screen::Gemini => "Gemini",
+		Screen::Call => "Call",
 		Screen::Irc => "IRC",
 		Screen::Ping => "Ping",
 		Screen::Console => "Console",
@@ -133,6 +138,10 @@ fn hints(app: &App) -> &'static str {
 		Screen::Gemini => gemini_hints(&app.gemini),
 		#[cfg(not(feature = "gemini"))]
 		Screen::Gemini => "",
+		#[cfg(feature = "voice")]
+		Screen::Call => call_hints(app.call.phase),
+		#[cfg(not(feature = "voice"))]
+		Screen::Call => "",
 		Screen::Ping if app.pinging => "enter stop  esc back",
 		Screen::Ping => "tab complete  enter start",
 		Screen::Console => "tab switch field  enter send",
@@ -547,6 +556,64 @@ fn truncate(text: &str, width: usize) -> String {
 	let mut short: String = text.chars().take(width - 1).collect();
 	short.push('…');
 	short
+}
+
+#[cfg(feature = "voice")]
+fn draw_call(frame: &mut Frame, area: Rect, app: &App) {
+	use super::call::Phase;
+	let phone = &app.call;
+	let who = phone
+		.peer
+		.as_ref()
+		.map(|(address, name)| {
+			name.clone()
+				.unwrap_or_else(|| app.short_name_of_address(address))
+		})
+		.unwrap_or_default();
+	let mut lines = Vec::new();
+	match phone.phase {
+		Phase::Idle => {
+			lines.push(field_line("to", &phone.address, true));
+			lines.push(Line::raw(""));
+			if let Some(ended) = &phone.ended {
+				lines.push(Line::styled(format!(" {ended}"), DIM));
+			}
+			lines.push(Line::styled(" Hold G0 to hear yourself back", DIM));
+		}
+		Phase::Calling => lines.push(Line::raw(format!(" Calling {who}…"))),
+		Phase::Ringing => lines.push(Line::raw(format!(" Ringing {who}…"))),
+		Phase::Incoming => {
+			lines.push(Line::styled(" Incoming call from", DIM));
+			lines.push(Line::raw(format!(" {who}")));
+		}
+		Phase::Up => {
+			lines.push(Line::raw(format!(" In a call with {who}")));
+			if let Some(since) = phone.since {
+				let seconds = app.now.saturating_duration_since(since).as_secs();
+				lines.push(Line::styled(
+					format!(" {}:{:02}", seconds / 60, seconds % 60),
+					DIM,
+				));
+			}
+			lines.push(Line::raw(""));
+			lines.push(if phone.talking {
+				Line::styled(pad(" Talking", area.width), SELECTED)
+			} else {
+				Line::styled(" Hold G0 to talk", DIM)
+			});
+		}
+	}
+	frame.render_widget(Paragraph::new(lines), area);
+}
+
+#[cfg(feature = "voice")]
+fn call_hints(phase: super::call::Phase) -> &'static str {
+	use super::call::Phase;
+	match phase {
+		Phase::Idle => "tab complete  enter call",
+		Phase::Incoming => "enter answer  esc decline",
+		Phase::Calling | Phase::Ringing | Phase::Up => "esc hang up",
+	}
 }
 
 fn draw_ping(frame: &mut Frame, area: Rect, app: &App) {
