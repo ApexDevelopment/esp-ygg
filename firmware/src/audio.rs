@@ -221,18 +221,17 @@ pub async fn run(pins: Pins, model: Model) {
 				}
 				let mut encoder = Encoder::new(Codec::G726);
 				let mut frame = Vec::with_capacity(FRAME_SAMPLES);
-				let levels = bus
-					.capture(talking, |sample| {
-						frame.push(sample);
-						if frame.len() == FRAME_SAMPLES {
-							recording.extend(encoder.encode(&frame));
-							frame.clear();
-						}
-						recording.len() < limit / 2
-					})
-					.await;
+				bus.capture(talking, |sample| {
+					frame.push(sample);
+					if frame.len() == FRAME_SAMPLES {
+						recording.extend(encoder.encode(&frame));
+						frame.clear();
+					}
+					recording.len() < limit / 2
+				})
+				.await;
 				info!(
-					"Recorded {} ms, {levels}",
+					"Recorded {} ms",
 					recording.len() as u32 * 2000 / SAMPLE_RATE
 				);
 				let mut decoder = Decoder::new(Codec::G726);
@@ -269,13 +268,8 @@ impl Bus {
 	}
 
 	/// Hands microphone samples to `sink` while `keep` holds and `sink`
-	/// returns true. Returns how loud they were.
-	async fn capture(
-		&mut self,
-		keep: impl Fn() -> bool,
-		mut sink: impl FnMut(i16) -> bool,
-	) -> Level {
-		let mut level = Level::default();
+	/// returns true.
+	async fn capture(&mut self, keep: impl Fn() -> bool, mut sink: impl FnMut(i16) -> bool) {
 		// The ADV's codec sends stereo frames; the original's PDM
 		// microphone, converted in hardware, sends one sample at a time.
 		let (rx, frame_bytes, at) = match self.model {
@@ -311,7 +305,7 @@ impl Bus {
 			Err((error, _, buffer)) => {
 				warn!("Starting the microphone failed: {error:?}");
 				self.rx_buffer = Some(buffer);
-				return level;
+				return;
 			}
 		};
 		let started = Instant::now();
@@ -350,7 +344,6 @@ impl Bus {
 						continue;
 					}
 					let sample = dc_blocker.filter(sample);
-					level.add(sample);
 					if !sink(sample) {
 						break 'capturing;
 					}
@@ -359,7 +352,6 @@ impl Bus {
 		}
 		let (_, buffer) = transfer.stop();
 		self.rx_buffer = Some(buffer);
-		level
 	}
 
 	/// Plays what `source` gives until it runs out, or until `keep` no
@@ -442,38 +434,4 @@ fn dma_memory(length: usize) -> DmaAlignedMut<'static, [u8]> {
 		core::slice::from_raw_parts_mut(pointer, length)
 	};
 	DmaAlignedMut::new(memory).expect("allocated word aligned")
-}
-
-/// How loud a stretch of samples was, for checking the microphone.
-#[derive(Clone, Copy, Default)]
-struct Level {
-	peak: i32,
-	sum_of_squares: u64,
-	count: u64,
-}
-
-impl Level {
-	fn add(&mut self, sample: i16) {
-		self.peak = self.peak.max(i32::from(sample).abs());
-		self.sum_of_squares += (i64::from(sample) * i64::from(sample)) as u64;
-		self.count += 1;
-	}
-}
-
-impl core::fmt::Display for Level {
-	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-		let rms = self
-			.sum_of_squares
-			.checked_div(self.count)
-			.map_or(0, integer_sqrt);
-		write!(f, "peak {} RMS {rms}", self.peak)
-	}
-}
-
-fn integer_sqrt(value: u64) -> u64 {
-	let mut root = 0u64;
-	while (root + 1) * (root + 1) <= value {
-		root += 1;
-	}
-	root
 }
