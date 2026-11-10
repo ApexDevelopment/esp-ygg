@@ -11,6 +11,8 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use embedded_io_async::Read;
+#[cfg(feature = "voice")]
+use esp_hal::peripherals::FROM_CPU_INTR2;
 use esp_hal::peripherals::{CPU_CTRL, FROM_CPU_INTR1, USB_DEVICE};
 use esp_hal::system::Stack;
 use esp_hal::usb::usb_serial_jtag::UsbSerialJtag;
@@ -72,6 +74,7 @@ pub fn start(
 	interrupt: FROM_CPU_INTR1<'static>,
 	pins: Pins,
 	usb: USB_DEVICE<'static>,
+	#[cfg(feature = "voice")] audio: (crate::audio::Pins, FROM_CPU_INTR2<'static>),
 	settings: Settings,
 ) {
 	static STACK: StaticCell<Stack<STACK_SIZE>> = StaticCell::new();
@@ -90,10 +93,24 @@ pub fn start(
 		EXECUTOR.init(Executor::new()).run(|spawner| {
 			let (model, screen) = cardputer::start(&spawner, pins);
 			MODEL.store(model as u8 + 1, Ordering::Relaxed);
+			#[cfg(feature = "voice")]
+			start_audio(audio, model);
 			spawner.spawn(run(screen, settings).expect("spawning the UI task"));
 			spawner.spawn(serial(usb).expect("spawning the serial task"));
 		});
 	});
+}
+
+/// Runs audio from an interrupt, so it goes ahead of drawing the screen
+/// and the DMA never runs dry.
+#[cfg(feature = "voice")]
+fn start_audio((pins, interrupt): (crate::audio::Pins, FROM_CPU_INTR2<'static>), model: Model) {
+	use esp_rtos::embassy::InterruptExecutor;
+	static EXECUTOR: StaticCell<InterruptExecutor<2>> = StaticCell::new();
+	let spawner = EXECUTOR
+		.init(InterruptExecutor::new(interrupt))
+		.start(esp_hal::interrupt::Priority::Priority1);
+	spawner.spawn(crate::audio::run(pins, model).expect("spawning the audio task"));
 }
 
 /// The board's name, once the second core has detected it.
@@ -164,6 +181,10 @@ async fn serial(usb: USB_DEVICE<'static>) {
 					}
 				}
 				Ok(Remote::Screen) => SCREEN_WANTED.store(true, Ordering::Relaxed),
+				#[cfg(feature = "voice")]
+				Ok(Remote::Talk(on)) => crate::audio::REMOTE_TALK.store(on, Ordering::Relaxed),
+				#[cfg(not(feature = "voice"))]
+				Ok(Remote::Talk(_)) => warn!("Voice is not in this build"),
 				Err(error) => warn!("{error}"),
 			}
 			line.clear();

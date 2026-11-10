@@ -3,6 +3,8 @@
 
 extern crate alloc;
 
+#[cfg(feature = "voice")]
+mod audio;
 #[cfg(feature = "cardputer")]
 mod cardputer;
 mod hotspot;
@@ -17,9 +19,9 @@ use alloc::vec::Vec;
 use core::net::Ipv6Addr;
 
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either3, Either4, select3, select4};
 #[cfg(feature = "cardputer")]
 use embassy_futures::select::{Either, select};
+use embassy_futures::select::{Either3, Either4, select3, select4};
 use embassy_net::StackResources;
 use embassy_time::{Duration, Instant, Timer};
 use esp_backtrace as _;
@@ -202,6 +204,19 @@ async fn main(spawner: Spawner) -> ! {
 			peripherals.FROM_CPU_INTR1,
 			pins,
 			peripherals.USB_DEVICE,
+			#[cfg(feature = "voice")]
+			(
+				audio::Pins {
+					i2s: peripherals.I2S0,
+					dma: peripherals.DMA_CH0,
+					button: peripherals.GPIO0,
+					bclk: peripherals.GPIO41,
+					dout: peripherals.GPIO42,
+					ws: peripherals.GPIO43,
+					din: peripherals.GPIO46,
+				},
+				peripherals.FROM_CPU_INTR2,
+			),
 			settings.clone(),
 		);
 	}

@@ -19,6 +19,8 @@ pub mod time;
 pub mod tls;
 #[cfg(feature = "ui")]
 pub mod ui;
+#[cfg(feature = "voice")]
+pub mod voice;
 
 pub use device::MTU;
 pub use http::BoardInfo;

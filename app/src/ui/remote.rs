@@ -5,6 +5,7 @@
 //! - `key <name>...` presses keys by name: `enter`, `esc`, `tab`,
 //!   `backspace`, `space`, `up`, `down`, `left` and `right`.
 //! - `screen` asks for the screen as text.
+//! - `talk on` and `talk off` hold and release the push-to-talk button.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -22,6 +23,7 @@ pub const SCREEN_END: &str = "--- end ---";
 pub enum Remote {
 	Keys(Vec<Key>),
 	Screen,
+	Talk(bool),
 }
 
 /// Reads one line, or returns why it could not.
@@ -36,6 +38,8 @@ pub fn parse(line: &str) -> Result<Remote, String> {
 			.collect::<Result<_, _>>()
 			.map(Remote::Keys),
 		"screen" => Ok(Remote::Screen),
+		"talk" if rest == "on" => Ok(Remote::Talk(true)),
+		"talk" if rest == "off" => Ok(Remote::Talk(false)),
 		_ => Err(alloc::format!("Unknown command: {line}")),
 	}
 }
@@ -103,6 +107,7 @@ mod tests {
 			Ok(Remote::Keys(alloc::vec![Key::Down, Key::Enter]))
 		);
 		assert_eq!(parse("screen"), Ok(Remote::Screen));
+		assert_eq!(parse("talk on"), Ok(Remote::Talk(true)));
 		assert!(parse("key sideways").is_err());
 		assert!(parse("dance").is_err());
 	}

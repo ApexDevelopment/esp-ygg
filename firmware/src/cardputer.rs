@@ -296,6 +296,15 @@ fn read_events(i2c: &mut I2c<'static, Blocking>, held: &mut Vec<Position>) {
 async fn keyboard(mut reader: KeyReader) {
 	let mut keyboard = Keyboard::new();
 	loop {
+		// The ADV's audio codec shares the keyboard's I2C bus.
+		#[cfg(feature = "voice")]
+		if let KeyReader::Controller { i2c, .. } = &mut reader {
+			while let Ok((register, value)) = crate::audio::CODEC_WRITES.try_receive() {
+				if let Err(error) = i2c.write(crate::audio::CODEC, &[register, value]) {
+					log::warn!("Writing to the audio codec failed: {error:?}");
+				}
+			}
+		}
 		let held = reader.held();
 		for key in keyboard.update(&held, crate::platform::now()) {
 			let _ = KEYS.try_send(key);

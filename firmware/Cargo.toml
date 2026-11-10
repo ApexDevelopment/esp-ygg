@@ -47,6 +47,8 @@ console = ["esp-ygg-app/console"]
 ntp = ["esp-ygg-app/ntp"]
 irc = ["esp-ygg-app/irc"]
 gemini = ["esp-ygg-app/gemini", "dep:getrandom"]
+# Voice calls with push-to-talk, on the Cardputers
+voice = ["cardputer", "esp-ygg-app/voice"]
 # M5Stack Cardputer and Cardputer ADV: screen, keyboard and on-device UI
 cardputer = [
 	"esp32s3",

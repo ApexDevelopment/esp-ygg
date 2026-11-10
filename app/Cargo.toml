@@ -29,6 +29,8 @@ console = []
 ntp = []
 irc = []
 gemini = ["dep:rustls", "dep:rustls-rustcrypto", "dep:sha2"]
+# Voice calls, on boards with a speaker and microphone
+voice = []
 
 [dev-dependencies]
 # Turns on every service for this crate's own tests
