@@ -45,6 +45,8 @@ def write_all(port, data):
 
 
 def read_for(port, seconds, until=None):
+	"""Reads for some seconds, or until `until` arrives and the board goes
+	quiet. Writing while the board is still sending can lose a byte."""
 	received = b""
 	deadline = time.monotonic() + seconds
 	while time.monotonic() < deadline:
@@ -54,8 +56,8 @@ def read_for(port, seconds, until=None):
 				received += os.read(port, 4096)
 			except BlockingIOError:
 				pass
-			if until and until in received:
-				break
+		elif until and until in received:
+			break
 	return received.decode(errors="replace")
 
 
