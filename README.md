@@ -88,7 +88,7 @@ On a Cardputer, the home screen shows the board's address and how many nodes it 
   - Gemini browses Gemini capsules, starting from an address you type. Up and down move between links, scrolling past text where there are none, and Enter follows the selected one. It answers questions servers ask and follows redirects. Gemini servers mostly sign their own certificates, so the browser trusts the certificate a server shows first and refuses a different one until the board restarts. Going back fetches the page again, to save memory.
   - IRC connects to an IRC server over Yggdrasil and joins a channel. Each channel and private conversation gets its own buffer, and Tab moves between them. The usual commands work, such as `/join`, `/part`, `/msg`, `/me`, `/nick` and `/quit`. Leaving the screen keeps the connection, and the menu counts new lines.
   - UDP Console shows text received on UDP port 4242 and sends what you type, to an address or `[address]:port`.
-- Settings changes the name, channel and time zone, turns the status pages on or off, and sets up the bridge and the hotspot. Saving restarts the board to apply them.
+- Settings changes the name, channel and time zone, turns the status pages on or off, and sets up the bridge and the hotspot. Voice builds add the ringer, with four ringtones and five volume steps, each played briefly as it changes. Saving restarts the board to apply them.
 
 Once the board knows the time, the title bar shows it. A bridged board gets the time from `pool.ntp.org`, and other boards ask their peers over Yggdrasil, so it spreads through the mesh. The time zone is a fixed offset from UTC, so it needs changing by hand for daylight saving time.
 

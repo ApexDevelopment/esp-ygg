@@ -30,6 +30,9 @@ pub struct Settings {
 	pub hotspot_name: String,
 	/// Empty for an open network. Stored in flash as plain text.
 	pub hotspot_password: String,
+	/// Which ringtone plays for a call, and how loudly, from 0 for silent.
+	pub ringtone: u8,
+	pub ring_volume: u8,
 }
 
 /// The hotspot's name until the user picks another.
@@ -41,6 +44,7 @@ impl Settings {
 			channel: 1,
 			status_page: true,
 			hotspot_name: DEFAULT_HOTSPOT_NAME.into(),
+			ring_volume: 3,
 			..Settings::default()
 		}
 	}
@@ -65,6 +69,7 @@ impl Settings {
 		bytes.push(u8::from(self.hotspot));
 		push_text(&mut bytes, &self.hotspot_name);
 		push_text(&mut bytes, &self.hotspot_password);
+		bytes.extend_from_slice(&[self.ringtone, self.ring_volume]);
 		bytes
 	}
 
@@ -89,6 +94,11 @@ impl Settings {
 		rest = rest.get(1..).unwrap_or_default();
 		let hotspot_name = take_text(&mut rest).unwrap_or_else(|| DEFAULT_HOTSPOT_NAME.into());
 		let hotspot_password = take_text(&mut rest).unwrap_or_default();
+		let defaults = Settings::new();
+		let (ringtone, ring_volume) = match rest {
+			[ringtone, ring_volume, ..] => (*ringtone, *ring_volume),
+			_ => (defaults.ringtone, defaults.ring_volume),
+		};
 		Some(Settings {
 			name,
 			ssid,
@@ -101,6 +111,8 @@ impl Settings {
 			hotspot,
 			hotspot_name,
 			hotspot_password,
+			ringtone,
+			ring_volume,
 		})
 	}
 }
@@ -137,6 +149,8 @@ mod tests {
 			hotspot: true,
 			hotspot_name: "pocket".into(),
 			hotspot_password: "hunter22".into(),
+			ringtone: 2,
+			ring_volume: 5,
 		};
 		assert_eq!(Settings::decode(&settings.encode()), Some(settings));
 	}
@@ -144,7 +158,7 @@ mod tests {
 	#[test]
 	fn reads_settings_saved_before_the_status_page_option() {
 		let mut old = Settings::new().encode();
-		old.truncate(old.len() - 3 - 1 - 1 - DEFAULT_HOTSPOT_NAME.len() - 1);
+		old.truncate(old.len() - 2 - 3 - 1 - 1 - DEFAULT_HOTSPOT_NAME.len() - 1);
 		assert_eq!(Settings::decode(&old), Some(Settings::new()));
 	}
 

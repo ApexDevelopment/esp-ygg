@@ -164,6 +164,9 @@ fn carry_out(command: Command, radio: &mut Radio, overlay: &mut Overlay, app: &m
 		Command::HangUp => {
 			let _ = overlay.hang_up(radio.nodes[0].now());
 		}
+		// The desktop preview has no speaker.
+		#[cfg(feature = "voice")]
+		Command::PreviewRinger { .. } => {}
 	}
 }
 

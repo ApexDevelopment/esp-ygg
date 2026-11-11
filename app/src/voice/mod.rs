@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 pub mod g726;
 pub mod iax2;
 pub mod mulaw;
+pub mod ringtone;
 
 /// The codecs this build offers in calls, most preferred first.
 pub const CODECS: &[Codec] = &[Codec::G726, Codec::G726Aal2, Codec::Ulaw];
@@ -173,29 +174,6 @@ impl DcBlocker {
 	}
 }
 
-/// A telephone-style ring: two short bursts, then a pause. Returns the
-/// sample at `index` of the repeating pattern.
-pub fn ring(index: usize) -> i16 {
-	const ON: usize = SAMPLE_RATE as usize * 2 / 5;
-	const OFF: usize = SAMPLE_RATE as usize / 5;
-	const PATTERN: usize = 2 * (ON + OFF) + SAMPLE_RATE as usize * 2;
-	let at = index % PATTERN;
-	let sounding = at < ON || (ON + OFF..2 * ON + OFF).contains(&at);
-	if !sounding {
-		return 0;
-	}
-	// A 400 Hz triangle wave, gentle on a small speaker.
-	const PERIOD: usize = SAMPLE_RATE as usize / 400;
-	let phase = (at % PERIOD) as i32;
-	let half = PERIOD as i32 / 2;
-	let triangle = if phase < half {
-		phase
-	} else {
-		PERIOD as i32 - phase
-	};
-	((triangle * 4 - half * 2) * 4000 / half) as i16
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -243,16 +221,5 @@ mod tests {
 	fn dc_blocker_starts_without_a_click() {
 		let mut blocker = DcBlocker::default();
 		assert!((0..100).all(|_| blocker.filter(1500) == 0));
-	}
-
-	#[test]
-	fn ring_sounds_then_pauses() {
-		let loud = (0..800)
-			.map(ring)
-			.map(|sample| i32::from(sample).abs())
-			.max();
-		assert!(loud.unwrap() > 3000);
-		let quiet_from = 2 * (3200 + 1600);
-		assert!((quiet_from..quiet_from + 1000).all(|index| ring(index) == 0));
 	}
 }

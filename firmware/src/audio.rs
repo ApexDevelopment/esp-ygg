@@ -7,7 +7,7 @@
 //! records, and letting go plays it back, to check both work.
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, Ordering};
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -21,8 +21,9 @@ use esp_hal::i2s::master::{
 use esp_hal::i2s::pdm::PdmSlotMask;
 use esp_hal::peripherals::{DMA_CH0, GPIO0, GPIO41, GPIO42, GPIO43, GPIO46, I2S0};
 use esp_hal::time::Rate;
+use esp_ygg_app::voice::ringtone::ring;
 use esp_ygg_app::voice::{
-	Codec, DcBlocker, Decoder, Encoder, FRAME_SAMPLES, JitterBuffer, SAMPLE_RATE, ring,
+	Codec, DcBlocker, Decoder, Encoder, FRAME_SAMPLES, JitterBuffer, SAMPLE_RATE,
 };
 use log::{info, warn};
 
@@ -38,6 +39,25 @@ pub static REMOTE_TALK: AtomicBool = AtomicBool::new(false);
 pub static MUTED: AtomicBool = AtomicBool::new(false);
 /// Set while push-to-talk is held, for the screen.
 pub static TALKING: AtomicBool = AtomicBool::new(false);
+
+/// The ringtone and its volume, from the settings.
+static RINGER: AtomicU16 = AtomicU16::new(0);
+/// A ringtone and volume to play briefly, or [`NO_PREVIEW`].
+static PREVIEW: AtomicU16 = AtomicU16::new(NO_PREVIEW);
+const NO_PREVIEW: u16 = u16::MAX;
+const PREVIEW_LENGTH: Duration = Duration::from_millis(2500);
+
+pub fn set_ringer(tone: u8, volume: u8) {
+	RINGER.store(u16::from_be_bytes([tone, volume]), Ordering::Relaxed);
+}
+
+/// Plays a ringtone for a moment, unless a call is ringing or up.
+pub fn preview_ringer(tone: u8, volume: u8) {
+	if call_state() != CallState::None {
+		return;
+	}
+	PREVIEW.store(u16::from_be_bytes([tone, volume]), Ordering::Relaxed);
+}
 
 /// Voice from the call, and voice for it, one 20 ms frame each.
 pub static VOICE_IN: Channel<CriticalSectionRawMutex, (Codec, Vec<u8>), 16> = Channel::new();
@@ -199,11 +219,12 @@ pub async fn run(pins: Pins, model: Model) {
 				.await;
 			}
 			CallState::Ringing => {
+				let [tone, volume] = RINGER.load(Ordering::Relaxed).to_be_bytes();
 				let mut index = 0;
 				let keep = || call_state() == CallState::Ringing;
 				bus.play(keep, || {
 					index += 1;
-					Some(ring(index))
+					Some(ring(tone, volume, index))
 				})
 				.await;
 			}
@@ -240,6 +261,22 @@ pub async fn run(pins: Pins, model: Model) {
 					.flat_map(|chunk| decoder.decode(chunk));
 				bus.play(|| call_state() == CallState::None, || played.next())
 					.await;
+			}
+			CallState::None if PREVIEW.load(Ordering::Relaxed) != NO_PREVIEW => {
+				let [tone, volume] = PREVIEW.swap(NO_PREVIEW, Ordering::Relaxed).to_be_bytes();
+				let until = Instant::now() + PREVIEW_LENGTH;
+				// A newer preview cuts this one short.
+				let keep = || {
+					call_state() == CallState::None
+						&& Instant::now() < until
+						&& PREVIEW.load(Ordering::Relaxed) == NO_PREVIEW
+				};
+				let mut index = 0;
+				bus.play(keep, || {
+					index += 1;
+					Some(ring(tone, volume, index))
+				})
+				.await;
 			}
 			CallState::None => {
 				// Whatever arrives between calls has nowhere to go.

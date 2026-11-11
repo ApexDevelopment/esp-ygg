@@ -102,6 +102,12 @@ pub enum Command {
 	/// Hang up, or decline a call.
 	#[cfg(feature = "voice")]
 	HangUp,
+	/// Play a ringtone briefly, so the user hears what they picked.
+	#[cfg(feature = "voice")]
+	PreviewRinger {
+		tone: u8,
+		volume: u8,
+	},
 }
 
 /// The state of the bridge to the wider network.
@@ -231,6 +237,8 @@ enum Screen {
 enum Group {
 	Bridge,
 	Hotspot,
+	#[cfg(feature = "voice")]
+	Ringer,
 }
 
 impl Group {
@@ -238,6 +246,8 @@ impl Group {
 		match self {
 			Group::Bridge => &[Field::Bridge, Field::Ssid, Field::WifiPassword, Field::Peer],
 			Group::Hotspot => &[Field::Hotspot, Field::HotspotName, Field::HotspotPassword],
+			#[cfg(feature = "voice")]
+			Group::Ringer => &[Field::Ringtone, Field::RingVolume],
 		}
 	}
 }
@@ -258,6 +268,10 @@ enum Field {
 	Hotspot,
 	HotspotName,
 	HotspotPassword,
+	#[cfg(feature = "voice")]
+	Ringtone,
+	#[cfg(feature = "voice")]
+	RingVolume,
 	Save,
 }
 
@@ -271,6 +285,8 @@ const FIELDS: &[Field] = &[
 	Field::StatusPage,
 	Field::Open(Group::Bridge),
 	Field::Open(Group::Hotspot),
+	#[cfg(feature = "voice")]
+	Field::Open(Group::Ringer),
 	Field::Save,
 ];
 
@@ -310,6 +326,7 @@ pub struct App {
 	status: Option<Status>,
 	screen: Screen,
 	menu: usize,
+	#[cfg(feature = "apps")]
 	apps_selected: usize,
 	commands: VecDeque<Command>,
 	/// A short message about the last action, cleared by the next key.
@@ -348,6 +365,7 @@ impl App {
 			status: None,
 			screen: Screen::Home,
 			menu: 0,
+			#[cfg(feature = "apps")]
 			apps_selected: 0,
 			commands: VecDeque::new(),
 			notice: None,
@@ -666,6 +684,20 @@ impl App {
 				self.draft.status_page = !self.draft.status_page;
 				return;
 			}
+			#[cfg(feature = "voice")]
+			Field::Ringtone => {
+				let count = crate::voice::ringtone::RINGTONES.len() as u8;
+				self.draft.ringtone = (self.draft.ringtone + 1) % count;
+				self.preview_ringer();
+				return;
+			}
+			#[cfg(feature = "voice")]
+			Field::RingVolume => {
+				let levels = crate::voice::ringtone::LOUDEST + 1;
+				self.draft.ring_volume = (self.draft.ring_volume + 1) % levels;
+				self.preview_ringer();
+				return;
+			}
 			Field::Open(group) => {
 				self.group_selected = 0;
 				self.screen = Screen::SettingsGroup(group);
@@ -726,7 +758,17 @@ impl App {
 			| Field::Hotspot
 			| Field::Open(_)
 			| Field::Save => {}
+			#[cfg(feature = "voice")]
+			Field::Ringtone | Field::RingVolume => {}
 		}
+	}
+
+	#[cfg(feature = "voice")]
+	fn preview_ringer(&mut self) {
+		self.commands.push_back(Command::PreviewRinger {
+			tone: self.draft.ringtone,
+			volume: self.draft.ring_volume,
+		});
 	}
 
 	fn wifi_networks_key(&mut self, key: Key) -> Outcome {

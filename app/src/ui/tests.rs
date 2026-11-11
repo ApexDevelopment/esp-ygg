@@ -237,11 +237,13 @@ fn edits_and_saves_settings() {
 	assert!(screen(&app).join("\n").contains("••••••"));
 	press(&mut app, &[Key::Escape]);
 	assert!(screen(&app).join("\n").contains("Bridge       on"));
-	press(&mut app, &[Key::Down, Key::Down, Key::Enter]);
+	press(&mut app, &[Key::Down; 3]);
+	press(&mut app, &[Key::Enter]);
 	assert!(commands(&mut app).is_empty());
 	assert!(screen(&app).join("\n").contains("needs a network and peer"));
 	// Peer
-	press(&mut app, &[Key::Up, Key::Up, Key::Enter]);
+	press(&mut app, &[Key::Up; 3]);
+	press(&mut app, &[Key::Enter]);
 	press(&mut app, &[Key::Down; 3]);
 	press(&mut app, &[Key::Enter]);
 	type_text(&mut app, "192.168.1.176:9001");
@@ -257,7 +259,10 @@ fn edits_and_saves_settings() {
 	assert!(screen(&app).join("\n").contains("8 or more"));
 	press(&mut app, &[Key::Enter]);
 	type_text(&mut app, "hunter22");
-	press(&mut app, &[Key::Enter, Key::Escape, Key::Down, Key::Enter]);
+	press(
+		&mut app,
+		&[Key::Enter, Key::Escape, Key::Down, Key::Down, Key::Enter],
+	);
 	let expected = Settings {
 		name: "kitchen".into(),
 		bridge: true,
@@ -270,8 +275,30 @@ fn edits_and_saves_settings() {
 		hotspot: true,
 		hotspot_name: "pocket".into(),
 		hotspot_password: "hunter22".into(),
+		..Settings::new()
 	};
 	assert_eq!(commands(&mut app), [Command::Save(expected)]);
+}
+
+#[test]
+fn ringer_settings_cycle_and_preview() {
+	let mut app = App::new(Settings::new(), at(0));
+	open(&mut app, "Settings");
+	press(&mut app, &[Key::Down; 6]);
+	assert!(
+		screen(&app)
+			.join("\n")
+			.contains("Ringer       Classic, 60%")
+	);
+	press(&mut app, &[Key::Enter, Key::Enter]);
+	assert_eq!(
+		commands(&mut app),
+		[Command::PreviewRinger { tone: 1, volume: 3 }]
+	);
+	press(&mut app, &[Key::Down, Key::Enter, Key::Enter, Key::Enter]);
+	assert_eq!(app.draft.ring_volume, 0);
+	press(&mut app, &[Key::Escape]);
+	assert!(screen(&app).join("\n").contains("Ringer       off"));
 }
 
 #[test]

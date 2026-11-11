@@ -87,6 +87,8 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 		Screen::Settings => "Settings",
 		Screen::SettingsGroup(Group::Bridge) => "Bridge",
 		Screen::SettingsGroup(Group::Hotspot) => "Hotspot",
+		#[cfg(feature = "voice")]
+		Screen::SettingsGroup(Group::Ringer) => "Ringer",
 		Screen::WifiNetworks => "WiFi networks",
 	};
 	let name = if app.saved.name.is_empty() {
@@ -418,6 +420,23 @@ fn truncate(text: &str, width: usize) -> String {
 	short
 }
 
+#[cfg(feature = "voice")]
+fn ringtone_name(tone: u8) -> &'static str {
+	let names = crate::voice::ringtone::RINGTONES;
+	names.get(usize::from(tone)).unwrap_or(&names[0])
+}
+
+#[cfg(feature = "voice")]
+fn volume(level: u8) -> String {
+	match level {
+		0 => "off".into(),
+		_ => format!(
+			"{}%",
+			u32::from(level) * 100 / u32::from(crate::voice::ringtone::LOUDEST)
+		),
+	}
+}
+
 fn draw_settings(frame: &mut Frame, area: Rect, app: &App, fields: &[Field], selected: usize) {
 	let draft = &app.draft;
 	let mut lines = Vec::new();
@@ -445,6 +464,21 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App, fields: &[Field], sel
 				"Password",
 				"•".repeat(draft.hotspot_password.chars().count()),
 			),
+			#[cfg(feature = "voice")]
+			Field::Open(Group::Ringer) if draft.ring_volume == 0 => ("Ringer", "off".into()),
+			#[cfg(feature = "voice")]
+			Field::Open(Group::Ringer) => (
+				"Ringer",
+				format!(
+					"{}, {}",
+					ringtone_name(draft.ringtone),
+					volume(draft.ring_volume)
+				),
+			),
+			#[cfg(feature = "voice")]
+			Field::Ringtone => ("Ringtone", ringtone_name(draft.ringtone).into()),
+			#[cfg(feature = "voice")]
+			Field::RingVolume => ("Volume", volume(draft.ring_volume)),
 			Field::Save => ("Save and restart", String::new()),
 		};
 		let selected = index == selected;

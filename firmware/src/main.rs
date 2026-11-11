@@ -182,6 +182,7 @@ async fn main(spawner: Spawner) -> ! {
 			&settings.name
 		};
 		overlay.start_phone(name, rng.random() as u16);
+		audio::set_ringer(settings.ringtone, settings.ring_volume);
 	}
 	if hotspot_on {
 		let access_point = Interface::access_point();
@@ -547,6 +548,8 @@ fn carry_out(
 		Command::HangUp => {
 			let _ = overlay.hang_up(node.now());
 		}
+		#[cfg(feature = "voice")]
+		Command::PreviewRinger { tone, volume } => audio::preview_ringer(tone, volume),
 		Command::ScanWifi => {
 			let _ = uplink::SCANS.try_send(());
 		}
