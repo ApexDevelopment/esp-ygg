@@ -5,6 +5,11 @@ use super::SAMPLE_RATE;
 pub const RINGTONES: &[&str] = &["Classic", "Warble", "Chime", "Beeps"];
 /// The loudest volume. Zero is silent.
 pub const LOUDEST: u8 = 5;
+/// How long to play a ringtone when it is picked.
+pub const PREVIEW_SAMPLES: usize = millis(2500);
+/// The ringtone that starts with a single beep, played alone to try a volume.
+pub const BEEPS: u8 = 3;
+pub const BEEP_SAMPLES: usize = millis(100);
 
 /// The peak of each volume, roughly doubling at each step.
 const PEAKS: [i32; LOUDEST as usize + 1] = [0, 2000, 4000, 8000, 14000, 24000];
@@ -16,7 +21,7 @@ pub fn ring(tone: u8, volume: u8, index: usize) -> i16 {
 	let shape = match tone {
 		1 => warble(index),
 		2 => chime(index),
-		3 => beeps(index),
+		BEEPS => beeps(index),
 		_ => classic(index),
 	};
 	let peak = PEAKS[usize::from(volume.min(LOUDEST))];

@@ -11,6 +11,7 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, Ordering};
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::dma::aligned::DmaAlignedMut;
 use esp_hal::dma::{DmaDescriptor, DmaRxStreamBuf, DmaTxStreamBuf};
@@ -42,21 +43,19 @@ pub static TALKING: AtomicBool = AtomicBool::new(false);
 
 /// The ringtone and its volume, from the settings.
 static RINGER: AtomicU16 = AtomicU16::new(0);
-/// A ringtone and volume to play briefly, or [`NO_PREVIEW`].
-static PREVIEW: AtomicU16 = AtomicU16::new(NO_PREVIEW);
-const NO_PREVIEW: u16 = u16::MAX;
-const PREVIEW_LENGTH: Duration = Duration::from_millis(2500);
+/// A ringtone and volume to play the start of, for so many samples.
+static PREVIEW: Signal<CriticalSectionRawMutex, (u8, u8, usize)> = Signal::new();
 
 pub fn set_ringer(tone: u8, volume: u8) {
 	RINGER.store(u16::from_be_bytes([tone, volume]), Ordering::Relaxed);
 }
 
 /// Plays a ringtone for a moment, unless a call is ringing or up.
-pub fn preview_ringer(tone: u8, volume: u8) {
+pub fn preview_ringer(tone: u8, volume: u8, samples: usize) {
 	if call_state() != CallState::None {
 		return;
 	}
-	PREVIEW.store(u16::from_be_bytes([tone, volume]), Ordering::Relaxed);
+	PREVIEW.signal((tone, volume, samples));
 }
 
 /// Voice from the call, and voice for it, one 20 ms frame each.
@@ -262,21 +261,14 @@ pub async fn run(pins: Pins, model: Model) {
 				bus.play(|| call_state() == CallState::None, || played.next())
 					.await;
 			}
-			CallState::None if PREVIEW.load(Ordering::Relaxed) != NO_PREVIEW => {
-				let [tone, volume] = PREVIEW.swap(NO_PREVIEW, Ordering::Relaxed).to_be_bytes();
-				let until = Instant::now() + PREVIEW_LENGTH;
-				// A newer preview cuts this one short.
-				let keep = || {
-					call_state() == CallState::None
-						&& Instant::now() < until
-						&& PREVIEW.load(Ordering::Relaxed) == NO_PREVIEW
+			CallState::None if PREVIEW.signaled() => {
+				let Some((tone, volume, samples)) = PREVIEW.try_take() else {
+					continue;
 				};
-				let mut index = 0;
-				bus.play(keep, || {
-					index += 1;
-					Some(ring(tone, volume, index))
-				})
-				.await;
+				// A newer preview cuts this one short.
+				let keep = || call_state() == CallState::None && !PREVIEW.signaled();
+				let mut played = (0..samples).map(|index| ring(tone, volume, index));
+				bus.play(keep, || played.next()).await;
 			}
 			CallState::None => {
 				// Whatever arrives between calls has nowhere to go.

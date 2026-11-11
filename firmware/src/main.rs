@@ -549,7 +549,11 @@ fn carry_out(
 			let _ = overlay.hang_up(node.now());
 		}
 		#[cfg(feature = "voice")]
-		Command::PreviewRinger { tone, volume } => audio::preview_ringer(tone, volume),
+		Command::PreviewRinger {
+			tone,
+			volume,
+			samples,
+		} => audio::preview_ringer(tone, volume, samples),
 		Command::ScanWifi => {
 			let _ = uplink::SCANS.try_send(());
 		}

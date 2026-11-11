@@ -102,11 +102,12 @@ pub enum Command {
 	/// Hang up, or decline a call.
 	#[cfg(feature = "voice")]
 	HangUp,
-	/// Play a ringtone briefly, so the user hears what they picked.
+	/// Play the start of a ringtone, so the user hears what they picked.
 	#[cfg(feature = "voice")]
 	PreviewRinger {
 		tone: u8,
 		volume: u8,
+		samples: usize,
 	},
 }
 
@@ -688,14 +689,23 @@ impl App {
 			Field::Ringtone => {
 				let count = crate::voice::ringtone::RINGTONES.len() as u8;
 				self.draft.ringtone = (self.draft.ringtone + 1) % count;
-				self.preview_ringer();
+				self.commands.push_back(Command::PreviewRinger {
+					tone: self.draft.ringtone,
+					volume: self.draft.ring_volume,
+					samples: crate::voice::ringtone::PREVIEW_SAMPLES,
+				});
 				return;
 			}
 			#[cfg(feature = "voice")]
 			Field::RingVolume => {
 				let levels = crate::voice::ringtone::LOUDEST + 1;
 				self.draft.ring_volume = (self.draft.ring_volume + 1) % levels;
-				self.preview_ringer();
+				// A single beep shows how loud it is.
+				self.commands.push_back(Command::PreviewRinger {
+					tone: crate::voice::ringtone::BEEPS,
+					volume: self.draft.ring_volume,
+					samples: crate::voice::ringtone::BEEP_SAMPLES,
+				});
 				return;
 			}
 			Field::Open(group) => {
@@ -761,14 +771,6 @@ impl App {
 			#[cfg(feature = "voice")]
 			Field::Ringtone | Field::RingVolume => {}
 		}
-	}
-
-	#[cfg(feature = "voice")]
-	fn preview_ringer(&mut self) {
-		self.commands.push_back(Command::PreviewRinger {
-			tone: self.draft.ringtone,
-			volume: self.draft.ring_volume,
-		});
 	}
 
 	fn wifi_networks_key(&mut self, key: Key) -> Outcome {

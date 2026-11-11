@@ -11,6 +11,8 @@ use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 use yggdrasil_espnow::{Instant, PrivateKey, PublicKey};
 
 use super::*;
+#[cfg(feature = "voice")]
+use crate::voice::ringtone::{BEEP_SAMPLES, BEEPS};
 
 fn key(seed: u8) -> PublicKey {
 	PrivateKey::from_seed(&[seed; 32]).public_key()
@@ -280,6 +282,7 @@ fn edits_and_saves_settings() {
 	assert_eq!(commands(&mut app), [Command::Save(expected)]);
 }
 
+#[cfg(feature = "voice")]
 #[test]
 fn ringer_settings_cycle_and_preview() {
 	let mut app = App::new(Settings::new(), at(0));
@@ -291,11 +294,24 @@ fn ringer_settings_cycle_and_preview() {
 			.contains("Ringer       Classic, 60%")
 	);
 	press(&mut app, &[Key::Enter, Key::Enter]);
+	assert!(matches!(
+		commands(&mut app)[..],
+		[Command::PreviewRinger {
+			tone: 1,
+			volume: 3,
+			..
+		}]
+	));
+	press(&mut app, &[Key::Down, Key::Enter]);
 	assert_eq!(
 		commands(&mut app),
-		[Command::PreviewRinger { tone: 1, volume: 3 }]
+		[Command::PreviewRinger {
+			tone: BEEPS,
+			volume: 4,
+			samples: BEEP_SAMPLES
+		}]
 	);
-	press(&mut app, &[Key::Down, Key::Enter, Key::Enter, Key::Enter]);
+	press(&mut app, &[Key::Enter, Key::Enter]);
 	assert_eq!(app.draft.ring_volume, 0);
 	press(&mut app, &[Key::Escape]);
 	assert!(screen(&app).join("\n").contains("Ringer       off"));
