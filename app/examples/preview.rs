@@ -119,6 +119,8 @@ fn board_info(index: usize, started: WallClock, time: Option<u64>) -> BoardInfo 
 	}
 }
 
+const NO_SD_CARD: &str = "The preview has no SD card";
+
 fn carry_out(command: Command, radio: &mut Radio, overlay: &mut Overlay, app: &mut App) {
 	match command {
 		Command::Ping(target) => {
@@ -152,6 +154,8 @@ fn carry_out(command: Command, radio: &mut Radio, overlay: &mut Overlay, app: &m
 		]),
 		// A board would store the settings and restart.
 		Command::Save(_) => {}
+		Command::ExportSettings(_) => app.settings_exported(Err(NO_SD_CARD.into())),
+		Command::ImportSettings => app.settings_imported(Err(NO_SD_CARD.into())),
 		#[cfg(feature = "voice")]
 		Command::Call(to) => {
 			let _ = overlay.call(to, radio.nodes[0].now());

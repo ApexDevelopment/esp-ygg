@@ -13,7 +13,7 @@ use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 #[cfg(feature = "apps")]
 use super::APPS;
 use super::{App, FIELDS, Field, Group, Lookup, MENU, MENUS, Screen, TextInput, Uplink};
-use crate::time::{DateTime, format_offset};
+use crate::time::format_offset;
 
 /// Where the speaker icon's two cells start, counted from the title
 /// bar's right edge.
@@ -121,14 +121,7 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 		Some(devices) => right.push_str(&format!("hotspot {devices} ")),
 		None => {}
 	}
-	if let Some(time) = app.status.as_ref().and_then(|status| status.board.time) {
-		// While settings are open, preview the time zone being chosen.
-		let offset = if matches!(app.screen, Screen::Settings | Screen::SettingsGroup(_)) {
-			app.draft.utc_offset
-		} else {
-			app.saved.utc_offset
-		};
-		let local = DateTime::from_unix((time / 1_000_000) as i64, offset);
+	if let Some(local) = app.local_time() {
 		right.push_str(&local.clock());
 		right.push(' ');
 	}
@@ -488,6 +481,8 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App, fields: &[Field], sel
 			#[cfg(feature = "voice")]
 			Field::RingVolume => ("Volume", volume(draft.ring_volume)),
 			Field::Save => ("Save and restart", String::new()),
+			Field::Export => ("Export to SD card", String::new()),
+			Field::Import => ("Import from SD card", String::new()),
 		};
 		let selected = index == selected;
 		if let (true, Some((editing, input))) = (selected, &app.editing)

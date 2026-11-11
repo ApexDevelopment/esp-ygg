@@ -26,6 +26,7 @@ use yggdrasil_espnow::PublicKey;
 
 use crate::cardputer::{self, KEYS, Model, Pins, Screen};
 use crate::platform::now;
+use crate::sdcard::Slot;
 
 /// How often the UI runs its timers when nothing else happens.
 const TICK: Duration = Duration::from_millis(100);
@@ -73,6 +74,7 @@ pub fn start(
 	cpu_control: CPU_CTRL<'static>,
 	(interrupt, park): (FROM_CPU_INTR1<'static>, FROM_CPU_INTR3<'static>),
 	pins: Pins,
+	sd: crate::sdcard::Pins,
 	usb: USB_DEVICE<'static>,
 	#[cfg(feature = "voice")] audio: (crate::audio::Pins, FROM_CPU_INTR2<'static>),
 	settings: Settings,
@@ -96,7 +98,8 @@ pub fn start(
 			MODEL.store(model as u8 + 1, Ordering::Relaxed);
 			#[cfg(feature = "voice")]
 			start_audio(audio, model);
-			spawner.spawn(run(screen, settings).expect("spawning the UI task"));
+			let slot = crate::sdcard::Slot::new(sd);
+			spawner.spawn(run(screen, slot, settings).expect("spawning the UI task"));
 			spawner.spawn(serial(usb).expect("spawning the serial task"));
 		});
 	});
@@ -124,7 +127,7 @@ pub fn model_name() -> &'static str {
 }
 
 #[embassy_executor::task]
-async fn run(mut screen: Screen, settings: Settings) {
+async fn run(mut screen: Screen, mut slot: Slot, settings: Settings) {
 	let mut app = App::new(settings, now());
 	let mut stack_reported = 0;
 	loop {
@@ -149,7 +152,14 @@ async fn run(mut screen: Screen, settings: Settings) {
 		}
 		app.tick(now());
 		while let Some(command) = app.poll_command() {
-			FROM_UI.send(command).await;
+			match command {
+				// The card is on this core's side, and quick enough to wait for.
+				Command::ExportSettings(text) => {
+					app.settings_exported(slot.export_settings(&text, app.local_time()))
+				}
+				Command::ImportSettings => app.settings_imported(slot.import_settings()),
+				command => FROM_UI.send(command).await,
+			}
 		}
 		if let Ok(frame) = screen.draw(|frame| ui::draw(frame, &app))
 			&& SCREEN_WANTED.swap(false, Ordering::Relaxed)

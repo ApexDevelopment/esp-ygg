@@ -15,6 +15,8 @@ mod ntp;
 mod park;
 mod platform;
 mod radio;
+#[cfg(feature = "cardputer")]
+mod sdcard;
 #[cfg(feature = "voice")]
 mod speaker;
 mod storage;
@@ -219,6 +221,13 @@ async fn main(spawner: Spawner) -> ! {
 			peripherals.CPU_CTRL,
 			(peripherals.FROM_CPU_INTR1, peripherals.FROM_CPU_INTR3),
 			pins,
+			sdcard::Pins {
+				spi: peripherals.SPI3,
+				sck: peripherals.GPIO40,
+				miso: peripherals.GPIO39,
+				mosi: peripherals.GPIO14,
+				cs: peripherals.GPIO12,
+			},
 			peripherals.USB_DEVICE,
 			#[cfg(feature = "voice")]
 			(
@@ -564,6 +573,8 @@ fn carry_out(
 			info!("Settings saved, restarting");
 			esp_hal::system::software_reset();
 		}
+		// The UI's core reads and writes the SD card itself.
+		Command::ExportSettings(_) | Command::ImportSettings => {}
 	}
 }
 

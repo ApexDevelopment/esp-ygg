@@ -34,6 +34,7 @@ petrified = { version = "0.1.1", default-features = false, features = ["fast"] }
 serde_json = { version = "1.0.154", default-features = false, features = ["alloc"] }
 static_cell = "2.1.1"
 yggdrasil-espnow = { path = "../node" }
+embedded-sdmmc = { version = "0.10.0", default-features = false, features = ["log"], optional = true }
 
 [features]
 default = ["esp32s3", "standard"]
@@ -54,6 +55,7 @@ cardputer = [
 	"esp32s3",
 	"esp-ygg-app/ui",
 	"dep:embedded-hal-bus",
+	"dep:embedded-sdmmc",
 	"dep:mipidsi",
 	"dep:mousefood",
 	"dep:ratatui",

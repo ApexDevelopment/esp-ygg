@@ -1,7 +1,10 @@
 //! What the user can change on the device, and how it is stored in flash.
 
-use alloc::string::String;
+use alloc::format;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+
+use crate::time::{format_offset, parse_offset};
 
 const VERSION: u8 = 1;
 
@@ -117,6 +120,94 @@ impl Settings {
 	}
 }
 
+/// Settings as text for a file, one `key = value` per line, which people
+/// can read and edit.
+impl Settings {
+	pub fn to_text(&self) -> String {
+		let lines = [
+			("name", self.name.clone()),
+			("channel", self.channel.to_string()),
+			("time_zone", format_offset(self.utc_offset)),
+			("status_pages", on_off(self.status_page)),
+			("bridge", on_off(self.bridge)),
+			("wifi_network", self.ssid.clone()),
+			("wifi_password", self.password.clone()),
+			("peer", self.peer.clone()),
+			("hotspot", on_off(self.hotspot)),
+			("hotspot_name", self.hotspot_name.clone()),
+			("hotspot_password", self.hotspot_password.clone()),
+			("ringtone", self.ringtone.to_string()),
+			("ring_volume", self.ring_volume.to_string()),
+		];
+		lines
+			.iter()
+			.map(|(key, value)| format!("{key} = {value}\n"))
+			.collect()
+	}
+
+	/// These settings changed by those in `text`, which may leave some
+	/// out. Fails on the first line it cannot use, with why.
+	pub fn with_text(&self, text: &str) -> Result<Settings, String> {
+		let mut settings = self.clone();
+		for (index, line) in text.lines().enumerate() {
+			let line = line.trim();
+			if line.is_empty() || line.starts_with('#') {
+				continue;
+			}
+			let number = index + 1;
+			let Some((key, value)) = line.split_once('=') else {
+				return Err(format!("Line {number} has no ="));
+			};
+			settings
+				.set(key.trim(), value.trim())
+				.map_err(|problem| format!("Line {number}: {problem}"))?;
+		}
+		Ok(settings)
+	}
+
+	fn set(&mut self, key: &str, value: &str) -> Result<(), &'static str> {
+		match key {
+			"name" => self.name = value.into(),
+			"channel" => match value.parse() {
+				Ok(channel @ 1..=13) => self.channel = channel,
+				_ => return Err("channels go from 1 to 13"),
+			},
+			"time_zone" => self.utc_offset = parse_offset(value).ok_or("bad time zone")?,
+			"status_pages" => self.status_page = parse_on_off(value)?,
+			"bridge" => self.bridge = parse_on_off(value)?,
+			"wifi_network" => self.ssid = value.into(),
+			"wifi_password" => self.password = value.into(),
+			"peer" if value.is_empty() || value.parse::<core::net::SocketAddrV4>().is_ok() => {
+				self.peer = value.into()
+			}
+			"peer" => return Err("use an IPv4 address and port"),
+			"hotspot" => self.hotspot = parse_on_off(value)?,
+			"hotspot_name" if value.is_empty() => return Err("the hotspot needs a name"),
+			"hotspot_name" => self.hotspot_name = value.into(),
+			"hotspot_password" if Settings::is_hotspot_password(value) => {
+				self.hotspot_password = value.into()
+			}
+			"hotspot_password" => return Err("hotspot password too short"),
+			"ringtone" => self.ringtone = value.parse().map_err(|_| "bad ringtone")?,
+			"ring_volume" => self.ring_volume = value.parse().map_err(|_| "bad volume")?,
+			_ => return Err("unknown setting"),
+		}
+		Ok(())
+	}
+}
+
+fn on_off(on: bool) -> String {
+	String::from(if on { "on" } else { "off" })
+}
+
+fn parse_on_off(value: &str) -> Result<bool, &'static str> {
+	match value {
+		"on" => Ok(true),
+		"off" => Ok(false),
+		_ => Err("use on or off"),
+	}
+}
+
 fn push_text(bytes: &mut Vec<u8>, text: &str) {
 	let text = &text.as_bytes()[..text.len().min(u8::MAX as usize)];
 	bytes.push(text.len() as u8);
@@ -169,6 +260,40 @@ mod tests {
 		let mut truncated = Settings::new().encode();
 		truncated.truncate(5);
 		assert_eq!(Settings::decode(&truncated), None);
+	}
+
+	#[test]
+	fn text_round_trips() {
+		let mut settings = Settings::new();
+		settings.name = "kitchen = table".into();
+		settings.utc_offset = -300;
+		settings.bridge = true;
+		settings.peer = "192.168.1.176:9001".into();
+		settings.ring_volume = 0;
+		assert_eq!(Settings::new().with_text(&settings.to_text()), Ok(settings));
+	}
+
+	#[test]
+	fn text_changes_only_what_it_names() {
+		let text = "# just the network\n\nwifi_network = PHOTON\nwifi_password =  two words \n";
+		let settings = Settings::new().with_text(text).unwrap();
+		assert_eq!(settings.ssid, "PHOTON");
+		assert_eq!(settings.password, "two words");
+		assert_eq!(settings.channel, Settings::new().channel);
+	}
+
+	#[test]
+	fn text_names_the_line_it_cannot_use() {
+		let settings = Settings::new();
+		assert_eq!(
+			settings.with_text("name = a\nchannel = 14"),
+			Err("Line 2: channels go from 1 to 13".into())
+		);
+		assert_eq!(
+			settings.with_text("colour = blue"),
+			Err("Line 1: unknown setting".into())
+		);
+		assert_eq!(settings.with_text("bridge"), Err("Line 1 has no =".into()));
 	}
 
 	#[test]

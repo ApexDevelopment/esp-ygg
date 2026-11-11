@@ -323,6 +323,32 @@ fn ringer_settings_cycle_and_preview() {
 }
 
 #[test]
+fn exports_and_imports_settings_through_the_sd_card() {
+	let mut app = App::new(Settings::new(), at(0));
+	open(&mut app, "Settings");
+	press(&mut app, &[Key::Enter]);
+	type_text(&mut app, "kitchen");
+	press(&mut app, &[Key::Enter]);
+	// The last two rows, below saving
+	press(&mut app, &[Key::Down; 20]);
+	press(&mut app, &[Key::Up, Key::Enter]);
+	let [Command::ExportSettings(text)] = &commands(&mut app)[..] else {
+		panic!("nothing exported");
+	};
+	assert!(text.contains("name = kitchen"));
+	app.settings_exported(Err("No SD card".into()));
+	assert!(screen(&app).join("\n").contains("No SD card"));
+	press(&mut app, &[Key::Down, Key::Enter]);
+	assert_eq!(commands(&mut app), [Command::ImportSettings]);
+	app.settings_imported(Ok("channel = 6".into()));
+	assert!(screen(&app).join("\n").contains("save to apply"));
+	assert_eq!((app.draft.name.as_str(), app.draft.channel), ("kitchen", 6));
+	app.settings_imported(Ok("channel = 60".into()));
+	assert!(screen(&app).join("\n").contains("Line 1: channels go"));
+	assert_eq!(app.draft.channel, 6);
+}
+
+#[test]
 fn draws_every_screen_within_the_display() {
 	let mut app = App::new(Settings::new(), at(0));
 	let peer = key(2);

@@ -40,7 +40,7 @@ use crate::overlay::Event;
 #[cfg(any(feature = "irc", feature = "gemini"))]
 use crate::overlay::Stream;
 use crate::settings::Settings;
-use crate::time::{format_offset, parse_offset};
+use crate::time::{DateTime, format_offset, parse_offset};
 pub use input::TextInput;
 #[cfg(feature = "voice")]
 pub use view::SPEAKER_FROM_RIGHT;
@@ -97,6 +97,11 @@ pub enum Command {
 	ScanWifi,
 	/// Store these settings and restart to apply them.
 	Save(Settings),
+	/// Write settings, as text, to the SD card. Answer with
+	/// [`App::settings_exported`].
+	ExportSettings(String),
+	/// Read settings from the SD card. Answer with [`App::settings_imported`].
+	ImportSettings,
 	#[cfg(feature = "voice")]
 	Call(Ipv6Addr),
 	#[cfg(feature = "voice")]
@@ -287,7 +292,12 @@ enum Field {
 	#[cfg(feature = "voice")]
 	RingVolume,
 	Save,
+	Export,
+	Import,
 }
+
+/// Where settings are exported to and imported from on the SD card.
+pub const SETTINGS_FILE: &str = "esp-ygg/settings.txt";
 
 /// The settings, without those for services left out of the build.
 const FIELDS: &[Field] = &[
@@ -302,6 +312,8 @@ const FIELDS: &[Field] = &[
 	#[cfg(feature = "voice")]
 	Field::Open(Group::Ringer),
 	Field::Save,
+	Field::Export,
+	Field::Import,
 ];
 
 /// The home menu, without screens for services left out of the build.
@@ -742,6 +754,15 @@ impl App {
 				self.notice = Some("Saved, restarting".into());
 				return;
 			}
+			Field::Export => {
+				let text = self.draft.to_text();
+				self.commands.push_back(Command::ExportSettings(text));
+				return;
+			}
+			Field::Import => {
+				self.commands.push_back(Command::ImportSettings);
+				return;
+			}
 		};
 		self.editing = Some((field, input));
 	}
@@ -780,10 +801,33 @@ impl App {
 			| Field::Ssid
 			| Field::Hotspot
 			| Field::Open(_)
-			| Field::Save => {}
+			| Field::Save
+			| Field::Export
+			| Field::Import => {}
 			#[cfg(feature = "voice")]
 			Field::Ringtone | Field::RingVolume => {}
 		}
+	}
+
+	/// How writing settings to the SD card went.
+	pub fn settings_exported(&mut self, result: Result<(), String>) {
+		self.notice = Some(match result {
+			Ok(()) => format!("Exported to {SETTINGS_FILE}"),
+			Err(problem) => problem,
+		});
+	}
+
+	/// The settings file read from the SD card, or why it could not be.
+	/// What it holds replaces the settings on screen, until they are saved.
+	pub fn settings_imported(&mut self, result: Result<String, String>) {
+		let imported = result.and_then(|text| self.draft.with_text(&text));
+		self.notice = Some(match imported {
+			Ok(settings) => {
+				self.draft = settings;
+				"Imported, save to apply".into()
+			}
+			Err(problem) => problem,
+		});
 	}
 
 	fn wifi_networks_key(&mut self, key: Key) -> Outcome {
@@ -969,6 +1013,18 @@ impl App {
 			}) => Some(name),
 			_ => None,
 		}
+	}
+
+	/// The local date and time, once the board knows it. While settings are
+	/// open, it follows the time zone being chosen.
+	pub fn local_time(&self) -> Option<DateTime> {
+		let time = self.status.as_ref()?.board.time?;
+		let offset = if matches!(self.screen, Screen::Settings | Screen::SettingsGroup(_)) {
+			self.draft.utc_offset
+		} else {
+			self.saved.utc_offset
+		};
+		Some(DateTime::from_unix((time / 1_000_000) as i64, offset))
 	}
 
 	/// The speaker icon for the title bar. While settings are open, it
