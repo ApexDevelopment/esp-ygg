@@ -15,6 +15,8 @@ mod ntp;
 mod park;
 mod platform;
 mod radio;
+#[cfg(feature = "voice")]
+mod speaker;
 mod storage;
 #[cfg(feature = "cardputer")]
 mod ui;

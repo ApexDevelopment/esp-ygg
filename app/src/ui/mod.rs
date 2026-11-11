@@ -42,6 +42,8 @@ use crate::overlay::Stream;
 use crate::settings::Settings;
 use crate::time::{format_offset, parse_offset};
 pub use input::TextInput;
+#[cfg(feature = "voice")]
+pub use view::SPEAKER_FROM_RIGHT;
 pub use view::draw;
 
 const LOG_LINES: usize = 64;
@@ -109,6 +111,17 @@ pub enum Command {
 		volume: u8,
 		samples: usize,
 	},
+}
+
+/// The speaker icon in the title bar, which the host draws.
+#[cfg(feature = "voice")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Speaker {
+	On,
+	/// The ringer volume is off.
+	Silent,
+	/// Muted over the serial port, for testing.
+	Muted,
 }
 
 /// The state of the bridge to the wider network.
@@ -955,6 +968,24 @@ impl App {
 				name: Some(name), ..
 			}) => Some(name),
 			_ => None,
+		}
+	}
+
+	/// The speaker icon for the title bar. While settings are open, it
+	/// follows the ringer volume being chosen.
+	#[cfg(feature = "voice")]
+	pub fn speaker(&self, muted: bool) -> Speaker {
+		let settings = if matches!(self.screen, Screen::Settings | Screen::SettingsGroup(_)) {
+			&self.draft
+		} else {
+			&self.saved
+		};
+		if muted {
+			Speaker::Muted
+		} else if settings.ring_volume == 0 {
+			Speaker::Silent
+		} else {
+			Speaker::On
 		}
 	}
 

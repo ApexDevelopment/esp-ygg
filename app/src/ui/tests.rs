@@ -315,6 +315,11 @@ fn ringer_settings_cycle_and_preview() {
 	assert_eq!(app.draft.ring_volume, 0);
 	press(&mut app, &[Key::Escape]);
 	assert!(screen(&app).join("\n").contains("Ringer       off"));
+	assert_eq!(app.speaker(false), Speaker::Silent);
+	assert_eq!(app.speaker(true), Speaker::Muted);
+	// Leaving without saving shows the saved volume again.
+	press(&mut app, &[Key::Escape]);
+	assert_eq!(app.speaker(false), Speaker::On);
 }
 
 #[test]

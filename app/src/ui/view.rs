@@ -15,6 +15,11 @@ use super::APPS;
 use super::{App, FIELDS, Field, Group, Lookup, MENU, MENUS, Screen, TextInput, Uplink};
 use crate::time::{DateTime, format_offset};
 
+/// Where the speaker icon's two cells start, counted from the title
+/// bar's right edge.
+#[cfg(feature = "voice")]
+pub const SPEAKER_FROM_RIGHT: u16 = 3;
+
 pub(super) const ACCENT: Color = Color::Green;
 pub(super) const DIM: Style = Style::new().fg(Color::DarkGray);
 pub(super) const SELECTED: Style = Style::new().fg(Color::Black).bg(ACCENT);
@@ -127,6 +132,9 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 		right.push_str(&local.clock());
 		right.push(' ');
 	}
+	// Blank cells for the host to draw the speaker icon in.
+	#[cfg(feature = "voice")]
+	right.push_str("   ");
 	let style = Style::new().fg(Color::Black).bg(ACCENT);
 	let [left_area, right_area] = Layout::horizontal([
 		Constraint::Fill(1),

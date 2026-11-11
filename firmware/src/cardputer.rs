@@ -182,7 +182,16 @@ fn screen(
 	// powers the RGB LED.
 	let _backlight = Output::new(backlight, Level::High, OutputConfig::default());
 	static DISPLAY: StaticCell<Display> = StaticCell::new();
-	let backend = EmbeddedBackend::new(DISPLAY.init(display), EmbeddedBackendConfig::default());
+	#[allow(unused_mut)]
+	let mut config = EmbeddedBackendConfig::default();
+	#[cfg(feature = "voice")]
+	{
+		let cell = config.font_regular.character_size;
+		config.flush_callback = alloc::boxed::Box::new(move |display| {
+			crate::speaker::draw(display, cell);
+		});
+	}
+	let backend = EmbeddedBackend::new(DISPLAY.init(display), config);
 	Terminal::new(backend).expect("starting the terminal")
 }
 

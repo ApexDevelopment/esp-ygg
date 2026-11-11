@@ -143,7 +143,10 @@ async fn run(mut screen: Screen, settings: Settings) {
 			Either3::Third(()) => {}
 		}
 		#[cfg(feature = "voice")]
-		app.set_talking(crate::audio::TALKING.load(Ordering::Relaxed));
+		{
+			app.set_talking(crate::audio::TALKING.load(Ordering::Relaxed));
+			crate::speaker::show(app.speaker(crate::audio::MUTED.load(Ordering::Relaxed)));
+		}
 		app.tick(now());
 		while let Some(command) = app.poll_command() {
 			FROM_UI.send(command).await;
