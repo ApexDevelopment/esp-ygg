@@ -2,11 +2,11 @@
 
 use super::SAMPLE_RATE;
 
-pub const RINGTONES: &[&str] = &["Classic", "Warble", "Chime", "Beeps"];
+pub const RINGTONES: &[&str] = &["Classic", "Warble", "Chime", "Beeps", "Gran Vals"];
 /// The loudest volume. Zero is silent.
 pub const LOUDEST: u8 = 5;
 /// How long to play a ringtone when it is picked.
-pub const PREVIEW_SAMPLES: usize = millis(2500);
+pub const PREVIEW_SAMPLES: usize = millis(3200);
 /// The ringtone that starts with a single beep, played alone to try a volume.
 pub const BEEPS: u8 = 3;
 pub const BEEP_SAMPLES: usize = millis(100);
@@ -22,6 +22,7 @@ pub fn ring(tone: u8, volume: u8, index: usize) -> i16 {
 		1 => warble(index),
 		2 => chime(index),
 		BEEPS => beeps(index),
+		4 => gran_vals(index),
 		_ => classic(index),
 	};
 	let peak = PEAKS[usize::from(volume.min(LOUDEST))];
@@ -88,6 +89,41 @@ fn beeps(index: usize) -> i32 {
 	}
 }
 
+/// The phrase from Francisco Tárrega's Gran Vals that phones made famous,
+/// plucked like the guitar it was written for, then a pause.
+fn gran_vals(index: usize) -> i32 {
+	const EIGHTH: usize = millis(133);
+	// Each note's pitch and length in eighths.
+	const NOTES: [(u32, usize); 13] = [
+		(1319, 1),
+		(1175, 1),
+		(740, 2),
+		(831, 2),
+		(1109, 1),
+		(988, 1),
+		(587, 2),
+		(659, 2),
+		(988, 1),
+		(880, 1),
+		(554, 2),
+		(659, 2),
+		(880, 4),
+	];
+	const GAP: usize = millis(10);
+	let mut at = index % (22 * EIGHTH + millis(1500));
+	for (hertz, eighths) in NOTES {
+		let length = eighths * EIGHTH;
+		if at < length {
+			let left = length.saturating_sub(at + GAP) as i32;
+			// Fades to a third, and stops just short of the next note.
+			return triangle(at, hertz) * (length as i32 + 2 * left) / (3 * length as i32)
+				* i32::from(left > 0);
+		}
+		at -= length;
+	}
+	0
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -103,8 +139,10 @@ mod tests {
 	fn every_ringtone_sounds_then_pauses() {
 		for tone in 0..RINGTONES.len() as u8 {
 			assert!(loudest(tone, LOUDEST, 0..800) > 10000, "tone {tone}");
-			let pause = millis(1300)..millis(1800);
-			assert_eq!(loudest(tone, LOUDEST, pause), 0, "tone {tone}");
+			let quiet = (0..millis(5000))
+				.step_by(millis(100))
+				.any(|start| loudest(tone, LOUDEST, start..start + millis(1000)) == 0);
+			assert!(quiet, "tone {tone} never pauses for a second");
 		}
 	}
 
