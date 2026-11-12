@@ -64,7 +64,7 @@ export component HomePage inherits VerticalLayout {
         }
     }
 
-    MaterialText {
+    if Node.address != "": MaterialText {
         text: "up \{Node.uptime} · \{Node.free_memory} KB free";
         style: MaterialTypography.body_small;
         color: MaterialPalette.on_surface_variant;

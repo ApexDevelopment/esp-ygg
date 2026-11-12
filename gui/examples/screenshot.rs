@@ -1,5 +1,7 @@
-//! Draws the interface with Slint's software renderer, as a board does, for
-//! a small made-up mesh, and saves each page in both orientations as PNGs.
+//! Draws the interface with Slint's software renderer, as a board does, and
+//! saves each page in both orientations as PNGs: first as a board shows
+//! them just after starting, with nothing to list, then for a small made-up
+//! mesh.
 //!
 //! `cargo run -p esp-ygg-gui --example screenshot -- <folder>`
 
@@ -46,6 +48,8 @@ fn main() {
 	}))
 	.expect("setting the platform");
 	let mut gui = Gui::new().expect("creating the interface");
+	gui.window().show().expect("showing the window");
+	save_pages(&gui, &window, &folder, "starting");
 	let keys: Vec<PublicKey> = (2..6)
 		.map(|seed| PrivateKey::from_seed(&[seed; 32]).public_key())
 		.collect();
@@ -57,7 +61,11 @@ fn main() {
 		let info = format!(r#"{{"name":"{name}"}}"#);
 		gui.handle_nodeinfo(*key, Some(info.as_bytes()));
 	}
-	gui.window().show().expect("showing the window");
+	save_pages(&gui, &window, &folder, "mesh");
+}
+
+/// Saves every page in both orientations, named after `state`.
+fn save_pages(gui: &Gui, window: &MinimalSoftwareWindow, folder: &str, state: &str) {
 	for (orientation, width, height) in SIZES {
 		window.set_size(slint::PhysicalSize::new(width, height));
 		for (index, page) in PAGES.iter().enumerate() {
@@ -68,7 +76,7 @@ fn main() {
 			window.draw_if_needed(|renderer| {
 				renderer.render(&mut pixels, width as usize);
 			});
-			let path = Path::new(&folder).join(format!("{orientation}-{page}.png"));
+			let path = Path::new(folder).join(format!("{state}-{orientation}-{page}.png"));
 			save(&pixels, width, height, &path);
 			println!("{}", path.display());
 		}

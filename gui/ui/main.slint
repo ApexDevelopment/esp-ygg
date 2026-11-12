@@ -17,7 +17,9 @@ component Pages inherits VerticalLayout {
 }
 
 /// The navigation runs down the side on a wide screen and along the
-/// bottom on a tall one, leaving pages much the same room either way.
+/// bottom on a tall one, leaving pages much the same room either way. It
+/// keeps its own size, and the page takes the rest, so the navigation
+/// stays put whatever the page holds.
 export component MainWindow inherits MaterialWindow {
     /// Home, Nodes or Neighbors, in that order.
     in_out property <int> page;
@@ -51,21 +53,25 @@ export component MainWindow inherits MaterialWindow {
 
     if !root.portrait: HorizontalLayout {
         NavigationRail {
+            horizontal_stretch: 0;
             items: root.destinations;
             current_index <=> root.page;
         }
 
         Pages {
+            horizontal_stretch: 1;
             page: root.page;
         }
     }
 
     if root.portrait: VerticalLayout {
         Pages {
+            vertical_stretch: 1;
             page: root.page;
         }
 
         NavigationBar {
+            vertical_stretch: 0;
             items: root.destinations;
             current_index <=> root.page;
         }
