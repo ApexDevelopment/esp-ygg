@@ -17,6 +17,7 @@ mod irc;
 pub mod keyboard;
 mod ping;
 pub mod remote;
+pub mod touch;
 mod view;
 
 use alloc::collections::{BTreeMap, VecDeque};
