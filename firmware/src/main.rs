@@ -15,7 +15,7 @@ mod ntp;
 mod park;
 mod platform;
 mod radio;
-#[cfg(feature = "cardputer")]
+#[cfg(feature = "ui")]
 mod sdcard;
 #[cfg(feature = "voice")]
 mod speaker;
@@ -223,7 +223,7 @@ async fn main(spawner: Spawner) -> ! {
 			peripherals.CPU_CTRL,
 			(peripherals.FROM_CPU_INTR1, peripherals.FROM_CPU_INTR3),
 			pins,
-			sdcard::Pins {
+			cardputer::SdPins {
 				spi: peripherals.SPI3,
 				sck: peripherals.GPIO40,
 				miso: peripherals.GPIO39,
@@ -256,6 +256,7 @@ async fn main(spawner: Spawner) -> ! {
 			cs: peripherals.GPIO11,
 			dc: peripherals.GPIO10,
 			sd_cs: peripherals.GPIO23,
+			sd_miso: peripherals.GPIO8,
 			i2c: peripherals.I2C0,
 			sda: peripherals.GPIO6,
 			scl: peripherals.GPIO7,

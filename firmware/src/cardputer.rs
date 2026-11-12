@@ -3,6 +3,7 @@
 //! 74HC138 decoder, and the ADV reads them from a TCA8418 over I2C.
 
 use alloc::vec::Vec;
+use core::cell::RefCell;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use embassy_time::{Duration, Timer};
@@ -12,8 +13,8 @@ use esp_hal::delay::Delay;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::I2c;
 use esp_hal::peripherals::{
-	GPIO3, GPIO4, GPIO5, GPIO6, GPIO7, GPIO8, GPIO9, GPIO11, GPIO13, GPIO15, GPIO33, GPIO34,
-	GPIO35, GPIO36, GPIO37, GPIO38, I2C0, SPI2,
+	GPIO3, GPIO4, GPIO5, GPIO6, GPIO7, GPIO8, GPIO9, GPIO11, GPIO12, GPIO13, GPIO14, GPIO15,
+	GPIO33, GPIO34, GPIO35, GPIO36, GPIO37, GPIO38, GPIO39, GPIO40, I2C0, SPI2, SPI3,
 };
 use esp_hal::spi::Mode;
 use esp_hal::spi::master::Spi;
@@ -29,6 +30,7 @@ use mousefood::{EmbeddedBackend, EmbeddedBackendConfig};
 use ratatui::Terminal;
 use static_cell::StaticCell;
 
+use crate::sdcard::{Bus, Slot};
 use crate::ui::{KEYS, Screen};
 
 const KEYBOARD_CONTROLLER: u8 = 0x34;
@@ -92,6 +94,25 @@ pub struct Pins {
 	pub gpio7: GPIO7<'static>,
 }
 
+/// The microSD slot, on an SPI bus of its own.
+pub struct SdPins {
+	pub spi: SPI3<'static>,
+	pub sck: GPIO40<'static>,
+	pub miso: GPIO39<'static>,
+	pub mosi: GPIO14<'static>,
+	pub cs: GPIO12<'static>,
+}
+
+pub fn sd_slot(pins: SdPins) -> Slot {
+	let bus = Spi::new(pins.spi, esp_hal::spi::master::Config::default())
+		.expect("configuring the SD card SPI bus")
+		.with_sck(pins.sck)
+		.with_miso(pins.miso)
+		.with_mosi(pins.mosi);
+	static BUS: StaticCell<Bus> = StaticCell::new();
+	Slot::new(BUS.init(RefCell::new(bus)), output_high(pins.cs), None)
+}
+
 /// Starts the screen and the keyboard task, and returns which model this is.
 pub fn start(spawner: &embassy_executor::Spawner, mut pins: Pins) -> (Model, Screen) {
 	let model = if has_keyboard_controller(&mut pins) {
@@ -131,6 +152,10 @@ pub fn start(spawner: &embassy_executor::Spawner, mut pins: Pins) -> (Model, Scr
 
 fn output(pin: impl esp_hal::gpio::OutputPin + 'static) -> Output<'static> {
 	Output::new(pin, Level::Low, OutputConfig::default())
+}
+
+fn output_high(pin: impl esp_hal::gpio::OutputPin + 'static) -> Output<'static> {
+	Output::new(pin, Level::High, OutputConfig::default())
 }
 
 fn input(pin: impl esp_hal::gpio::InputPin + 'static) -> Input<'static> {

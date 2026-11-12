@@ -97,7 +97,7 @@ In fields that take an address, typing the start of a known node's address or na
 
 The arrow keys are Fn with `;` `.` `,` and `/`, and Escape is Fn with `` ` ``. In lists, the same keys work without Fn.
 
-On the touch screen, dragging up or down moves the selection a row at a time, following the finger. A tap is Enter, and a swipe to the right or the BOOT button is Escape. It has no on-screen keyboard yet, so text has to be typed over the serial port, as below. Exporting and importing settings is not supported on the Waveshare board yet.
+On the touch screen, dragging up or down moves the selection a row at a time, following the finger. A tap is Enter, and a swipe to the right or the BOOT button is Escape. It has no on-screen keyboard yet, so text has to be typed over the serial port, as below, or written into the settings file on an SD card and imported.
 
 The interface can also be driven from a computer over the USB serial port, for testing without someone at the keyboard. `firmware/drive.py` sends lines such as `type 200::1`, `key down enter` and `screen`, which prints what the screen shows, and it does so without resetting the board:
 

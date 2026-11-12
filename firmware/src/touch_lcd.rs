@@ -1,19 +1,24 @@
 //! Waveshare ESP32-C6-Touch-LCD-2.8: an ST7789 screen of 240x320 on SPI,
-//! turned on its side, and a CST3530 touch panel on I2C. The screen's and
+//! turned on its side, a microSD slot on the same SPI bus, and a CST3530
+//! touch panel on I2C. The screen's and
 //! the touch panel's reset lines and the backlight hang off a CH32V003 on
 //! the same I2C bus, which Waveshare programs to act as an I/O expander.
 //!
 //! The registers come from Waveshare's examples for the board.
 
+use core::cell::RefCell;
+
 use embassy_time::{Duration, Timer};
-use embedded_hal_bus::spi::{ExclusiveDevice, NoDelay};
+use embedded_hal_bus::spi::{NoDelay, RefCellDevice};
 use esp_hal::Blocking;
 use esp_hal::delay::Delay;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::I2c;
-use esp_hal::peripherals::{GPIO0, GPIO1, GPIO6, GPIO7, GPIO9, GPIO10, GPIO11, GPIO23, I2C0, SPI2};
+use esp_hal::peripherals::{
+	GPIO0, GPIO1, GPIO6, GPIO7, GPIO8, GPIO9, GPIO10, GPIO11, GPIO23, I2C0, SPI2,
+};
 use esp_hal::spi::Mode;
-use esp_hal::spi::master::Spi;
+use esp_hal::spi::master::{Config, Spi};
 use esp_hal::time::Rate;
 use esp_ygg_app::ui::Key;
 use esp_ygg_app::ui::touch::{Gestures, Point};
@@ -27,6 +32,7 @@ use mousefood::{EmbeddedBackend, EmbeddedBackendConfig};
 use ratatui::Terminal;
 use static_cell::StaticCell;
 
+use crate::sdcard::{Bus, Slot};
 use crate::ui::{KEYS, Screen};
 
 pub const MODEL_NAME: &str = "Waveshare ESP32-C6-Touch-LCD-2.8";
@@ -52,7 +58,7 @@ const PANEL_WIDTH: u16 = 240;
 pub type Display = mipidsi::Display<
 	SpiInterface<
 		'static,
-		ExclusiveDevice<Spi<'static, Blocking>, Output<'static>, NoDelay>,
+		RefCellDevice<'static, Spi<'static, Blocking>, Output<'static>, NoDelay>,
 		Output<'static>,
 	>,
 	ST7789,
@@ -67,6 +73,7 @@ pub struct Pins {
 	pub dc: GPIO10<'static>,
 	/// The SD card shares the screen's SPI bus.
 	pub sd_cs: GPIO23<'static>,
+	pub sd_miso: GPIO8<'static>,
 	pub i2c: I2C0<'static>,
 	pub sda: GPIO6<'static>,
 	pub scl: GPIO7<'static>,
@@ -77,8 +84,9 @@ pub fn model_name() -> &'static str {
 	MODEL_NAME
 }
 
-/// Starts the screen and the touch task.
-pub fn start(spawner: &embassy_executor::Spawner, pins: Pins) -> Screen {
+/// Starts the screen and the touch task, and returns the screen and the
+/// SD card slot.
+pub fn start(spawner: &embassy_executor::Spawner, pins: Pins) -> (Screen, Slot) {
 	info!("Board: {MODEL_NAME}");
 	let mut i2c = I2c::new(
 		pins.i2c,
@@ -88,13 +96,26 @@ pub fn start(spawner: &embassy_executor::Spawner, pins: Pins) -> Screen {
 	.with_sda(pins.sda)
 	.with_scl(pins.scl);
 	reset_screen_and_touch(&mut i2c);
+	let bus = Spi::new(pins.spi, screen_speed())
+		.expect("configuring the SPI bus")
+		.with_sck(pins.sck)
+		.with_mosi(pins.mosi)
+		.with_miso(pins.sd_miso);
+	static BUS: StaticCell<Bus> = StaticCell::new();
+	let bus = BUS.init(RefCell::new(bus));
 	// Keeps the SD card off the bus while the screen talks.
-	let _sd_cs = Output::new(pins.sd_cs, Level::High, OutputConfig::default());
-	let screen = screen(pins.spi, pins.sck, pins.mosi, pins.cs, pins.dc);
+	let sd_cs = Output::new(pins.sd_cs, Level::High, OutputConfig::default());
+	let screen = screen(bus, pins.cs, pins.dc);
 	expander_write(&mut i2c, EXPANDER_BACKLIGHT, u8::MAX);
 	let boot_button = Input::new(pins.boot_button, InputConfig::default().with_pull(Pull::Up));
 	spawner.spawn(touch(i2c, boot_button).expect("spawning the touch task"));
-	screen
+	(screen, Slot::new(bus, sd_cs, Some(screen_speed())))
+}
+
+fn screen_speed() -> Config {
+	Config::default()
+		.with_frequency(Rate::from_mhz(80))
+		.with_mode(Mode::_0)
 }
 
 /// Holds both reset lines low, then lets them go and waits for the touch
@@ -117,22 +138,9 @@ fn expander_write(i2c: &mut I2c<'static, Blocking>, register: u8, value: u8) {
 	}
 }
 
-fn screen(
-	spi: SPI2<'static>,
-	sck: GPIO0<'static>,
-	mosi: GPIO1<'static>,
-	cs: GPIO11<'static>,
-	dc: GPIO10<'static>,
-) -> Screen {
-	let config = esp_hal::spi::master::Config::default()
-		.with_frequency(Rate::from_mhz(80))
-		.with_mode(Mode::_0);
-	let spi = Spi::new(spi, config)
-		.expect("configuring the display SPI bus")
-		.with_sck(sck)
-		.with_mosi(mosi);
+fn screen(bus: &'static Bus, cs: GPIO11<'static>, dc: GPIO10<'static>) -> Screen {
 	let cs = Output::new(cs, Level::High, OutputConfig::default());
-	let device = ExclusiveDevice::new_no_delay(spi, cs).expect("display chip select");
+	let device = RefCellDevice::new_no_delay(bus, cs).expect("display chip select");
 	static BUFFER: StaticCell<[u8; 1024]> = StaticCell::new();
 	let dc = Output::new(dc, Level::Low, OutputConfig::default());
 	let interface = SpiInterface::new(device, dc, BUFFER.init([0; 1024]));

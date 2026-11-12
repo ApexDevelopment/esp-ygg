@@ -28,6 +28,7 @@ use yggdrasil_espnow::PublicKey;
 #[cfg(feature = "cardputer")]
 pub(crate) use crate::cardputer as board;
 use crate::platform::now;
+use crate::sdcard::Slot;
 #[cfg(feature = "c6-touch-lcd")]
 pub(crate) use crate::touch_lcd as board;
 
@@ -152,30 +153,6 @@ fn handle_message(app: &mut App, message: ToUi) {
 	}
 }
 
-#[cfg(feature = "cardputer")]
-pub use crate::sdcard::Slot;
-
-/// Stands in for an SD card slot on boards that have no driver for one.
-#[cfg(not(feature = "cardputer"))]
-pub struct Slot;
-
-#[cfg(not(feature = "cardputer"))]
-impl Slot {
-	const MISSING: &str = "No SD card on this board";
-
-	fn export_settings(
-		&mut self,
-		_text: &str,
-		_time: Option<esp_ygg_app::time::DateTime>,
-	) -> Result<(), String> {
-		Err(Self::MISSING.into())
-	}
-
-	fn import_settings(&mut self) -> Result<String, String> {
-		Err(Self::MISSING.into())
-	}
-}
-
 /// Starting the UI on the second core, with a stack of its own.
 #[cfg(feature = "cardputer")]
 pub mod second_core {
@@ -207,7 +184,7 @@ pub mod second_core {
 		cpu_control: CPU_CTRL<'static>,
 		(interrupt, park): (FROM_CPU_INTR1<'static>, FROM_CPU_INTR3<'static>),
 		pins: Pins,
-		sd: crate::sdcard::Pins,
+		sd: cardputer::SdPins,
 		usb: USB_DEVICE<'static>,
 		#[cfg(feature = "voice")] audio: (crate::audio::Pins, FROM_CPU_INTR2<'static>),
 		settings: Settings,
@@ -230,7 +207,7 @@ pub mod second_core {
 				let (_model, screen) = cardputer::start(&spawner, pins);
 				#[cfg(feature = "voice")]
 				start_audio(audio, _model);
-				let slot = crate::sdcard::Slot::new(sd);
+				let slot = cardputer::sd_slot(sd);
 				super::spawn(&spawner, screen, slot, usb, settings);
 			});
 		});
@@ -337,8 +314,8 @@ pub mod own_thread {
 				usb,
 				settings,
 			} = *start;
-			let screen = touch_lcd::start(&spawner, pins);
-			super::spawn(&spawner, screen, super::Slot, usb, settings);
+			let (screen, slot) = touch_lcd::start(&spawner, pins);
+			super::spawn(&spawner, screen, slot, usb, settings);
 		});
 	}
 }
