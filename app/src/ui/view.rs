@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use core::net::Ipv6Addr;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
@@ -26,12 +26,8 @@ pub(super) const SELECTED: Style = Style::new().fg(Color::Black).bg(ACCENT);
 
 /// Draws the whole screen.
 pub fn draw(frame: &mut Frame, app: &App) {
-	let [title, body, footer] = Layout::vertical([
-		Constraint::Length(1),
-		Constraint::Fill(1),
-		Constraint::Length(1),
-	])
-	.areas(frame.area());
+	let (title, rest) = split_top(frame.area(), 1);
+	let (body, footer) = split_bottom(rest, 1);
 	draw_title(frame, title, app);
 	match app.screen {
 		Screen::Home => draw_home(frame, body, app),
@@ -129,11 +125,7 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 	#[cfg(feature = "voice")]
 	right.push_str("   ");
 	let style = Style::new().fg(Color::Black).bg(ACCENT);
-	let [left_area, right_area] = Layout::horizontal([
-		Constraint::Fill(1),
-		Constraint::Length(right.chars().count() as u16),
-	])
-	.areas(area);
+	let (left_area, right_area) = split_right(area, right.chars().count() as u16);
 	frame.render_widget(Paragraph::new(left).style(style), left_area);
 	frame.render_widget(Paragraph::new(right.as_str()).style(style), right_area);
 }
@@ -192,8 +184,7 @@ fn draw_home(frame: &mut Frame, area: Rect, app: &App) {
 		None => lines.push(Line::styled(" Starting…", DIM)),
 	}
 	lines.push(Line::raw(""));
-	let [status_area, menu_area] =
-		Layout::vertical([Constraint::Length(lines.len() as u16), Constraint::Fill(1)]).areas(area);
+	let (status_area, menu_area) = split_top(area, lines.len() as u16);
 	frame.render_widget(Paragraph::new(lines), status_area);
 	draw_menu(frame, menu_area, app, MENU, app.menu);
 }
@@ -573,6 +564,44 @@ pub(super) fn tail(log: &alloc::collections::VecDeque<String>, height: u16) -> V
 		.skip(skip)
 		.map(|line| Line::raw(format!(" {line}")))
 		.collect()
+}
+
+/// Splits `area` into its first `rows` rows and the rest. This and the two
+/// below stand in for Ratatui's `Layout`, which solves its constraints in
+/// floating point and takes milliseconds on chips without an FPU.
+pub(super) fn split_top(area: Rect, rows: u16) -> (Rect, Rect) {
+	let rows = rows.min(area.height);
+	let top = Rect {
+		height: rows,
+		..area
+	};
+	let rest = Rect {
+		y: area.y + rows,
+		height: area.height - rows,
+		..area
+	};
+	(top, rest)
+}
+
+/// Splits `area` into all but its last `rows` rows, and those rows.
+pub(super) fn split_bottom(area: Rect, rows: u16) -> (Rect, Rect) {
+	let (rest, bottom) = split_top(area, area.height.saturating_sub(rows));
+	(rest, bottom)
+}
+
+/// Splits `area` into all but its last `columns` columns, and those columns.
+pub(super) fn split_right(area: Rect, columns: u16) -> (Rect, Rect) {
+	let left_width = area.width.saturating_sub(columns);
+	let left = Rect {
+		width: left_width,
+		..area
+	};
+	let right = Rect {
+		x: area.x + left_width,
+		width: area.width - left_width,
+		..area
+	};
+	(left, right)
 }
 
 /// Pads `text` so a highlighted line spans the full width.

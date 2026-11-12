@@ -2,12 +2,12 @@
 //! and history to go back through.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{List, ListItem, ListState, Paragraph, Wrap};
 
-use super::view::{DIM, SELECTED, field_line, visible_end};
+use super::view::{DIM, SELECTED, field_line, split_top, visible_end};
 
 use alloc::collections::BTreeMap;
 use alloc::format;
@@ -261,12 +261,8 @@ fn cannot_resolve(url: &Url) -> String {
 impl Browser {
 	pub fn draw(&self, frame: &mut Frame, area: Rect) {
 		let browser = self;
-		let [top, status, body] = Layout::vertical([
-			Constraint::Length(1),
-			Constraint::Length(1),
-			Constraint::Fill(1),
-		])
-		.areas(area);
+		let (top, rest) = split_top(area, 1);
+		let (status, body) = split_top(rest, 1);
 		let top_line = match (&browser.search, &browser.page) {
 			(Some((_, _, query)), _) => field_line("search", query, true),
 			(None, Some(page)) if !browser.editing => {

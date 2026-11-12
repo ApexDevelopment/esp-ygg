@@ -2,12 +2,12 @@
 //! questions servers ask, and history to go back through.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line as ScreenLine;
 use ratatui::widgets::Paragraph;
 
-use super::view::{ACCENT, DIM, SELECTED, field_line, visible_end, wrap};
+use super::view::{ACCENT, DIM, SELECTED, field_line, split_top, visible_end, wrap};
 
 use alloc::collections::BTreeMap;
 use alloc::format;
@@ -478,12 +478,8 @@ fn add_wrapped(rows: &mut Vec<Row>, text: &str, prefixes: (&str, &str), kind: Ro
 impl Browser {
 	pub fn draw(&self, frame: &mut Frame, area: Rect) {
 		let browser = self;
-		let [top, status, body] = Layout::vertical([
-			Constraint::Length(1),
-			Constraint::Length(1),
-			Constraint::Fill(1),
-		])
-		.areas(area);
+		let (top, rest) = split_top(area, 1);
+		let (status, body) = split_top(rest, 1);
 		let top_line = match (&browser.prompt, &browser.page) {
 			(Some(prompt), _) => field_line(">", &prompt.answer, true),
 			(None, Some(page)) if !browser.editing => {

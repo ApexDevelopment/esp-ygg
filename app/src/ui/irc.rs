@@ -2,12 +2,12 @@
 //! server and for each channel or private conversation.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::view::{ACCENT, DIM, field_line, wrap};
+use super::view::{ACCENT, DIM, field_line, split_bottom, split_top, wrap};
 
 use alloc::collections::VecDeque;
 use alloc::format;
@@ -407,12 +407,8 @@ impl Client {
 			frame.render_widget(Paragraph::new(lines), area);
 			return;
 		}
-		let [header, log, input] = Layout::vertical([
-			Constraint::Length(1),
-			Constraint::Fill(1),
-			Constraint::Length(1),
-		])
-		.areas(area);
+		let (header, rest) = split_top(area, 1);
+		let (log, input) = split_bottom(rest, 1);
 		let buffer = &client.buffers[client.current];
 		let mut spans = Vec::from([Span::styled(
 			format!(" {}", buffer.name),

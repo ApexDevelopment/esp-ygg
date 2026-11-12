@@ -8,11 +8,11 @@ use alloc::vec::Vec;
 use core::net::{Ipv6Addr, SocketAddrV6};
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use super::view::{DIM, field_line, tail};
+use super::view::{DIM, field_line, split_bottom, tail};
 use super::{Command, Commands, Key, Outcome, TextInput, push_limited};
 use crate::overlay::CONSOLE_PORT;
 
@@ -99,12 +99,8 @@ impl Console {
 	}
 
 	pub fn draw(&self, frame: &mut Frame, area: Rect) {
-		let [log, target, message] = Layout::vertical([
-			Constraint::Fill(1),
-			Constraint::Length(1),
-			Constraint::Length(1),
-		])
-		.areas(area);
+		let (rest, message) = split_bottom(area, 1);
+		let (log, target) = split_bottom(rest, 1);
 		let lines = if self.log.is_empty() {
 			Vec::from([Line::styled(
 				format!(" Listening on UDP port {CONSOLE_PORT}"),

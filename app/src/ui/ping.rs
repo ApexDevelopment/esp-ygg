@@ -7,12 +7,12 @@ use core::net::Ipv6Addr;
 use core::time::Duration;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use yggdrasil_espnow::Instant;
 
-use super::view::{DIM, field_line, tail};
+use super::view::{DIM, field_line, split_top, tail};
 use super::{Command, Commands, Key, Outcome, TextInput, push_limited};
 
 const INTERVAL: Duration = Duration::from_secs(1);
@@ -100,12 +100,8 @@ impl Ping {
 	}
 
 	pub fn draw(&self, frame: &mut Frame, area: Rect) {
-		let [target, summary, log] = Layout::vertical([
-			Constraint::Length(1),
-			Constraint::Length(1),
-			Constraint::Fill(1),
-		])
-		.areas(area);
+		let (target, rest) = split_top(area, 1);
+		let (summary, log) = split_top(rest, 1);
 		frame.render_widget(
 			Paragraph::new(field_line("to", &self.target, !self.running)),
 			target,
