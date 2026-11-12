@@ -14,7 +14,7 @@ Every board runs a few services on its Yggdrasil address:
 
 On an M5Stack Cardputer or Cardputer ADV, the screen and keyboard give an interface for browsing the network, pinging nodes, using the console and changing settings.
 
-The mesh, the gateway and the services have been tested on two ESP32-S3 boards (M5Stack Cardputers), one acting as a gateway to a yggdrasil-rs node over WiFi. The on-device interface has only run in the desktop preview so far. The other chips build but have not been tried.
+The mesh, the gateway and the services have been tested on two ESP32-S3 boards (M5Stack Cardputers), one acting as a gateway to a yggdrasil-rs node over WiFi. The on-device interface has only run in the desktop preview so far. An ESP32-C3 and an ESP32-C6 have also booted and peered with each other over ESP-NOW. The original ESP32 builds but has not been tried.
 
 ## Layout
 
