@@ -42,6 +42,13 @@ fn main() {
 	}))
 	.expect("setting the platform");
 	let ui = MainWindow::new().expect("creating the window");
+	// A board a few minutes after starting, with one neighbor
+	ui.set_address("200:df46:a2ec:76e9:82a7:4f61:fe3d:e486".into());
+	ui.set_neighbors(1);
+	ui.set_peers(1);
+	ui.set_known(3);
+	ui.set_uptime("5 min".into());
+	ui.set_free_memory(159);
 	ui.show().expect("showing the window");
 	window.set_size(slint::PhysicalSize::new(WIDTH, HEIGHT));
 	let mut pixels = vec![Rgb565Pixel(0); (WIDTH * HEIGHT) as usize];

@@ -29,8 +29,8 @@ pub use text::{Screen, spawn};
 /// The longest command line read from the serial port.
 const MAX_COMMAND: usize = 512;
 
-/// What the network side tells the UI. The graphical interface does not
-/// take these, or keys, yet.
+/// What the network side tells the UI. The graphical interface only takes
+/// the status so far, and no keys.
 #[cfg_attr(feature = "gui", allow(dead_code))]
 pub enum ToUi {
 	Status(Status),

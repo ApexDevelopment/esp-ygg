@@ -1,46 +1,93 @@
-import { SmallAppBar, ListTile, Switch, FilledButton, MaterialText, MaterialTypography, MaterialPalette, MaterialWindow } from "@material";
+import { MaterialPalette, MaterialText, MaterialTypography, MaterialWindow, OutlinedCard } from "@material";
+import { Palette } from "std-widgets.slint";
+import "../fonts/Roboto-Regular.ttf";
+import "../fonts/Roboto-Medium.ttf";
+
+/// A count with what it counts, on a card.
+component Stat inherits OutlinedCard {
+    in property <int> count;
+    in property <string> label;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 2px;
+
+        MaterialText {
+            text: root.count;
+            style: MaterialTypography.headline_small;
+        }
+
+        MaterialText {
+            text: root.label;
+            style: MaterialTypography.label_medium;
+            color: MaterialPalette.on_surface_variant;
+        }
+    }
+}
 
 export component MainWindow inherits MaterialWindow {
-    in property <string> address: "200:df46:a2ec:76e9:82a7:4f61:fe3d:e486";
-    in property <int> neighbors: 1;
-    in property <int> known: 3;
-    in-out property <bool> bridge: false;
-    callback ping();
+    in property <string> name: "esp-ygg";
+    /// Empty until the node has started.
+    in property <string> address;
+    in property <int> neighbors;
+    in property <int> peers;
+    in property <int> known;
+    /// How long the board has been up, as text.
+    in property <string> uptime;
+    /// Free memory, in kilobytes.
+    in property <int> free_memory;
 
     width: 320px;
     height: 240px;
+    default_font_family: "Roboto";
+
+    init => {
+        Palette.color_scheme = ColorScheme.dark;
+    }
 
     VerticalLayout {
-        SmallAppBar {
-            title: "esp-ygg";
+        padding: 16px;
+        spacing: 16px;
+        alignment: start;
+
+        VerticalLayout {
+            spacing: 4px;
+
+            MaterialText {
+                text: root.name;
+                style: MaterialTypography.title_large;
+            }
+
+            MaterialText {
+                text: root.address == "" ? "Starting…" : root.address;
+                style: MaterialTypography.body_small;
+                color: MaterialPalette.on_surface_variant;
+            }
         }
+
+        HorizontalLayout {
+            spacing: 8px;
+
+            Stat {
+                count: root.neighbors;
+                label: "neighbors";
+            }
+
+            Stat {
+                count: root.peers;
+                label: "peers";
+            }
+
+            Stat {
+                count: root.known;
+                label: "known";
+            }
+        }
+
         MaterialText {
-            text: root.address;
+            text: "up \{root.uptime} · \{root.free_memory} KB free";
             style: MaterialTypography.body_small;
             color: MaterialPalette.on_surface_variant;
-            horizontal_alignment: center;
-        }
-        ListTile {
-            text: "Yggdrasil Nodes";
-            supporting_text: root.known + " known";
-        }
-        HorizontalLayout {
-            padding_left: 16px;
-            padding_right: 16px;
-            spacing: 16px;
-            alignment: space_between;
-            MaterialText {
-                text: "Bridge";
-                style: MaterialTypography.body_large;
-                vertical_alignment: center;
-            }
-            Switch {
-                checked <=> root.bridge;
-            }
-            FilledButton {
-                text: "Ping";
-                clicked => { root.ping(); }
-            }
         }
     }
 }

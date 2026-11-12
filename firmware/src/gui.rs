@@ -4,9 +4,13 @@
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 
+use alloc::format;
+
 use embassy_time::{Duration, Instant, Timer};
 use embedded_graphics_core::pixelcolor::Rgb565;
 use embedded_graphics_core::pixelcolor::raw::RawU16;
+use esp_ygg_app::time::short_uptime;
+use esp_ygg_app::ui::Status;
 use esp_ygg_gui::MainWindow;
 use esp_ygg_gui::slint;
 use log::info;
@@ -17,7 +21,7 @@ use slint::platform::software_renderer::{
 use slint::platform::{Platform, PointerEventButton, WindowAdapter, WindowEvent};
 
 use crate::touch_lcd::{self, Board, Display};
-use crate::ui::{INPUT, Input};
+use crate::ui::{INPUT, Input, TO_UI, ToUi};
 
 const WIDTH: u16 = 320;
 const HEIGHT: u16 = 240;
@@ -125,6 +129,11 @@ pub async fn run(board: Board) {
 			}
 		}
 		touching = touch;
+		while let Ok(message) = TO_UI.try_receive() {
+			if let ToUi::Status(status) = message {
+				show_status(&ui, &status);
+			}
+		}
 		// Taps over the serial port, in pixels here, for testing.
 		while let Ok(input) = INPUT.try_receive() {
 			if let Input::Press { column, row } = input {
@@ -160,4 +169,17 @@ pub async fn run(board: Board) {
 			Timer::after(FRAME).await;
 		}
 	}
+}
+
+fn show_status(ui: &MainWindow, status: &Status) {
+	if !status.board.name.is_empty() {
+		ui.set_name(status.board.name.as_str().into());
+	}
+	ui.set_address(format!("{}", status.address).into());
+	ui.set_neighbors(status.connected_neighbors() as i32);
+	ui.set_peers(status.peers.len() as i32);
+	ui.set_known(status.known.len() as i32);
+	ui.set_uptime(short_uptime(status.board.uptime.as_secs()).into());
+	let free = status.board.free_heap.unwrap_or_default() / 1024;
+	ui.set_free_memory(free as i32);
 }
