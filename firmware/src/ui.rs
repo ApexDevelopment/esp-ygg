@@ -196,7 +196,7 @@ mod text {
 }
 
 /// Starting the UI on the second core, with a stack of its own.
-#[cfg(feature = "cardputer")]
+#[cfg(all(feature = "cardputer", feature = "tui"))]
 pub mod second_core {
 	use core::sync::atomic::{AtomicUsize, Ordering};
 

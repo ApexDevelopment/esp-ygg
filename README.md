@@ -50,6 +50,10 @@ On boards that use the ESP32-S3's built-in USB port, the reset after flashing so
 
 On first boot, the board creates a private key and saves it in the flash `nvs` partition. It keeps that key across reflashing. To give a board a new identity, erase its flash with `espflash erase-flash`.
 
+## Choosing an interface
+
+A board's feature, `cardputer` or `c6-touch-lcd`, says which hardware it is, and `tui` or `gui` adds an interface on its screen: `tui` for the text one, and `gui` for the graphical one, which only the touch board has. The aliases above pick these for you. A board built without either runs as a node alone, with its screen off, which leaves the most memory for the network.
+
 ## Choosing services
 
 Each service costs memory while the board runs, so the firmware can be built with or without each one. They are Cargo features:
@@ -67,13 +71,13 @@ Each service costs memory while the board runs, so the firmware can be built wit
 To add the larger ones, list them along with the board:
 
 ```sh
-cargo run --release --features cardputer,gopher,irc,gemini
+cargo run --release --features cardputer,tui,gopher,irc,gemini
 ```
 
 To leave out default ones too, turn off the defaults and list everything you want. For example, a Cardputer with only the console:
 
 ```sh
-cargo run --release --no-default-features --features cardputer,console
+cargo run --release --no-default-features --features cardputer,tui,console
 ```
 
 Clients take memory only while they are in use, so most of the cost of a service is its server, if it has one. A Cardputer ADV acting as a gateway with every service has about 70 KB free.

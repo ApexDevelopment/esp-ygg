@@ -52,9 +52,8 @@ ntp = ["esp-ygg-app/ntp"]
 irc = ["esp-ygg-app/irc"]
 gemini = ["esp-ygg-app/gemini", "dep:getrandom"]
 # Voice calls with push-to-talk, on the Cardputers
-voice = ["cardputer", "esp-ygg-app/voice"]
-# What every board with a screen needs, whichever interface it shows. Each
-# such board turns this on, and one of tui and gui picks the interface.
+voice = ["cardputer", "tui", "esp-ygg-app/voice"]
+# What every interface needs, whichever it is. tui and gui turn it on.
 ui = [
 	"esp-ygg-app/ui",
 	"dep:embedded-graphics-core",
@@ -62,16 +61,18 @@ ui = [
 	"dep:embedded-sdmmc",
 	"dep:mipidsi",
 ]
-# The text interface, made with Ratatui
+# The text interface, made with Ratatui, for the Cardputer and the touch
+# board
 tui = ["ui", "dep:mousefood", "dep:ratatui"]
 # The graphical interface, made with Slint, for the touch board. Slint is
 # under the GPLv3 on microcontrollers, so firmware built with this is too.
 gui = ["ui", "dep:esp-ygg-gui"]
-# M5Stack Cardputer and Cardputer ADV: screen, keyboard and SD card, with
-# the text interface
-cardputer = ["esp32s3", "tui"]
-# Waveshare ESP32-C6-Touch-LCD-2.8: touch screen and SD card. Add tui or gui.
-c6-touch-lcd = ["esp32c6", "ui", "dep:esp-radio-rtos-driver"]
+# The boards with screens. Without tui or gui, each runs as a node alone,
+# with its screen off.
+# M5Stack Cardputer and Cardputer ADV: screen, keyboard and SD card
+cardputer = ["esp32s3"]
+# Waveshare ESP32-C6-Touch-LCD-2.8: touch screen and SD card
+c6-touch-lcd = ["esp32c6", "dep:esp-radio-rtos-driver"]
 esp32s3 = [
 	"esp-alloc/esp32s3",
 	"esp-backtrace/esp32s3",

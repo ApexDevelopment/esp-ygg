@@ -25,7 +25,7 @@ static RELEASED: AtomicU32 = AtomicU32::new(0);
 
 /// Lets [`while_parked`] park the calling core. Runs on the UI core, as the
 /// interrupt goes to the core that binds it.
-#[cfg_attr(not(feature = "cardputer"), allow(dead_code))]
+#[cfg_attr(not(all(feature = "cardputer", feature = "tui")), allow(dead_code))]
 pub fn arm(interrupt: FROM_CPU_INTR3<'static>) {
 	SoftwareInterrupt::new(interrupt).set_interrupt_handler(park);
 	ARMED.store(true, Ordering::Release);

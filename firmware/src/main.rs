@@ -5,8 +5,11 @@ extern crate alloc;
 
 #[cfg(all(feature = "tui", feature = "gui"))]
 compile_error!("Pick one interface, tui or gui, not both");
-#[cfg(all(feature = "ui", not(any(feature = "tui", feature = "gui"))))]
-compile_error!("Pick an interface for the screen: add the tui or gui feature");
+#[cfg(all(
+	feature = "tui",
+	not(any(feature = "cardputer", feature = "c6-touch-lcd"))
+))]
+compile_error!("The text interface needs a board with a screen: cardputer or c6-touch-lcd");
 #[cfg(all(feature = "gui", not(feature = "c6-touch-lcd")))]
 compile_error!("The graphical interface only runs on the touch board, c6-touch-lcd");
 
@@ -91,10 +94,10 @@ async fn main(spawner: Spawner) -> ! {
 	let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
 	esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
 	// The original ESP32 has less RAM to spare
-	#[cfg(not(any(feature = "esp32", feature = "cardputer")))]
+	#[cfg(not(any(feature = "esp32", all(feature = "cardputer", feature = "tui"))))]
 	esp_alloc::heap_allocator!(size: 200 * 1024);
 	// The UI's core has a stack of its own, so leave room for it.
-	#[cfg(feature = "cardputer")]
+	#[cfg(all(feature = "cardputer", feature = "tui"))]
 	esp_alloc::heap_allocator!(size: 176 * 1024);
 	#[cfg(feature = "esp32")]
 	esp_alloc::heap_allocator!(size: 120 * 1024);
@@ -208,7 +211,9 @@ async fn main(spawner: Spawner) -> ! {
 		info!("Hotspot {} is on", settings.hotspot_name);
 	}
 
-	#[cfg(feature = "cardputer")]
+	#[cfg(all(feature = "cardputer", not(feature = "tui")))]
+	cardputer::screen_off(peripherals.GPIO38);
+	#[cfg(all(feature = "cardputer", feature = "tui"))]
 	{
 		let pins = cardputer::Pins {
 			spi: peripherals.SPI2,
@@ -258,7 +263,9 @@ async fn main(spawner: Spawner) -> ! {
 			settings.clone(),
 		);
 	}
-	#[cfg(feature = "c6-touch-lcd")]
+	#[cfg(all(feature = "c6-touch-lcd", not(feature = "ui")))]
+	touch_lcd::screen_off(peripherals.I2C0, peripherals.GPIO6, peripherals.GPIO7);
+	#[cfg(all(feature = "c6-touch-lcd", feature = "ui"))]
 	{
 		let pins = touch_lcd::Pins {
 			spi: peripherals.SPI2,
@@ -519,8 +526,14 @@ fn model_name() -> &'static str {
 	ui::board::model_name()
 }
 
+/// Without an interface, the board is known only from how it was built.
 #[cfg(not(feature = "ui"))]
 fn model_name() -> &'static str {
+	#[cfg(feature = "cardputer")]
+	return cardputer::MODEL_NAME;
+	#[cfg(feature = "c6-touch-lcd")]
+	return touch_lcd::MODEL_NAME;
+	#[allow(unreachable_code)]
 	CHIP
 }
 
