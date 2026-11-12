@@ -3,19 +3,30 @@
 
 extern crate alloc;
 
+#[cfg(all(feature = "tui", feature = "gui"))]
+compile_error!("Pick one interface, tui or gui, not both");
+#[cfg(all(feature = "ui", not(any(feature = "tui", feature = "gui"))))]
+compile_error!("Pick an interface for the screen: add the tui or gui feature");
+#[cfg(all(feature = "gui", not(feature = "c6-touch-lcd")))]
+compile_error!("The graphical interface only runs on the touch board, c6-touch-lcd");
+
 #[cfg(feature = "voice")]
 mod audio;
 #[cfg(feature = "voice")]
 mod call;
 #[cfg(feature = "cardputer")]
 mod cardputer;
+#[cfg(feature = "gui")]
+mod gui;
 mod hotspot;
 #[cfg(feature = "ntp")]
 mod ntp;
 mod park;
 mod platform;
 mod radio;
+// The graphical interface does not use the card yet.
 #[cfg(feature = "ui")]
+#[cfg_attr(feature = "gui", allow(dead_code))]
 mod sdcard;
 #[cfg(feature = "voice")]
 mod speaker;

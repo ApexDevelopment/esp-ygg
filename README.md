@@ -38,6 +38,7 @@ cargo s3     # ESP32-S3
 cargo c3     # ESP32-C3
 cargo c6     # ESP32-C6
 cargo c6-touch  # Waveshare ESP32-C6-Touch-LCD-2.8
+cargo c6-gui    # the same, with the graphical interface
 cargo esp32  # original ESP32
 ```
 
@@ -113,6 +114,18 @@ The preview can also draw the touch board's screen pixel for pixel, as the board
 
 ```sh
 cargo run -p esp-ygg-app --example preview -- png shots "key down down down down enter" "tap 5 2" screen
+```
+
+## Graphical interface
+
+The touch board can show a graphical interface instead of the text one, made with [Slint](https://slint.dev) and its Material 3 components. The `tui` and `gui` features choose between them, as `cargo c6-touch` and `cargo c6-gui` do. It is at an early stage: a first screen, not yet connected to the node.
+
+Slint is licensed under the GPLv3 on microcontrollers, so firmware built with `gui` is distributed under the GPLv3. The rest of the project, and every other build, stays under the LGPLv3. The Material components in `gui/material-1.1.0` are under the MIT license.
+
+To see the interface without a board, draw it as the board does and save a picture:
+
+```sh
+cargo run -p esp-ygg-gui --example screenshot -- screen.png
 ```
 
 ## Voice calls

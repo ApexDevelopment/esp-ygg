@@ -8,38 +8,30 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use embassy_executor::Spawner;
-use embassy_futures::select::{Either3, select3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::{Duration, Timer};
 use embedded_io_async::Read;
 use esp_hal::peripherals::USB_DEVICE;
 use esp_hal::usb::usb_serial_jtag::UsbSerialJtag;
+use esp_ygg_app::Event;
 use esp_ygg_app::ui::remote::{self, Remote};
-use esp_ygg_app::ui::{self, App, Command, Key, Status, WifiNetwork};
-use esp_ygg_app::{Event, Settings};
+use esp_ygg_app::ui::{Command, Key, Status, WifiNetwork};
 use log::warn;
-use mousefood::EmbeddedBackend;
-use mousefood::embedded_graphics::pixelcolor::Rgb565;
-use ratatui::Terminal;
 use yggdrasil_espnow::PublicKey;
 
 #[cfg(feature = "cardputer")]
 pub(crate) use crate::cardputer as board;
-use crate::platform::now;
-use crate::sdcard::Slot;
 #[cfg(feature = "c6-touch-lcd")]
 pub(crate) use crate::touch_lcd as board;
+#[cfg(feature = "tui")]
+pub use text::{Screen, spawn};
 
-pub type Screen = Terminal<EmbeddedBackend<'static, board::Display, Rgb565>>;
-
-/// How often the UI runs its timers when nothing else happens.
-const TICK: Duration = Duration::from_millis(100);
 /// The longest command line read from the serial port.
 const MAX_COMMAND: usize = 512;
 
-/// What the network side tells the UI.
+/// What the network side tells the UI. The graphical interface does not
+/// take these, or keys, yet.
+#[cfg_attr(feature = "gui", allow(dead_code))]
 pub enum ToUi {
 	Status(Status),
 	Event(Event),
@@ -54,6 +46,7 @@ pub static FROM_UI: Channel<CriticalSectionRawMutex, Command, 8> = Channel::new(
 /// serial port.
 pub static INPUT: Channel<CriticalSectionRawMutex, Input, 16> = Channel::new();
 
+#[cfg_attr(feature = "gui", allow(dead_code))]
 pub enum Input {
 	Key(Key),
 	/// A tap on the touch screen, at a character cell.
@@ -72,64 +65,10 @@ pub enum Input {
 /// Whether the serial port asked to see the screen.
 static SCREEN_WANTED: AtomicBool = AtomicBool::new(false);
 
-/// Starts the UI task and the serial port's, once the board has its screen.
-pub fn spawn(
-	spawner: &Spawner,
-	screen: Screen,
-	slot: Slot,
-	usb: USB_DEVICE<'static>,
-	settings: Settings,
-) {
-	spawner.spawn(run(screen, slot, settings).expect("spawning the UI task"));
-	spawner.spawn(serial(usb).expect("spawning the serial task"));
-}
-
-#[embassy_executor::task]
-async fn run(mut screen: Screen, mut slot: Slot, settings: Settings) {
-	let mut app = App::new(settings, now());
-	loop {
-		#[cfg(feature = "cardputer")]
-		second_core::report_stack();
-		match select3(INPUT.receive(), TO_UI.receive(), Timer::after(TICK)).await {
-			Either3::First(Input::Key(key)) => app.handle_key(key),
-			Either3::First(Input::Tap { column, row }) => app.handle_tap(column, row),
-			Either3::First(Input::Press { column, row }) => app.handle_press(column, row),
-			Either3::First(Input::Release) => app.handle_release(),
-			Either3::Second(message) => handle_message(&mut app, message),
-			Either3::Third(()) => {}
-		}
-		#[cfg(feature = "voice")]
-		{
-			app.set_talking(crate::audio::TALKING.load(Ordering::Relaxed));
-			crate::speaker::show(app.speaker(crate::audio::MUTED.load(Ordering::Relaxed)));
-		}
-		app.tick(now());
-		while let Some(command) = app.poll_command() {
-			match command {
-				// The card is on this side, and quick enough to wait for.
-				Command::ExportSettings(text) => {
-					app.settings_exported(slot.export_settings(&text, app.local_time()))
-				}
-				Command::ImportSettings => app.settings_imported(slot.import_settings()),
-				command => FROM_UI.send(command).await,
-			}
-		}
-		if let Ok(frame) = screen.draw(|frame| ui::draw(frame, &app))
-			&& SCREEN_WANTED.swap(false, Ordering::Relaxed)
-		{
-			esp_println::println!("{}", remote::SCREEN_START);
-			for line in remote::marked_screen_text(frame.buffer) {
-				esp_println::println!("{line}");
-			}
-			esp_println::println!("{}", remote::SCREEN_END);
-		}
-	}
-}
-
 /// Takes commands from the USB serial port, as [`remote`] describes, so the
 /// interface can be driven from a computer.
 #[embassy_executor::task]
-async fn serial(usb: USB_DEVICE<'static>) {
+pub(crate) async fn serial(usb: USB_DEVICE<'static>) {
 	let (mut receiver, _transmitter) = UsbSerialJtag::new(usb).into_async().split();
 	let mut line = Vec::new();
 	let mut buffer = [0u8; 64];
@@ -168,12 +107,91 @@ async fn serial(usb: USB_DEVICE<'static>) {
 	}
 }
 
-fn handle_message(app: &mut App, message: ToUi) {
-	match message {
-		ToUi::Status(status) => app.set_status(status),
-		ToUi::Event(event) => app.handle_event(event),
-		ToUi::NodeInfo(key, info) => app.handle_nodeinfo(key, info),
-		ToUi::Networks(networks) => app.set_networks(networks),
+/// The text interface, drawn with Ratatui.
+#[cfg(feature = "tui")]
+mod text {
+	use embassy_executor::Spawner;
+	use embassy_futures::select::{Either3, select3};
+	use embassy_time::{Duration, Timer};
+	use esp_hal::peripherals::USB_DEVICE;
+	use esp_ygg_app::Settings;
+	use esp_ygg_app::ui::remote;
+	use esp_ygg_app::ui::{self, App, Command};
+	use mousefood::EmbeddedBackend;
+	use mousefood::embedded_graphics::pixelcolor::Rgb565;
+	use ratatui::Terminal;
+
+	use super::{FROM_UI, INPUT, Input, SCREEN_WANTED, TO_UI, ToUi, board, serial};
+	use crate::platform::now;
+	use crate::sdcard::Slot;
+	use core::sync::atomic::Ordering;
+
+	pub type Screen = Terminal<EmbeddedBackend<'static, board::Display, Rgb565>>;
+
+	/// How often the UI runs its timers when nothing else happens.
+	const TICK: Duration = Duration::from_millis(100);
+
+	/// Starts the UI task and the serial port's, once the board has its screen.
+	pub fn spawn(
+		spawner: &Spawner,
+		screen: Screen,
+		slot: Slot,
+		usb: USB_DEVICE<'static>,
+		settings: Settings,
+	) {
+		spawner.spawn(run(screen, slot, settings).expect("spawning the UI task"));
+		spawner.spawn(serial(usb).expect("spawning the serial task"));
+	}
+
+	#[embassy_executor::task]
+	async fn run(mut screen: Screen, mut slot: Slot, settings: Settings) {
+		let mut app = App::new(settings, now());
+		loop {
+			#[cfg(feature = "cardputer")]
+			super::second_core::report_stack();
+			match select3(INPUT.receive(), TO_UI.receive(), Timer::after(TICK)).await {
+				Either3::First(Input::Key(key)) => app.handle_key(key),
+				Either3::First(Input::Tap { column, row }) => app.handle_tap(column, row),
+				Either3::First(Input::Press { column, row }) => app.handle_press(column, row),
+				Either3::First(Input::Release) => app.handle_release(),
+				Either3::Second(message) => handle_message(&mut app, message),
+				Either3::Third(()) => {}
+			}
+			#[cfg(feature = "voice")]
+			{
+				app.set_talking(crate::audio::TALKING.load(Ordering::Relaxed));
+				crate::speaker::show(app.speaker(crate::audio::MUTED.load(Ordering::Relaxed)));
+			}
+			app.tick(now());
+			while let Some(command) = app.poll_command() {
+				match command {
+					// The card is on this side, and quick enough to wait for.
+					Command::ExportSettings(text) => {
+						app.settings_exported(slot.export_settings(&text, app.local_time()))
+					}
+					Command::ImportSettings => app.settings_imported(slot.import_settings()),
+					command => FROM_UI.send(command).await,
+				}
+			}
+			if let Ok(frame) = screen.draw(|frame| ui::draw(frame, &app))
+				&& SCREEN_WANTED.swap(false, Ordering::Relaxed)
+			{
+				esp_println::println!("{}", remote::SCREEN_START);
+				for line in remote::marked_screen_text(frame.buffer) {
+					esp_println::println!("{line}");
+				}
+				esp_println::println!("{}", remote::SCREEN_END);
+			}
+		}
+	}
+
+	fn handle_message(app: &mut App, message: ToUi) {
+		match message {
+			ToUi::Status(status) => app.set_status(status),
+			ToUi::Event(event) => app.handle_event(event),
+			ToUi::NodeInfo(key, info) => app.handle_nodeinfo(key, info),
+			ToUi::Networks(networks) => app.set_networks(networks),
+		}
 	}
 }
 
@@ -338,8 +356,18 @@ pub mod own_thread {
 				usb,
 				settings,
 			} = *start;
-			let (screen, slot) = touch_lcd::start(&spawner, pins);
-			super::spawn(&spawner, screen, slot, usb, settings);
+			#[cfg(feature = "tui")]
+			{
+				let (screen, slot) = touch_lcd::start(&spawner, pins);
+				super::spawn(&spawner, screen, slot, usb, settings);
+			}
+			#[cfg(feature = "gui")]
+			{
+				let _ = settings;
+				let board = touch_lcd::set_up(pins);
+				spawner.spawn(crate::gui::run(board).expect("spawning the interface task"));
+				spawner.spawn(super::serial(usb).expect("spawning the serial task"));
+			}
 		});
 	}
 }

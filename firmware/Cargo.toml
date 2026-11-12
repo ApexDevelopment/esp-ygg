@@ -24,9 +24,11 @@ esp-radio-rtos-driver = { version = "0.4.2", optional = true }
 esp-radio = { version = "1.0.0-beta.1", features = ["esp-alloc", "esp-now", "log-04", "unstable", "wifi"] }
 esp-rtos = { version = "0.4.0", features = ["embassy", "esp-alloc", "esp-radio", "log-04"] }
 esp-storage = "0.10.0"
+embedded-graphics-core = { version = "0.4.1", optional = true }
 embedded-hal-bus = { version = "0.3.0", optional = true }
 getrandom = { version = "0.4.3", optional = true }
 esp-ygg-app = { path = "../app", default-features = false }
+esp-ygg-gui = { path = "../gui", optional = true }
 mipidsi = { version = "0.10.0", optional = true }
 mousefood = { version = "0.5.3", default-features = false, features = ["fonts"], optional = true }
 ratatui = { version = "0.30.2", default-features = false, optional = true }
@@ -51,18 +53,24 @@ irc = ["esp-ygg-app/irc"]
 gemini = ["esp-ygg-app/gemini", "dep:getrandom"]
 # Voice calls with push-to-talk, on the Cardputers
 voice = ["cardputer", "esp-ygg-app/voice"]
-# The on-device UI, which each board with a screen turns on
+# What every board with a screen needs, whichever interface it shows. Each
+# such board turns this on, and one of tui and gui picks the interface.
 ui = [
 	"esp-ygg-app/ui",
+	"dep:embedded-graphics-core",
 	"dep:embedded-hal-bus",
 	"dep:embedded-sdmmc",
 	"dep:mipidsi",
-	"dep:mousefood",
-	"dep:ratatui",
 ]
-# M5Stack Cardputer and Cardputer ADV: screen, keyboard and SD card
-cardputer = ["esp32s3", "ui"]
-# Waveshare ESP32-C6-Touch-LCD-2.8: touch screen and SD card
+# The text interface, made with Ratatui
+tui = ["ui", "dep:mousefood", "dep:ratatui"]
+# The graphical interface, made with Slint, for the touch board. Slint is
+# under the GPLv3 on microcontrollers, so firmware built with this is too.
+gui = ["ui", "dep:esp-ygg-gui"]
+# M5Stack Cardputer and Cardputer ADV: screen, keyboard and SD card, with
+# the text interface
+cardputer = ["esp32s3", "tui"]
+# Waveshare ESP32-C6-Touch-LCD-2.8: touch screen and SD card. Add tui or gui.
 c6-touch-lcd = ["esp32c6", "ui", "dep:esp-radio-rtos-driver"]
 esp32s3 = [
 	"esp-alloc/esp32s3",
