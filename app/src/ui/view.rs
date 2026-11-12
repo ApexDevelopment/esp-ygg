@@ -12,7 +12,8 @@ use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
 #[cfg(feature = "apps")]
 use super::APPS;
-use super::{App, FIELDS, Field, Group, Lookup, MENU, MENUS, Screen, TextInput, Uplink};
+use super::directory::Lookup;
+use super::{App, FIELDS, Field, Group, MENU, MENUS, Screen, TextInput, Uplink};
 use crate::time::{format_offset, short_uptime};
 
 /// Where the speaker icon's two cells start, counted from the title
@@ -262,7 +263,7 @@ fn draw_nodes(frame: &mut Frame, area: Rect, app: &App) {
 				Some(name) => name.to_string(),
 				None => Ipv6Addr::from(addr_for_key(key).0).to_string(),
 			};
-			let style = match app.lookups.get(key) {
+			let style = match app.directory.lookup(key) {
 				Some(Lookup::Done { .. }) => Style::new(),
 				_ => DIM,
 			};
@@ -280,7 +281,7 @@ fn draw_node(frame: &mut Frame, area: Rect, app: &App, key: yggdrasil_espnow::Pu
 		Line::raw(format!(" {address}")),
 		Line::styled(format!(" key {}", Hex(&key.0[..8])), DIM),
 	]);
-	match app.lookups.get(&key) {
+	match app.directory.lookup(&key) {
 		Some(Lookup::Done { fields, .. }) => {
 			for (name, value) in fields {
 				lines.push(Line::from(Vec::from([

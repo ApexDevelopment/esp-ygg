@@ -7,6 +7,7 @@
 mod call;
 #[cfg(feature = "console")]
 mod console;
+pub mod directory;
 #[cfg(feature = "gemini")]
 mod gemini;
 #[cfg(feature = "gopher")]
@@ -21,7 +22,7 @@ mod screen_keyboard;
 pub mod touch;
 mod view;
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -46,16 +47,13 @@ use crate::overlay::Event;
 use crate::overlay::Stream;
 use crate::settings::Settings;
 use crate::time::{DateTime, format_offset, parse_offset};
+use directory::Directory;
 pub use input::TextInput;
 #[cfg(feature = "voice")]
 pub use view::SPEAKER_FROM_RIGHT;
 pub use view::draw;
 
 const LOG_LINES: usize = 64;
-/// Nodeinfo requests in flight at once, so lookups do not crowd the radio.
-const MAX_LOOKUPS: usize = 3;
-/// Lookups that time out are retried this many times.
-const LOOKUP_ATTEMPTS: u8 = 3;
 
 /// A key press, after the keyboard driver has applied Shift and Fn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,6 +160,18 @@ pub struct Status {
 }
 
 impl Status {
+	/// Known nodes, direct peers first, then by address.
+	pub fn nodes(&self) -> Vec<PublicKey> {
+		let mut nodes = self.known.clone();
+		for peer in &self.peers {
+			if !nodes.contains(peer) && *peer != self.public_key {
+				nodes.push(*peer);
+			}
+		}
+		nodes.sort_by_key(|key| (!self.peers.contains(key), addr_for_key(key).0));
+		nodes
+	}
+
 	/// ESP-NOW neighbors that have finished the Yggdrasil handshake.
 	pub fn connected_neighbors(&self) -> usize {
 		self.neighbors
@@ -217,19 +227,6 @@ pub struct WifiNetwork {
 	/// In dBm.
 	pub signal: i8,
 	pub secured: bool,
-}
-
-#[derive(Clone, Debug)]
-enum Lookup {
-	Pending {
-		attempt: u8,
-	},
-	Failed,
-	/// The nodeinfo fields, in order, with the name if it has one.
-	Done {
-		name: Option<String>,
-		fields: Vec<(String, String)>,
-	},
 }
 
 /// Nodes whose name or address start with what was typed, for Tab to
@@ -372,7 +369,7 @@ pub struct App {
 	notice: Option<String>,
 	completion: Option<Completion>,
 
-	lookups: BTreeMap<PublicKey, Lookup>,
+	directory: Directory,
 	nodes_selected: usize,
 
 	ping: ping::Ping,
@@ -413,7 +410,7 @@ impl App {
 			commands: VecDeque::new(),
 			notice: None,
 			completion: None,
-			lookups: BTreeMap::new(),
+			directory: Directory::new(),
 			nodes_selected: 0,
 			ping: ping::Ping::new(),
 			#[cfg(feature = "console")]
@@ -526,21 +523,9 @@ impl App {
 	}
 
 	pub fn handle_nodeinfo(&mut self, key: PublicKey, info: Option<Vec<u8>>) {
-		let attempt = match self.lookups.get(&key) {
-			Some(Lookup::Pending { attempt }) => *attempt,
-			_ => return,
-		};
-		let lookup = match info.as_deref().and_then(parse_nodeinfo) {
-			Some((name, fields)) => Lookup::Done { name, fields },
-			None if info.is_none() && attempt + 1 < LOOKUP_ATTEMPTS => {
-				self.commands.push_back(Command::RequestNodeInfo(key));
-				Lookup::Pending {
-					attempt: attempt + 1,
-				}
-			}
-			None => Lookup::Failed,
-		};
-		self.lookups.insert(key, lookup);
+		if self.directory.handle_nodeinfo(key, info.as_deref()) {
+			self.commands.push_back(Command::RequestNodeInfo(key));
+		}
 	}
 
 	pub fn handle_key(&mut self, key: Key) {
@@ -953,19 +938,8 @@ impl App {
 		Outcome::Stay
 	}
 
-	/// Known nodes, direct peers first, then by address.
 	fn nodes(&self) -> Vec<PublicKey> {
-		let Some(status) = &self.status else {
-			return Vec::new();
-		};
-		let mut nodes = status.known.clone();
-		for peer in &status.peers {
-			if !nodes.contains(peer) && *peer != status.public_key {
-				nodes.push(*peer);
-			}
-		}
-		nodes.sort_by_key(|key| (!status.peers.contains(key), addr_for_key(key).0));
-		nodes
+		self.status.as_ref().map(Status::nodes).unwrap_or_default()
 	}
 
 	fn has_address_field(&self) -> bool {
@@ -1073,11 +1047,6 @@ impl App {
 	}
 
 	fn start_lookups(&mut self) {
-		let pending = self
-			.lookups
-			.values()
-			.filter(|lookup| matches!(lookup, Lookup::Pending { .. }))
-			.count();
 		let wanted: Vec<PublicKey> = match self.screen {
 			Screen::Node(node) => Vec::from([node]),
 			Screen::Neighbors => self
@@ -1088,24 +1057,13 @@ impl App {
 				.collect(),
 			_ => self.nodes(),
 		};
-		let new: Vec<PublicKey> = wanted
-			.into_iter()
-			.filter(|key| !self.lookups.contains_key(key))
-			.take(MAX_LOOKUPS.saturating_sub(pending))
-			.collect();
-		for key in new {
-			self.lookups.insert(key, Lookup::Pending { attempt: 0 });
+		for key in self.directory.start_lookups(wanted) {
 			self.commands.push_back(Command::RequestNodeInfo(key));
 		}
 	}
 
 	fn name_of(&self, key: &PublicKey) -> Option<&str> {
-		match self.lookups.get(key) {
-			Some(Lookup::Done {
-				name: Some(name), ..
-			}) => Some(name),
-			_ => None,
-		}
+		self.directory.name_of(key)
 	}
 
 	/// The local date and time, once the board knows it. While settings are
@@ -1147,10 +1105,8 @@ impl App {
 	/// A node's name if known, or its address.
 	#[cfg(any(feature = "console", feature = "voice"))]
 	fn short_name_of_address(&self, address: &Ipv6Addr) -> String {
-		self.lookups
-			.iter()
-			.find(|(key, _)| Ipv6Addr::from(addr_for_key(key).0) == *address)
-			.and_then(|(key, _)| self.name_of(key))
+		self.directory
+			.name_of_address(address)
 			.map_or_else(|| address.to_string(), String::from)
 	}
 }
@@ -1181,27 +1137,6 @@ fn navigation(key: Key) -> Option<Key> {
 		Key::Char('`') => Key::Escape,
 		other => other,
 	})
-}
-
-type NodeInfoFields = (Option<String>, Vec<(String, String)>);
-
-fn parse_nodeinfo(json: &[u8]) -> Option<NodeInfoFields> {
-	let info: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(json).ok()?;
-	let name = info
-		.get("name")
-		.and_then(|name| name.as_str())
-		.map(String::from);
-	let fields = info
-		.into_iter()
-		.map(|(key, value)| {
-			let value = match value {
-				serde_json::Value::String(text) => text,
-				other => other.to_string(),
-			};
-			(key, value)
-		})
-		.collect();
-	Some((name, fields))
 }
 
 fn push_limited(log: &mut VecDeque<String>, line: String) {
