@@ -261,14 +261,7 @@ async fn main(spawner: Spawner) -> ! {
 			scl: peripherals.GPIO7,
 			boot_button: peripherals.GPIO9,
 		};
-		let screen = touch_lcd::start(&spawner, pins);
-		ui::spawn(
-			&spawner,
-			screen,
-			ui::Slot,
-			peripherals.USB_DEVICE,
-			settings.clone(),
-		);
+		ui::own_thread::start(pins, peripherals.USB_DEVICE, settings.clone());
 	}
 	#[cfg(feature = "ui")]
 	let mut next_status = Instant::now();

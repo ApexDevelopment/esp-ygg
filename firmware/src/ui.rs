@@ -1,7 +1,8 @@
 //! Runs the on-device UI and talks to the network side through channels.
 //! On the Cardputer, the UI has the second core to itself, so drawing and
 //! scanning keys never delay the radio and network work on the first. On
-//! single-core boards, it runs as a task beside the network.
+//! single-core boards, it runs in a thread below the network's priority, so
+//! the network takes the core whenever it has work.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -271,5 +272,73 @@ pub mod second_core {
 			.take_while(|&offset| unsafe { bottom.add(offset).read_volatile() } == UNUSED)
 			.count();
 		STACK_SIZE - GUARD - unused
+	}
+}
+
+/// Starting the UI in a thread of its own on single-core boards, below the
+/// network's priority, so drawing never holds up the radio.
+#[cfg(feature = "c6-touch-lcd")]
+pub mod own_thread {
+	use alloc::boxed::Box;
+	use core::ffi::c_void;
+
+	use esp_hal::peripherals::USB_DEVICE;
+	use esp_rtos::CurrentThreadHandle;
+	use esp_rtos::embassy::Executor;
+	use esp_ygg_app::Settings;
+	use static_cell::StaticCell;
+
+	use crate::touch_lcd::{self, Pins};
+
+	/// TLS for Gemini goes deepest, at 14 KB in a handshake with an elliptic
+	/// curve certificate. RSA certificates need more.
+	const STACK_SIZE: usize = 24 * 1024;
+	/// WiFi's own threads run above both of these.
+	const NETWORK_PRIORITY: usize = 1;
+	const UI_PRIORITY: u32 = 0;
+
+	struct Start {
+		pins: Pins,
+		usb: USB_DEVICE<'static>,
+		settings: Settings,
+	}
+
+	/// Raises the calling thread, which runs the network, above the UI, and
+	/// starts the screen and the UI in a thread of their own.
+	pub fn start(pins: Pins, usb: USB_DEVICE<'static>, settings: Settings) {
+		CurrentThreadHandle::get().set_priority(NETWORK_PRIORITY);
+		let start = Box::into_raw(Box::new(Start {
+			pins,
+			usb,
+			settings,
+		}));
+		// SAFETY: the thread takes ownership of `start`, which nothing else
+		// holds on to.
+		unsafe {
+			esp_radio_rtos_driver::task_create(
+				"ui",
+				run,
+				start.cast(),
+				UI_PRIORITY,
+				None,
+				STACK_SIZE,
+			);
+		}
+	}
+
+	extern "C" fn run(start: *mut c_void) {
+		// SAFETY: `start` came from `Box::into_raw` in `start`, and is only
+		// taken back here.
+		let start = unsafe { Box::from_raw(start.cast::<Start>()) };
+		static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+		EXECUTOR.init(Executor::new()).run(move |spawner| {
+			let Start {
+				pins,
+				usb,
+				settings,
+			} = *start;
+			let screen = touch_lcd::start(&spawner, pins);
+			super::spawn(&spawner, screen, super::Slot, usb, settings);
+		});
 	}
 }
