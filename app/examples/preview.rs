@@ -1,15 +1,32 @@
-//! Runs the on-device UI in a terminal, as board 0 of a simulated mesh of
+//! Runs the on-device UI on the desktop, as board 0 of a simulated mesh of
 //! three boards in a line. Board 2 echoes console messages back, and in
 //! voice builds answers calls.
 //!
-//! `cargo run -p esp-ygg-app --example preview`, then quit with Ctrl+C.
-//! Add `-- touch` for the touch board's larger screen, where clicks are taps.
+//! `cargo run -p esp-ygg-app --example preview` shows it in a terminal, the
+//! size of the Cardputer's screen, until Ctrl+C. Add `-- touch` for the touch
+//! board's larger screen, where mouse clicks are taps.
+//!
+//! `-- png <folder> <command>...` instead draws the touch board's screen
+//! pixel for pixel, as the board does, and runs the commands `drive.py`
+//! takes: `type`, `key`, `tap` and `wait`. Each `screen` saves a picture of
+//! the screen in the folder.
 
-use std::io;
+use std::cell::RefCell;
+use std::convert::Infallible;
+use std::fs::File;
+use std::io::{self, BufWriter};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::{Duration, Instant as WallClock};
 
+use esp_ygg_app::ui::remote::{self, Remote};
 use esp_ygg_app::ui::{self, App, Command, Key, Status, Uplink, WifiNetwork};
 use esp_ygg_app::{BoardInfo, Event, Overlay, Settings};
+use mousefood::embedded_graphics::Pixel;
+use mousefood::embedded_graphics::draw_target::DrawTarget;
+use mousefood::embedded_graphics::geometry::{OriginDimensions, Size};
+use mousefood::embedded_graphics::pixelcolor::{Rgb565, Rgb888, RgbColor};
+use mousefood::{EmbeddedBackend, EmbeddedBackendConfig, TerminalAlignment};
 use ratatui::crossterm::event::{
 	self, DisableMouseCapture, EnableMouseCapture, Event as TermEvent, KeyCode, KeyEventKind,
 	KeyModifiers, MouseButton, MouseEventKind,
@@ -24,68 +41,77 @@ use yggdrasil_espnow::yggdrasil_proto::requests::build_nodeinfo;
 const BOARDS: [&str; 3] = ["preview", "relay", "echo"];
 
 fn main() -> io::Result<()> {
-	let mut radio = Radio::new();
-	for (index, name) in BOARDS.iter().enumerate() {
-		let mut config = Config::new(private_key(index as u8 + 1));
-		let given = serde_json::json!({ "name": name });
-		config.nodeinfo = build_nodeinfo(given.as_object().unwrap(), None).unwrap();
-		radio.add_node(config);
+	let arguments: Vec<String> = std::env::args().skip(1).collect();
+	match arguments.split_first() {
+		Some((mode, rest)) if mode == "png" => {
+			let Some((folder, commands)) = rest.split_first() else {
+				return Err(io::Error::other("Usage: png <folder> <command>..."));
+			};
+			screenshots(Path::new(folder), commands)
+		}
+		Some((mode, _)) => in_terminal(mode == "touch"),
+		None => in_terminal(false),
 	}
-	radio.connect(0, 1);
-	radio.connect(1, 2);
-	let mut overlays: Vec<Overlay> = (0..BOARDS.len())
-		.map(|index| Overlay::new(&radio.nodes[index], index as u64 + 1, true))
-		.collect();
-	// The first board knows the time, as a bridged board would from NTP.
-	let since_epoch = std::time::SystemTime::now()
-		.duration_since(std::time::UNIX_EPOCH)
-		.unwrap_or_default();
-	overlays[0].set_time(since_epoch.as_micros() as u64, 2, radio.nodes[0].now());
-	#[cfg(feature = "voice")]
-	for (index, overlay) in overlays.iter_mut().enumerate() {
-		overlay.start_phone(BOARDS[index], index as u16);
-	}
-	let mut settings = Settings::new();
-	settings.name = BOARDS[0].into();
-	let mut app = App::new(settings, radio.nodes[0].now());
-
-	let touch = std::env::args().any(|argument| argument == "touch");
-	let rows = if touch { 18 } else { 13 };
-	ratatui::crossterm::terminal::enable_raw_mode()?;
-	if touch {
-		execute!(io::stdout(), EnableMouseCapture)?;
-	}
-	let options = TerminalOptions {
-		viewport: Viewport::Fixed(Rect::new(0, 0, 40, rows)),
-	};
-	let mut terminal = Terminal::with_options(
-		ratatui::backend::CrosstermBackend::new(io::stdout()),
-		options,
-	)?;
-	terminal.clear()?;
-	let result = run(&mut terminal, &mut radio, &mut overlays, &mut app);
-	if touch {
-		execute!(io::stdout(), DisableMouseCapture)?;
-	}
-	ratatui::crossterm::terminal::disable_raw_mode()?;
-	terminal.clear()?;
-	result
 }
 
-fn run(
-	terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-	radio: &mut Radio,
-	overlays: &mut [Overlay],
-	app: &mut App,
-) -> io::Result<()> {
-	let started = WallClock::now();
-	let mut last_status = WallClock::now() - Duration::from_secs(1);
-	loop {
+/// The simulated mesh, and the UI of its first board.
+struct Sim {
+	radio: Radio,
+	overlays: Vec<Overlay>,
+	app: App,
+	started: WallClock,
+	last_status: WallClock,
+}
+
+impl Sim {
+	fn new() -> Self {
+		let mut radio = Radio::new();
+		for (index, name) in BOARDS.iter().enumerate() {
+			let mut config = Config::new(private_key(index as u8 + 1));
+			let given = serde_json::json!({ "name": name });
+			config.nodeinfo = build_nodeinfo(given.as_object().unwrap(), None).unwrap();
+			radio.add_node(config);
+		}
+		radio.connect(0, 1);
+		radio.connect(1, 2);
+		let mut overlays: Vec<Overlay> = (0..BOARDS.len())
+			.map(|index| Overlay::new(&radio.nodes[index], index as u64 + 1, true))
+			.collect();
+		// The first board knows the time, as a bridged board would from NTP.
+		let since_epoch = std::time::SystemTime::now()
+			.duration_since(std::time::UNIX_EPOCH)
+			.unwrap_or_default();
+		overlays[0].set_time(since_epoch.as_micros() as u64, 2, radio.nodes[0].now());
+		#[cfg(feature = "voice")]
+		for (index, overlay) in overlays.iter_mut().enumerate() {
+			overlay.start_phone(BOARDS[index], index as u16);
+		}
+		let mut settings = Settings::new();
+		settings.name = BOARDS[0].into();
+		let app = App::new(settings, radio.nodes[0].now());
+		Sim {
+			radio,
+			overlays,
+			app,
+			started: WallClock::now(),
+			last_status: WallClock::now() - Duration::from_secs(1),
+		}
+	}
+
+	/// Runs the mesh, and the UI's timers and commands, once.
+	fn step(&mut self) {
+		let Sim {
+			radio,
+			overlays,
+			app,
+			started,
+			last_status,
+		} = self;
 		radio.set_clock(started.elapsed().as_micros() as u64);
 		radio.step();
 		for (index, overlay) in overlays.iter_mut().enumerate() {
 			let time = overlay.unix_micros(radio.nodes[index].now());
-			let board = board_info(index, started, time);
+			let board = board_info(index, *started, time);
 			overlay.poll(&mut radio.nodes[index], &board);
 		}
 		let now = radio.nodes[2].now();
@@ -99,14 +125,48 @@ fn run(
 		if last_status.elapsed() >= Duration::from_millis(500) {
 			let time = overlays[0].unix_micros(radio.nodes[0].now());
 			let status =
-				Status::from_node(&radio.nodes[0], &board_info(0, started, time), Uplink::Off);
+				Status::from_node(&radio.nodes[0], &board_info(0, *started, time), Uplink::Off);
 			app.set_status(status);
-			last_status = WallClock::now();
+			*last_status = WallClock::now();
 		}
 		app.tick(radio.nodes[0].now());
 		while let Some(command) = app.poll_command() {
 			carry_out(command, radio, &mut overlays[0], app);
 		}
+	}
+}
+
+fn in_terminal(touch: bool) -> io::Result<()> {
+	let mut sim = Sim::new();
+	let rows = if touch { 18 } else { 13 };
+	ratatui::crossterm::terminal::enable_raw_mode()?;
+	if touch {
+		execute!(io::stdout(), EnableMouseCapture)?;
+	}
+	let options = TerminalOptions {
+		viewport: Viewport::Fixed(Rect::new(0, 0, 40, rows)),
+	};
+	let mut terminal = Terminal::with_options(
+		ratatui::backend::CrosstermBackend::new(io::stdout()),
+		options,
+	)?;
+	terminal.clear()?;
+	let result = run_in_terminal(&mut terminal, &mut sim);
+	if touch {
+		execute!(io::stdout(), DisableMouseCapture)?;
+	}
+	ratatui::crossterm::terminal::disable_raw_mode()?;
+	terminal.clear()?;
+	result
+}
+
+fn run_in_terminal(
+	terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+	sim: &mut Sim,
+) -> io::Result<()> {
+	loop {
+		sim.step();
+		let app = &mut sim.app;
 		terminal.draw(|frame| ui::draw(frame, app))?;
 		if !event::poll(Duration::from_millis(5))? {
 			continue;
@@ -130,6 +190,134 @@ fn run(
 			_ => {}
 		}
 	}
+}
+
+/// The touch board's screen, turned on its side.
+const WIDTH: u32 = 320;
+const HEIGHT: u32 = 240;
+/// How long the mesh runs after each command, so the screen settles.
+const SETTLE: Duration = Duration::from_millis(200);
+
+/// The touch board's screen in memory. Clones share the same pixels, so the
+/// terminal can draw into one while another saves them.
+#[derive(Clone)]
+struct Pixels(Rc<RefCell<Vec<Rgb565>>>);
+
+impl OriginDimensions for Pixels {
+	fn size(&self) -> Size {
+		Size::new(WIDTH, HEIGHT)
+	}
+}
+
+impl DrawTarget for Pixels {
+	type Color = Rgb565;
+	type Error = Infallible;
+
+	fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+	where
+		I: IntoIterator<Item = Pixel<Self::Color>>,
+	{
+		let mut screen = self.0.borrow_mut();
+		for Pixel(point, color) in pixels {
+			if let (Ok(x @ 0..WIDTH), Ok(y @ 0..HEIGHT)) =
+				(u32::try_from(point.x), u32::try_from(point.y))
+			{
+				screen[(y * WIDTH + x) as usize] = color;
+			}
+		}
+		Ok(())
+	}
+}
+
+impl Pixels {
+	fn save(&self, path: &Path) -> io::Result<()> {
+		let mut encoder = png::Encoder::new(BufWriter::new(File::create(path)?), WIDTH, HEIGHT);
+		encoder.set_color(png::ColorType::Rgb);
+		encoder.set_depth(png::BitDepth::Eight);
+		let bytes: Vec<u8> = self
+			.0
+			.borrow()
+			.iter()
+			.flat_map(|&color| {
+				let color = Rgb888::from(color);
+				[color.r(), color.g(), color.b()]
+			})
+			.collect();
+		encoder
+			.write_header()
+			.and_then(|mut writer| writer.write_image_data(&bytes))
+			.map_err(io::Error::other)
+	}
+}
+
+/// Runs `commands` on the touch board's screen, drawn as the board draws it,
+/// and saves a picture at each `screen`.
+fn screenshots(folder: &Path, commands: &[String]) -> io::Result<()> {
+	std::fs::create_dir_all(folder)?;
+	let pixels = Pixels(Rc::new(RefCell::new(vec![
+		Rgb565::BLACK;
+		(WIDTH * HEIGHT) as usize
+	])));
+	// As the touch board sets up its screen, in firmware/src/touch_lcd.rs
+	let config = EmbeddedBackendConfig {
+		font_regular: mousefood::fonts::mono_8x13_atlas(),
+		vertical_alignment: TerminalAlignment::End,
+		horizontal_alignment: TerminalAlignment::Start,
+		..Default::default()
+	};
+	let display = Box::leak(Box::new(pixels.clone()));
+	let mut terminal =
+		Terminal::new(EmbeddedBackend::new(display, config)).map_err(drawing_failed)?;
+	let mut sim = Sim::new();
+	let mut saved = 0;
+	run_for(&mut sim, &mut terminal, SETTLE)?;
+	for command in commands {
+		if let Some(seconds) = command.strip_prefix("wait ") {
+			let seconds: f64 = seconds
+				.parse()
+				.map_err(|_| io::Error::other(format!("Not a number of seconds: {seconds}")))?;
+			run_for(&mut sim, &mut terminal, Duration::from_secs_f64(seconds))?;
+			continue;
+		}
+		match remote::parse(command).map_err(io::Error::other)? {
+			Remote::Keys(keys) => keys.into_iter().for_each(|key| sim.app.handle_key(key)),
+			Remote::Tap(column, row) => {
+				sim.app.handle_press(column, row);
+				sim.app.handle_tap(column, row);
+				sim.app.handle_release();
+			}
+			Remote::Screen => {
+				saved += 1;
+				let path: PathBuf = folder.join(format!("screen-{saved:02}.png"));
+				pixels.save(&path)?;
+				println!("{}", path.display());
+			}
+			Remote::Talk(_) | Remote::Mute(_) => {
+				return Err(io::Error::other("The preview has no audio"));
+			}
+		}
+		run_for(&mut sim, &mut terminal, SETTLE)?;
+	}
+	Ok(())
+}
+
+type PictureTerminal = Terminal<EmbeddedBackend<'static, Pixels, Rgb565>>;
+
+fn drawing_failed(error: mousefood::error::Error) -> io::Error {
+	io::Error::other(format!("Drawing failed: {error:?}"))
+}
+
+/// Runs the mesh for `duration`, drawing after each step as the board does.
+fn run_for(sim: &mut Sim, terminal: &mut PictureTerminal, duration: Duration) -> io::Result<()> {
+	let until = WallClock::now() + duration;
+	while WallClock::now() < until {
+		sim.step();
+		terminal
+			.draw(|frame| ui::draw(frame, &sim.app))
+			.map_err(drawing_failed)?;
+		std::thread::sleep(Duration::from_millis(5));
+	}
+	Ok(())
 }
 
 fn board_info(index: usize, started: WallClock, time: Option<u64>) -> BoardInfo {

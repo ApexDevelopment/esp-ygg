@@ -109,6 +109,12 @@ In voice builds, `talk on` and `talk off` hold and release push-to-talk, and `mu
 
 To try the interface without a board, run `cargo run -p esp-ygg-app --example preview`. It shows the interface in a terminal as one of three simulated boards in a line, where the farthest one echoes console messages back. Add `-- touch` for the touch board's larger screen, where mouse clicks are taps.
 
+The preview can also draw the touch board's screen pixel for pixel, as the board does, and save pictures of it. It takes the same commands as `drive.py`, and saves a PNG at each `screen`:
+
+```sh
+cargo run -p esp-ygg-app --example preview -- png shots "key down down down down enter" "tap 5 2" screen
+```
+
 ## Voice calls
 
 With the `voice` feature, the Voice Call (IAX2) app calls other boards by address, with Tab completion like the other address fields. Calls use IAX2, the protocol Asterisk speaks, on UDP port 4569, so other IAX2 software over Yggdrasil should be able to call in too. Yggdrasil already encrypts and authenticates traffic by address, so calls use no IAX2 passwords.

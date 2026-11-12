@@ -38,6 +38,9 @@ apps = []
 # Turns on every service for this crate's own tests
 esp-ygg-app = { path = ".", features = ["gopher", "irc", "gemini", "voice"] }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+# Draws the touch board's screen to pictures, in the preview
+mousefood = { version = "0.5.3", default-features = false, features = ["fonts"] }
+png = "0.18.1"
 # A server for the TLS client to talk to
 rustls = { version = "0.23.46", default-features = false, features = ["std", "tls12"] }
 rustls-rustcrypto = { version = "0.1.0-pre.0", features = ["std", "tls12"] }
