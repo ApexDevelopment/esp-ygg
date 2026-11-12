@@ -4,12 +4,13 @@
 //! screen to the rest.
 
 use alloc::string::String;
+use core::time::Duration;
 
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Style};
-use ratatui::text::Line;
-use ratatui::widgets::Paragraph;
+
+use yggdrasil_espnow::Instant;
 
 use super::Key;
 use super::view::ACCENT;
@@ -165,16 +166,31 @@ const NUMBERS: [Row; 2] = [
 
 /// What a tap on the keyboard did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Press {
+pub enum Tapped {
 	Key(Key),
 	Hide,
 }
+
+/// How long a key stays lit after the finger lifts, so even a quick tap
+/// shows.
+const LIT_AFTER_RELEASE: Duration = Duration::from_millis(120);
+
+const BACKDROP: Color = Color::Rgb(28, 28, 32);
+const KEY: Color = Color::Rgb(80, 80, 90);
+/// Keys that do something other than type, a shade darker.
+const FUNCTION_KEY: Color = Color::Rgb(52, 52, 60);
+const LIT: Color = Color::Rgb(210, 210, 220);
 
 #[derive(Default)]
 pub struct ScreenKeyboard {
 	shown: bool,
 	symbols: bool,
 	shifted: bool,
+	/// The row and place in it of the key under the finger, or just let go.
+	pressed: Option<(usize, usize)>,
+	released: bool,
+	/// When a released key goes dark again, once known.
+	lit_until: Option<Instant>,
 }
 
 impl ScreenKeyboard {
@@ -211,13 +227,52 @@ impl ScreenKeyboard {
 		}
 	}
 
-	/// Handles a tap at `point` inside `area`, where the keyboard is drawn.
-	pub fn tap(&mut self, area: Rect, kind: Kind, point: Position) -> Option<Press> {
-		let row = usize::from((point.y - area.y) / KEY_HEIGHT);
+	/// The key at `point` inside `area`, where the keyboard is drawn, as its
+	/// row, its place in the row, and the key.
+	fn key_at(&self, area: Rect, kind: Kind, point: Position) -> Option<(usize, usize, Cap)> {
+		let row = usize::from(point.y.checked_sub(area.y)? / KEY_HEIGHT);
 		let keys = *self.rows(kind).get(row)?;
 		let (slot_width, margin) = slot_width(area);
-		let slot = (point.x - area.x).checked_sub(margin)? / slot_width;
-		let cap = cap_at(keys, slot)?;
+		let slot = point.x.checked_sub(area.x + margin)? / slot_width;
+		let mut start = 0;
+		keys.iter().enumerate().find_map(|(index, &(cap, slots))| {
+			let found = (start..start + slots).contains(&slot);
+			start += slots;
+			found.then_some((row, index, cap))
+		})
+	}
+
+	/// Lights the key a finger has just touched.
+	pub fn press(&mut self, area: Rect, kind: Kind, point: Position) {
+		self.pressed = self
+			.key_at(area, kind, point)
+			.map(|(row, index, _)| (row, index));
+		self.released = false;
+		self.lit_until = None;
+	}
+
+	/// The finger has lifted. The key stays lit a moment longer.
+	pub fn release(&mut self) {
+		self.released = true;
+	}
+
+	pub fn tick(&mut self, now: Instant) {
+		if !self.released || self.pressed.is_none() {
+			return;
+		}
+		match self.lit_until {
+			None => self.lit_until = Some(now + LIT_AFTER_RELEASE),
+			Some(until) if now >= until => {
+				self.pressed = None;
+				self.lit_until = None;
+			}
+			Some(_) => {}
+		}
+	}
+
+	/// Handles a tap at `point` inside `area`, where the keyboard is drawn.
+	pub fn tap(&mut self, area: Rect, kind: Kind, point: Position) -> Option<Tapped> {
+		let (_, _, cap) = self.key_at(area, kind, point)?;
 		Some(match cap {
 			C(plain, shifted) => {
 				let character = if self.shifted { shifted } else { plain };
@@ -225,13 +280,13 @@ impl ScreenKeyboard {
 				if !self.symbols {
 					self.shifted = false;
 				}
-				Press::Key(Key::Char(character))
+				Tapped::Key(Key::Char(character))
 			}
-			Space => Press::Key(Key::Char(' ')),
-			Backspace => Press::Key(Key::Backspace),
-			Enter => Press::Key(Key::Enter),
-			Tab => Press::Key(Key::Tab),
-			Hide => Press::Hide,
+			Space => Tapped::Key(Key::Char(' ')),
+			Backspace => Tapped::Key(Key::Backspace),
+			Enter => Tapped::Key(Key::Enter),
+			Tab => Tapped::Key(Key::Tab),
+			Hide => Tapped::Hide,
 			Shift => {
 				self.shifted = !self.shifted;
 				return None;
@@ -244,23 +299,46 @@ impl ScreenKeyboard {
 		})
 	}
 
+	/// Draws the keys on a backdrop. Each key covers its slots but for half
+	/// a line above and half a column to the left, drawn with block
+	/// characters, which leaves narrow gaps of backdrop between keys.
 	pub fn draw(&self, frame: &mut Frame, area: Rect, kind: Kind) {
+		let buffer = frame.buffer_mut();
+		buffer.set_style(area, Style::new().bg(BACKDROP));
+		for y in area.top()..area.bottom() {
+			for x in area.left()..area.right() {
+				buffer[(x, y)].set_symbol(" ");
+			}
+		}
 		let (slot_width, margin) = slot_width(area);
-		for (index, keys) in self.rows(kind).iter().enumerate() {
-			let y = area.y + index as u16 * KEY_HEIGHT;
-			let mut slot = 0;
-			for &(cap, slots) in keys.iter() {
-				let face = Rect {
-					x: area.x + margin + slot * slot_width,
-					y,
-					// A column between keys keeps them apart.
-					width: (slots * slot_width).saturating_sub(1),
-					height: KEY_HEIGHT,
+		for (row, keys) in self.rows(kind).iter().enumerate() {
+			let top = area.y + row as u16 * KEY_HEIGHT;
+			let mut left = area.x + margin;
+			for (index, &(cap, slots)) in keys.iter().enumerate() {
+				let width = slots * slot_width;
+				let right = (left + width).min(area.right());
+				let (face, label_color) = self.colors(cap, self.pressed == Some((row, index)));
+				let edge = Style::new().fg(face).bg(BACKDROP);
+				buffer[(left, top)].set_symbol("▗").set_style(edge);
+				buffer[(left, top + 1)].set_symbol("▐").set_style(edge);
+				for x in left + 1..right {
+					buffer[(x, top)].set_symbol("▄").set_style(edge);
+					buffer[(x, top + 1)]
+						.set_symbol(" ")
+						.set_style(Style::new().bg(face));
 				}
-				.intersection(area);
-				let label = Line::from(self.label(cap)).centered();
-				frame.render_widget(Paragraph::new(label).style(self.style(cap)), face);
-				slot += slots;
+				let label = self.label(cap);
+				let inside = right.saturating_sub(left + 1);
+				let length = label.chars().count() as u16;
+				let start = left + 1 + inside.saturating_sub(length) / 2;
+				buffer.set_stringn(
+					start,
+					top + 1,
+					&label,
+					usize::from(inside),
+					Style::new().fg(label_color).bg(face),
+				);
+				left += width;
 			}
 		}
 	}
@@ -279,12 +357,14 @@ impl ScreenKeyboard {
 		}
 	}
 
-	fn style(&self, cap: Cap) -> Style {
+	/// The key's face and label colors.
+	fn colors(&self, cap: Cap, pressed: bool) -> (Color, Color) {
 		match cap {
-			C(..) | Space => Style::new().fg(Color::White).bg(Color::DarkGray),
-			Enter => Style::new().fg(Color::Black).bg(ACCENT),
-			Shift if self.shifted => Style::new().fg(Color::Black).bg(ACCENT),
-			_ => Style::new().fg(Color::Black).bg(Color::Gray),
+			_ if pressed => (LIT, Color::Black),
+			Enter => (ACCENT, Color::Black),
+			Shift if self.shifted => (ACCENT, Color::Black),
+			C(..) | Space => (KEY, Color::White),
+			_ => (FUNCTION_KEY, Color::White),
 		}
 	}
 }
@@ -293,13 +373,4 @@ impl ScreenKeyboard {
 fn slot_width(area: Rect) -> (u16, u16) {
 	let width = (area.width / SLOTS).max(1);
 	(width, area.width.saturating_sub(width * SLOTS) / 2)
-}
-
-fn cap_at(keys: Row, slot: u16) -> Option<Cap> {
-	let mut start = 0;
-	keys.iter().find_map(|&(cap, slots)| {
-		let found = (start..start + slots).contains(&slot);
-		start += slots;
-		found.then_some(cap)
-	})
 }

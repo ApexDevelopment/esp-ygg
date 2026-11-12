@@ -53,7 +53,8 @@ const TOUCH_POINTS: u32 = 0xD007_0000;
 const TOUCH_DONE: u32 = 0xD000_02AB;
 const TOUCH_INTERVAL: Duration = Duration::from_millis(20);
 
-/// The panel's own size, standing upright.
+/// The panel's own width standing upright, which is the screen's height
+/// as it is turned.
 const PANEL_WIDTH: u16 = 240;
 
 pub type Display = mipidsi::Display<
@@ -108,15 +109,12 @@ pub fn start(spawner: &embassy_executor::Spawner, pins: Pins) -> (Screen, Slot) 
 	let sd_cs = Output::new(pins.sd_cs, Level::High, OutputConfig::default());
 	// 40 columns, as on the Cardputer, in a font that suits the larger screen.
 	let font = mousefood::fonts::mono_8x13_atlas();
-	let cell = (
-		font.character_size.width as u16,
-		font.character_size.height as u16,
-	);
+	let grid = Grid::new(&font);
 	let screen = screen(bus, pins.cs, pins.dc, font);
 	expander_write(&mut i2c, EXPANDER_BACKLIGHT, u8::MAX);
 	let boot_button =
 		esp_hal::gpio::Input::new(pins.boot_button, InputConfig::default().with_pull(Pull::Up));
-	spawner.spawn(touch(i2c, boot_button, cell).expect("spawning the touch task"));
+	spawner.spawn(touch(i2c, boot_button, grid).expect("spawning the touch task"));
 	(screen, Slot::new(bus, sd_cs, Some(screen_speed())))
 }
 
@@ -166,10 +164,11 @@ fn screen(
 	// cells that change, so blank cells would never be drawn over.
 	display.clear(Rgb565::BLACK).expect("clearing the display");
 	static DISPLAY: StaticCell<Display> = StaticCell::new();
-	// The text starts at the top left, so taps map straight onto it.
+	// The lines of text sit on the bottom edge, as the keyboard does, and
+	// what is left over goes above them, as [`Grid`] expects.
 	let config = EmbeddedBackendConfig {
 		font_regular: font,
-		vertical_alignment: TerminalAlignment::Start,
+		vertical_alignment: TerminalAlignment::End,
 		horizontal_alignment: TerminalAlignment::Start,
 		..Default::default()
 	};
@@ -194,15 +193,40 @@ fn read_touch(i2c: &mut I2c<'static, Blocking>) -> Option<Point> {
 	Some((y, PANEL_WIDTH.saturating_sub(1 + x)))
 }
 
-/// Reads the touch panel and the BOOT button. `cell` is the size of a
-/// character on the screen, which taps are counted in.
+/// The character cells the screen is laid out in, which touches are
+/// counted in.
+#[derive(Clone, Copy)]
+struct Grid {
+	width: u16,
+	height: u16,
+	/// The pixels above the first line, left over as the screen's height
+	/// is not a whole number of lines.
+	top: u16,
+}
+
+impl Grid {
+	fn new(font: &MonoFont<'static>) -> Self {
+		let height = font.character_size.height as u16;
+		Grid {
+			width: font.character_size.width as u16,
+			height,
+			top: PANEL_WIDTH % height,
+		}
+	}
+
+	/// The column and row of the cell at `point`.
+	fn cell(self, (x, y): Point) -> (u16, u16) {
+		(x / self.width, y.saturating_sub(self.top) / self.height)
+	}
+}
+
+/// Reads the touch panel and the BOOT button.
 #[embassy_executor::task]
 async fn touch(
 	mut i2c: I2c<'static, Blocking>,
 	boot_button: esp_hal::gpio::Input<'static>,
-	cell: (u16, u16),
+	grid: Grid,
 ) {
-	let (cell_width, cell_height) = cell;
 	let mut gestures = Gestures::new();
 	let mut button_held = false;
 	loop {
@@ -210,10 +234,15 @@ async fn touch(
 		for gesture in gestures.update(point) {
 			let input = match gesture {
 				Gesture::Key(key) => Input::Key(key),
-				Gesture::Tap((x, y)) => Input::Tap {
-					column: x / cell_width,
-					row: y / cell_height,
-				},
+				Gesture::Tap(point) => {
+					let (column, row) = grid.cell(point);
+					Input::Tap { column, row }
+				}
+				Gesture::Press(point) => {
+					let (column, row) = grid.cell(point);
+					Input::Press { column, row }
+				}
+				Gesture::Release => Input::Release,
 			};
 			let _ = INPUT.try_send(input);
 		}

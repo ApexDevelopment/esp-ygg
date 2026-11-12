@@ -121,7 +121,11 @@ fn run(
 				}
 			}
 			TermEvent::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+				app.handle_press(mouse.column, mouse.row);
+			}
+			TermEvent::Mouse(mouse) if mouse.kind == MouseEventKind::Up(MouseButton::Left) => {
 				app.handle_tap(mouse.column, mouse.row);
+				app.handle_release();
 			}
 			_ => {}
 		}

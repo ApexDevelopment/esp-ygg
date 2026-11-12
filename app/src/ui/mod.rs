@@ -36,7 +36,7 @@ use core::net::Ipv6Addr;
 use core::net::SocketAddrV6;
 
 use ratatui::layout::{Position, Rect};
-use screen_keyboard::{Kind, Press, ScreenKeyboard};
+use screen_keyboard::{Kind, ScreenKeyboard, Tapped};
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 use yggdrasil_espnow::{Instant, Mac, Node, Platform, PublicKey};
 
@@ -449,6 +449,7 @@ impl App {
 	/// Runs timers: repeated pings and nodeinfo lookups.
 	pub fn tick(&mut self, now: Instant) {
 		self.now = now;
+		self.keyboard.tick(now);
 		self.ping.tick(now, &mut self.commands);
 		// Names are looked up where they are shown or can be typed.
 		if matches!(
@@ -584,8 +585,8 @@ impl App {
 			&& area.contains(point)
 		{
 			match self.keyboard.tap(area, kind, point) {
-				Some(Press::Key(key)) => self.handle_key(key),
-				Some(Press::Hide) => self.keyboard.hide(),
+				Some(Tapped::Key(key)) => self.handle_key(key),
+				Some(Tapped::Hide) => self.keyboard.hide(),
 				None => {}
 			}
 			return;
@@ -596,6 +597,19 @@ impl App {
 		if self.typing().is_some() {
 			self.keyboard.show();
 		}
+	}
+
+	/// A finger has touched the screen at a column and row. Keys on the
+	/// keyboard light up under it.
+	pub fn handle_press(&mut self, column: u16, row: u16) {
+		if let Some((area, kind)) = self.keyboard_area() {
+			self.keyboard.press(area, kind, Position::new(column, row));
+		}
+	}
+
+	/// The finger has lifted off the screen.
+	pub fn handle_release(&mut self) {
+		self.keyboard.release();
 	}
 
 	/// What kind of text field keys go into, if any.

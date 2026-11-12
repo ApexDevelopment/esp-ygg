@@ -1,7 +1,8 @@
 //! Turns a touch screen's samples into gestures, for boards without a
 //! keyboard. Dragging up or down moves the selection a row at a time,
 //! following the finger, and a swipe to the right is Escape. Taps keep where
-//! they were, for [`super::App::handle_tap`].
+//! they were, for [`super::App::handle_tap`], and every touch reports where
+//! it starts and when it ends, so what is under the finger can light up.
 
 use alloc::vec::Vec;
 
@@ -14,6 +15,10 @@ pub type Point = (u16, u16);
 pub enum Gesture {
 	Key(Key),
 	Tap(Point),
+	/// A finger has touched the screen here.
+	Press(Point),
+	/// The finger has lifted.
+	Release,
 }
 
 /// How far a finger drags for each row the selection moves.
@@ -47,6 +52,7 @@ impl Gestures {
 		let mut keys = Vec::new();
 		match (point, &mut self.touch) {
 			(Some(point), None) => {
+				keys.push(Gesture::Press(point));
 				self.touch = Some(Touch {
 					start: point,
 					last: point,
@@ -62,6 +68,7 @@ impl Gestures {
 			}
 			(None, Some(touch)) => {
 				keys.extend(touch.release());
+				keys.push(Gesture::Release);
 				self.touch = None;
 			}
 			(None, None) => {}
@@ -114,7 +121,19 @@ mod tests {
 		points
 			.iter()
 			.flat_map(|&point| gestures.update(point))
+			.filter(|gesture| !matches!(gesture, Gesture::Press(_) | Gesture::Release))
 			.collect()
+	}
+
+	#[test]
+	fn every_touch_reports_its_start_and_end() {
+		let mut gestures = Gestures::new();
+		assert_eq!(gestures.update(Some((10, 20))), [Gesture::Press((10, 20))]);
+		assert_eq!(gestures.update(Some((11, 20))), []);
+		assert_eq!(
+			gestures.update(None),
+			[Gesture::Tap((10, 20)), Gesture::Release]
+		);
 	}
 
 	#[test]

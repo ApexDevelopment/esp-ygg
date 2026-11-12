@@ -764,7 +764,7 @@ fn find_key(app: &App, label: &str) -> Option<(u16, u16)> {
 			let cells: Vec<char> = line.chars().collect();
 			let wanted: Vec<char> = label.chars().collect();
 			(0..cells.len()).find_map(|column| {
-				let apart = |at: usize| cells.get(at).is_none_or(|cell| *cell == ' ');
+				let apart = |at: usize| cells.get(at).is_none_or(|cell| " ▐".contains(*cell));
 				let matches = cells[column..].starts_with(&wanted)
 					&& (column == 0 || apart(column - 1))
 					&& apart(column + wanted.len());
@@ -801,7 +801,8 @@ fn numeric_settings_get_the_shorter_number_pad() {
 	app.handle_tap(5, 2);
 	assert!(find_key(&app, "q").is_none());
 	let (_, digits_row) = find_key(&app, "6").expect("a number pad");
-	assert_eq!(usize::from(digits_row), 18 - 4);
+	// Four lines from the bottom, with labels on each key's lower line
+	assert_eq!(usize::from(digits_row), 18 - 4 + 1);
 	tap_keys(&mut app, &["6", "⏎"]);
 	assert_eq!(app.draft.channel, 6);
 }
@@ -835,4 +836,26 @@ fn the_keyboard_hides_and_comes_back_on_a_tap() {
 	app.tick(at(1));
 	assert!(commands(&mut app).contains(&Command::Ping(address(&peer))));
 	assert!(find_key(&app, "q").is_none());
+}
+
+#[test]
+fn a_key_lights_up_while_pressed_and_a_moment_after() {
+	let mut app = App::new(Settings::new(), at(0));
+	open(&mut app, "Settings");
+	app.handle_tap(5, 2);
+	let (column, row) = find_key(&app, "q").unwrap();
+	let lit = |app: &App| {
+		let mut terminal = Terminal::new(TestBackend::new(40, 18)).unwrap();
+		terminal.draw(|frame| draw(frame, app)).unwrap();
+		terminal.backend().buffer()[(column, row)].bg
+	};
+	let unlit = lit(&app);
+	app.handle_press(column, row);
+	assert_ne!(lit(&app), unlit);
+	app.handle_tap(column, row);
+	app.handle_release();
+	app.tick(at(1));
+	assert_ne!(lit(&app), unlit);
+	app.tick(at(2));
+	assert_eq!(lit(&app), unlit);
 }

@@ -61,6 +61,12 @@ pub enum Input {
 		column: u16,
 		row: u16,
 	},
+	/// A finger has touched the screen, at a character cell.
+	Press {
+		column: u16,
+		row: u16,
+	},
+	Release,
 }
 
 /// Whether the serial port asked to see the screen.
@@ -87,6 +93,8 @@ async fn run(mut screen: Screen, mut slot: Slot, settings: Settings) {
 		match select3(INPUT.receive(), TO_UI.receive(), Timer::after(TICK)).await {
 			Either3::First(Input::Key(key)) => app.handle_key(key),
 			Either3::First(Input::Tap { column, row }) => app.handle_tap(column, row),
+			Either3::First(Input::Press { column, row }) => app.handle_press(column, row),
+			Either3::First(Input::Release) => app.handle_release(),
 			Either3::Second(message) => handle_message(&mut app, message),
 			Either3::Third(()) => {}
 		}
@@ -141,7 +149,11 @@ async fn serial(usb: USB_DEVICE<'static>) {
 						INPUT.send(Input::Key(key)).await;
 					}
 				}
-				Ok(Remote::Tap(column, row)) => INPUT.send(Input::Tap { column, row }).await,
+				Ok(Remote::Tap(column, row)) => {
+					INPUT.send(Input::Press { column, row }).await;
+					INPUT.send(Input::Tap { column, row }).await;
+					INPUT.send(Input::Release).await;
+				}
 				Ok(Remote::Screen) => SCREEN_WANTED.store(true, Ordering::Relaxed),
 				#[cfg(feature = "voice")]
 				Ok(Remote::Talk(on)) => crate::audio::REMOTE_TALK.store(on, Ordering::Relaxed),
