@@ -1,10 +1,11 @@
-"""Drives a Cardputer's interface over its USB serial port, without resetting it.
+"""Drives a board's interface over its USB serial port, without resetting it.
 
 Usage: python3 drive.py <port> <command>...
 
 Each command is one of:
 	type <text>      types the text
 	key <name>...    presses keys: enter, esc, tab, backspace, space, up, down, left, right
+	tap <col> <row>  taps a touch screen at a character cell
 	screen           prints the screen
 	talk on|off      holds or releases push-to-talk
 	mute on|off      silences the speaker

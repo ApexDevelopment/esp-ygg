@@ -12,7 +12,7 @@ use embassy_time::{Duration, Timer};
 use embedded_hal_bus::spi::{NoDelay, RefCellDevice};
 use esp_hal::Blocking;
 use esp_hal::delay::Delay;
-use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+use esp_hal::gpio::{InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::I2c;
 use esp_hal::peripherals::{
 	GPIO0, GPIO1, GPIO6, GPIO7, GPIO8, GPIO9, GPIO10, GPIO11, GPIO23, I2C0, SPI2,
@@ -21,19 +21,20 @@ use esp_hal::spi::Mode;
 use esp_hal::spi::master::{Config, Spi};
 use esp_hal::time::Rate;
 use esp_ygg_app::ui::Key;
-use esp_ygg_app::ui::touch::{Gestures, Point};
+use esp_ygg_app::ui::touch::{Gesture, Gestures, Point};
 use log::{info, warn};
 use mipidsi::interface::SpiInterface;
 use mipidsi::models::ST7789;
 use mipidsi::options::{ColorInversion, Orientation, Rotation};
+use mousefood::embedded_graphics::mono_font::MonoFont;
 use mousefood::embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use mousefood::embedded_graphics::prelude::DrawTarget;
-use mousefood::{EmbeddedBackend, EmbeddedBackendConfig};
+use mousefood::{EmbeddedBackend, EmbeddedBackendConfig, TerminalAlignment};
 use ratatui::Terminal;
 use static_cell::StaticCell;
 
 use crate::sdcard::{Bus, Slot};
-use crate::ui::{KEYS, Screen};
+use crate::ui::{INPUT, Input, Screen};
 
 pub const MODEL_NAME: &str = "Waveshare ESP32-C6-Touch-LCD-2.8";
 
@@ -105,10 +106,17 @@ pub fn start(spawner: &embassy_executor::Spawner, pins: Pins) -> (Screen, Slot) 
 	let bus = BUS.init(RefCell::new(bus));
 	// Keeps the SD card off the bus while the screen talks.
 	let sd_cs = Output::new(pins.sd_cs, Level::High, OutputConfig::default());
-	let screen = screen(bus, pins.cs, pins.dc);
+	// 40 columns, as on the Cardputer, in a font that suits the larger screen.
+	let font = mousefood::fonts::mono_8x13_atlas();
+	let cell = (
+		font.character_size.width as u16,
+		font.character_size.height as u16,
+	);
+	let screen = screen(bus, pins.cs, pins.dc, font);
 	expander_write(&mut i2c, EXPANDER_BACKLIGHT, u8::MAX);
-	let boot_button = Input::new(pins.boot_button, InputConfig::default().with_pull(Pull::Up));
-	spawner.spawn(touch(i2c, boot_button).expect("spawning the touch task"));
+	let boot_button =
+		esp_hal::gpio::Input::new(pins.boot_button, InputConfig::default().with_pull(Pull::Up));
+	spawner.spawn(touch(i2c, boot_button, cell).expect("spawning the touch task"));
 	(screen, Slot::new(bus, sd_cs, Some(screen_speed())))
 }
 
@@ -138,7 +146,12 @@ fn expander_write(i2c: &mut I2c<'static, Blocking>, register: u8, value: u8) {
 	}
 }
 
-fn screen(bus: &'static Bus, cs: GPIO11<'static>, dc: GPIO10<'static>) -> Screen {
+fn screen(
+	bus: &'static Bus,
+	cs: GPIO11<'static>,
+	dc: GPIO10<'static>,
+	font: MonoFont<'static>,
+) -> Screen {
 	let cs = Output::new(cs, Level::High, OutputConfig::default());
 	let device = RefCellDevice::new_no_delay(bus, cs).expect("display chip select");
 	static BUFFER: StaticCell<[u8; 1024]> = StaticCell::new();
@@ -153,9 +166,11 @@ fn screen(bus: &'static Bus, cs: GPIO11<'static>, dc: GPIO10<'static>) -> Screen
 	// cells that change, so blank cells would never be drawn over.
 	display.clear(Rgb565::BLACK).expect("clearing the display");
 	static DISPLAY: StaticCell<Display> = StaticCell::new();
-	// 40 columns, as on the Cardputer, in a font that suits the larger screen.
+	// The text starts at the top left, so taps map straight onto it.
 	let config = EmbeddedBackendConfig {
-		font_regular: mousefood::fonts::mono_8x13_atlas(),
+		font_regular: font,
+		vertical_alignment: TerminalAlignment::Start,
+		horizontal_alignment: TerminalAlignment::Start,
 		..Default::default()
 	};
 	let backend = EmbeddedBackend::new(DISPLAY.init(display), config);
@@ -179,18 +194,32 @@ fn read_touch(i2c: &mut I2c<'static, Blocking>) -> Option<Point> {
 	Some((y, PANEL_WIDTH.saturating_sub(1 + x)))
 }
 
+/// Reads the touch panel and the BOOT button. `cell` is the size of a
+/// character on the screen, which taps are counted in.
 #[embassy_executor::task]
-async fn touch(mut i2c: I2c<'static, Blocking>, boot_button: Input<'static>) {
+async fn touch(
+	mut i2c: I2c<'static, Blocking>,
+	boot_button: esp_hal::gpio::Input<'static>,
+	cell: (u16, u16),
+) {
+	let (cell_width, cell_height) = cell;
 	let mut gestures = Gestures::new();
 	let mut button_held = false;
 	loop {
 		let point = read_touch(&mut i2c);
-		for key in gestures.update(point) {
-			let _ = KEYS.try_send(key);
+		for gesture in gestures.update(point) {
+			let input = match gesture {
+				Gesture::Key(key) => Input::Key(key),
+				Gesture::Tap((x, y)) => Input::Tap {
+					column: x / cell_width,
+					row: y / cell_height,
+				},
+			};
+			let _ = INPUT.try_send(input);
 		}
 		// The BOOT button goes back, as a swipe to the right does.
 		if boot_button.is_low() && !button_held {
-			let _ = KEYS.try_send(Key::Escape);
+			let _ = INPUT.try_send(Input::Key(Key::Escape));
 		}
 		button_held = boot_button.is_low();
 		Timer::after(TOUCH_INTERVAL).await;

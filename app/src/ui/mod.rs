@@ -17,6 +17,7 @@ mod irc;
 pub mod keyboard;
 mod ping;
 pub mod remote;
+mod screen_keyboard;
 pub mod touch;
 mod view;
 
@@ -24,6 +25,7 @@ use alloc::collections::{BTreeMap, VecDeque};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::cell::Cell;
 use core::net::Ipv6Addr;
 #[cfg(any(
 	feature = "console",
@@ -33,6 +35,8 @@ use core::net::Ipv6Addr;
 ))]
 use core::net::SocketAddrV6;
 
+use ratatui::layout::{Position, Rect};
+use screen_keyboard::{Kind, Press, ScreenKeyboard};
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 use yggdrasil_espnow::{Instant, Mac, Node, Platform, PublicKey};
 
@@ -383,6 +387,10 @@ pub struct App {
 	editing: Option<(Field, TextInput)>,
 	networks: Option<Vec<WifiNetwork>>,
 	networks_selected: usize,
+
+	keyboard: ScreenKeyboard,
+	/// The whole screen, as last drawn, for placing the keyboard.
+	drawn: Cell<Rect>,
 }
 
 impl App {
@@ -417,6 +425,8 @@ impl App {
 			editing: None,
 			networks: None,
 			networks_selected: 0,
+			keyboard: ScreenKeyboard::default(),
+			drawn: Cell::new(Rect::default()),
 		}
 	}
 
@@ -560,6 +570,66 @@ impl App {
 			Outcome::Leave => self.screen = self.parent(),
 			Outcome::Notice(notice) => self.notice = Some(notice.into()),
 		}
+		if self.typing().is_none() {
+			self.keyboard.hide();
+		}
+	}
+
+	/// A tap on a touch screen, at a column and row of the screen. Taps on
+	/// the keyboard type. Any other tap brings the keyboard up while there
+	/// is a text field to type in, and presses Enter otherwise.
+	pub fn handle_tap(&mut self, column: u16, row: u16) {
+		let point = Position::new(column, row);
+		if let Some((area, kind)) = self.keyboard_area()
+			&& area.contains(point)
+		{
+			match self.keyboard.tap(area, kind, point) {
+				Some(Press::Key(key)) => self.handle_key(key),
+				Some(Press::Hide) => self.keyboard.hide(),
+				None => {}
+			}
+			return;
+		}
+		if self.typing().is_none() {
+			self.handle_key(Key::Enter);
+		}
+		if self.typing().is_some() {
+			self.keyboard.show();
+		}
+	}
+
+	/// What kind of text field keys go into, if any.
+	fn typing(&self) -> Option<Kind> {
+		let text = match self.screen {
+			Screen::Settings | Screen::SettingsGroup(_) => {
+				return self.editing.as_ref().map(|(field, _)| match field {
+					Field::Channel | Field::TimeZone | Field::Peer => Kind::Number,
+					_ => Kind::Text,
+				});
+			}
+			Screen::Ping => !self.ping.running,
+			#[cfg(feature = "console")]
+			Screen::Console => true,
+			#[cfg(feature = "gopher")]
+			Screen::Gopher => self.gopher.editing || self.gopher.search.is_some(),
+			#[cfg(feature = "gemini")]
+			Screen::Gemini => self.gemini.editing || self.gemini.prompt.is_some(),
+			#[cfg(feature = "irc")]
+			Screen::Irc => true,
+			#[cfg(feature = "voice")]
+			Screen::Call => self.call.phase == call::Phase::Idle,
+			_ => false,
+		};
+		text.then_some(Kind::Text)
+	}
+
+	/// Where the on-screen keyboard is, and for what kind of field, while
+	/// it is up.
+	fn keyboard_area(&self) -> Option<(Rect, Kind)> {
+		let kind = self.typing().filter(|_| self.keyboard.is_shown())?;
+		let screen = self.drawn.get();
+		let height = ScreenKeyboard::height(kind).min(screen.height);
+		Some((view::split_bottom(screen, height).1, kind))
 	}
 
 	/// Where leaving the current screen goes.

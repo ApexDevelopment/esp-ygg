@@ -31,7 +31,7 @@ use ratatui::Terminal;
 use static_cell::StaticCell;
 
 use crate::sdcard::{Bus, Slot};
-use crate::ui::{KEYS, Screen};
+use crate::ui::{self, INPUT, Screen};
 
 const KEYBOARD_CONTROLLER: u8 = 0x34;
 const SCAN_INTERVAL: Duration = Duration::from_millis(10);
@@ -350,7 +350,7 @@ async fn keyboard(mut reader: KeyReader) {
 		}
 		let held = reader.held();
 		for key in keyboard.update(&held, crate::platform::now()) {
-			let _ = KEYS.try_send(key);
+			let _ = INPUT.try_send(ui::Input::Key(key));
 		}
 		Timer::after(SCAN_INTERVAL).await;
 	}

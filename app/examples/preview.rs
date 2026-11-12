@@ -3,13 +3,18 @@
 //! voice builds answers calls.
 //!
 //! `cargo run -p esp-ygg-app --example preview`, then quit with Ctrl+C.
+//! Add `-- touch` for the touch board's larger screen, where clicks are taps.
 
 use std::io;
 use std::time::{Duration, Instant as WallClock};
 
 use esp_ygg_app::ui::{self, App, Command, Key, Status, Uplink, WifiNetwork};
 use esp_ygg_app::{BoardInfo, Event, Overlay, Settings};
-use ratatui::crossterm::event::{self, Event as TermEvent, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+	self, DisableMouseCapture, EnableMouseCapture, Event as TermEvent, KeyCode, KeyEventKind,
+	KeyModifiers, MouseButton, MouseEventKind,
+};
+use ratatui::crossterm::execute;
 use ratatui::layout::Rect;
 use ratatui::{Terminal, TerminalOptions, Viewport};
 use yggdrasil_espnow::Config;
@@ -44,9 +49,14 @@ fn main() -> io::Result<()> {
 	settings.name = BOARDS[0].into();
 	let mut app = App::new(settings, radio.nodes[0].now());
 
+	let touch = std::env::args().any(|argument| argument == "touch");
+	let rows = if touch { 18 } else { 13 };
 	ratatui::crossterm::terminal::enable_raw_mode()?;
+	if touch {
+		execute!(io::stdout(), EnableMouseCapture)?;
+	}
 	let options = TerminalOptions {
-		viewport: Viewport::Fixed(Rect::new(0, 0, 40, 13)),
+		viewport: Viewport::Fixed(Rect::new(0, 0, 40, rows)),
 	};
 	let mut terminal = Terminal::with_options(
 		ratatui::backend::CrosstermBackend::new(io::stdout()),
@@ -54,6 +64,9 @@ fn main() -> io::Result<()> {
 	)?;
 	terminal.clear()?;
 	let result = run(&mut terminal, &mut radio, &mut overlays, &mut app);
+	if touch {
+		execute!(io::stdout(), DisableMouseCapture)?;
+	}
 	ratatui::crossterm::terminal::disable_raw_mode()?;
 	terminal.clear()?;
 	result
@@ -95,16 +108,22 @@ fn run(
 			carry_out(command, radio, &mut overlays[0], app);
 		}
 		terminal.draw(|frame| ui::draw(frame, app))?;
-		if event::poll(Duration::from_millis(5))?
-			&& let TermEvent::Key(key) = event::read()?
-			&& key.kind == KeyEventKind::Press
-		{
-			if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-				return Ok(());
+		if !event::poll(Duration::from_millis(5))? {
+			continue;
+		}
+		match event::read()? {
+			TermEvent::Key(key) if key.kind == KeyEventKind::Press => {
+				if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+					return Ok(());
+				}
+				if let Some(key) = map_key(key.code) {
+					app.handle_key(key);
+				}
 			}
-			if let Some(key) = map_key(key.code) {
-				app.handle_key(key);
+			TermEvent::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+				app.handle_tap(mouse.column, mouse.row);
 			}
+			_ => {}
 		}
 	}
 }

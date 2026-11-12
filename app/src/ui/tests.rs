@@ -743,3 +743,96 @@ fn takes_and_places_calls() {
 	press(&mut app, &[Key::Escape]);
 	assert_eq!(commands(&mut app), [Command::HangUp]);
 }
+
+/// Renders the app on a screen the size of the touch board's, and returns
+/// it as lines of text.
+fn touch_screen(app: &App) -> Vec<String> {
+	let mut terminal = Terminal::new(TestBackend::new(40, 18)).unwrap();
+	terminal.draw(|frame| draw(frame, app)).unwrap();
+	super::remote::screen_text(terminal.backend().buffer())
+}
+
+/// Where the on-screen keyboard shows `label`, as a column and row.
+fn find_key(app: &App, label: &str) -> Option<(u16, u16)> {
+	let lines = touch_screen(app);
+	let keyboard_top = lines.len() - usize::from(ScreenKeyboard::height(Kind::Text));
+	lines
+		.iter()
+		.enumerate()
+		.skip(keyboard_top)
+		.find_map(|(row, line)| {
+			let cells: Vec<char> = line.chars().collect();
+			let wanted: Vec<char> = label.chars().collect();
+			(0..cells.len()).find_map(|column| {
+				let apart = |at: usize| cells.get(at).is_none_or(|cell| *cell == ' ');
+				let matches = cells[column..].starts_with(&wanted)
+					&& (column == 0 || apart(column - 1))
+					&& apart(column + wanted.len());
+				matches.then_some((column as u16, row as u16))
+			})
+		})
+}
+
+fn tap_keys(app: &mut App, labels: &[&str]) {
+	for label in labels {
+		let (column, row) = find_key(app, label).unwrap_or_else(|| panic!("no {label} key"));
+		app.handle_tap(column, row);
+	}
+}
+
+#[test]
+fn types_settings_on_the_on_screen_keyboard() {
+	let mut app = App::new(Settings::new(), at(0));
+	open(&mut app, "Settings");
+	assert!(find_key(&app, "q").is_none());
+	// Tapping opens the selected field, the name, and brings the keyboard up.
+	app.handle_tap(5, 2);
+	// Shift shows capitals, for one letter.
+	tap_keys(&mut app, &["⇧", "K", "i", "t", "123", "2", "abc", "⏎"]);
+	assert_eq!(app.draft.name, "Kit2");
+	assert!(find_key(&app, "q").is_none());
+}
+
+#[test]
+fn numeric_settings_get_the_shorter_number_pad() {
+	let mut app = App::new(Settings::new(), at(0));
+	open(&mut app, "Settings");
+	press(&mut app, &[Key::Down]);
+	app.handle_tap(5, 2);
+	assert!(find_key(&app, "q").is_none());
+	let (_, digits_row) = find_key(&app, "6").expect("a number pad");
+	assert_eq!(usize::from(digits_row), 18 - 4);
+	tap_keys(&mut app, &["6", "⏎"]);
+	assert_eq!(app.draft.channel, 6);
+}
+
+#[test]
+fn the_keyboard_hides_and_comes_back_on_a_tap() {
+	let mut app = App::new(Settings::new(), at(0));
+	let peer = key(2);
+	app.set_status(status(&[peer], &[peer]));
+	// Opening Ping by tapping starts typing its address.
+	press(&mut app, &[Key::Down, Key::Down]);
+	app.handle_tap(5, 5);
+	assert!(find_key(&app, "q").is_some());
+	tap_keys(&mut app, &["▼"]);
+	assert!(find_key(&app, "q").is_none());
+	// The field stays above the keyboard.
+	app.handle_tap(5, 1);
+	tap_keys(&mut app, &["123"]);
+	let target = address(&peer).to_string();
+	for character in target.chars() {
+		let label = String::from(character);
+		if character.is_ascii_alphabetic() {
+			tap_keys(&mut app, &["abc", &label, "123"]);
+		} else {
+			tap_keys(&mut app, &[&label]);
+		}
+	}
+	assert!(touch_screen(&app)[1].contains(&target[target.len() - 10..]));
+	// Starting the ping ends typing, and the keyboard with it.
+	tap_keys(&mut app, &["⏎"]);
+	app.tick(at(1));
+	assert!(commands(&mut app).contains(&Command::Ping(address(&peer))));
+	assert!(find_key(&app, "q").is_none());
+}

@@ -26,7 +26,13 @@ pub(super) const SELECTED: Style = Style::new().fg(Color::Black).bg(ACCENT);
 
 /// Draws the whole screen.
 pub fn draw(frame: &mut Frame, app: &App) {
-	let (title, rest) = split_top(frame.area(), 1);
+	app.drawn.set(frame.area());
+	let mut screen = frame.area();
+	if let Some((keyboard, kind)) = app.keyboard_area() {
+		screen = split_bottom(screen, keyboard.height).0;
+		app.keyboard.draw(frame, keyboard, kind);
+	}
+	let (title, rest) = split_top(screen, 1);
 	let (body, footer) = split_bottom(rest, 1);
 	draw_title(frame, title, app);
 	match app.screen {

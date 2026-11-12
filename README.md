@@ -97,9 +97,9 @@ In fields that take an address, typing the start of a known node's address or na
 
 The arrow keys are Fn with `;` `.` `,` and `/`, and Escape is Fn with `` ` ``. In lists, the same keys work without Fn.
 
-On the touch screen, dragging up or down moves the selection a row at a time, following the finger. A tap is Enter, and a swipe to the right or the BOOT button is Escape. It has no on-screen keyboard yet, so text has to be typed over the serial port, as below, or written into the settings file on an SD card and imported.
+On the touch screen, dragging up or down moves the selection a row at a time, following the finger. A tap is Enter, and a swipe to the right or the BOOT button is Escape. When a tap opens a text field, a keyboard comes up on the lower half of the screen, with `123` for digits and symbols and `▼` to put it away. Tapping anywhere above it while the field is still open brings it back. Fields that only take numbers, such as the channel, time zone and peer, get a number pad of two rows instead, which leaves more of the screen to see.
 
-The interface can also be driven from a computer over the USB serial port, for testing without someone at the keyboard. `firmware/drive.py` sends lines such as `type 200::1`, `key down enter` and `screen`, which prints what the screen shows, and it does so without resetting the board:
+The interface can also be driven from a computer over the USB serial port, for testing without someone at the keyboard. `firmware/drive.py` sends lines such as `type 200::1`, `key down enter`, `tap 5 2`, which taps a touch screen at a column and row of characters, and `screen`, which prints what the screen shows, and it does so without resetting the board:
 
 ```sh
 python3 firmware/drive.py /dev/ttyACM0 "key down down enter" "type 200::1" "key enter" "wait 3" screen
@@ -107,7 +107,7 @@ python3 firmware/drive.py /dev/ttyACM0 "key down down enter" "type 200::1" "key 
 
 In voice builds, `talk on` and `talk off` hold and release push-to-talk, and `mute on` silences the speaker for quiet testing.
 
-To try the interface without a board, run `cargo run -p esp-ygg-app --example preview`. It shows the interface in a terminal as one of three simulated boards in a line, where the farthest one echoes console messages back.
+To try the interface without a board, run `cargo run -p esp-ygg-app --example preview`. It shows the interface in a terminal as one of three simulated boards in a line, where the farthest one echoes console messages back. Add `-- touch` for the touch board's larger screen, where mouse clicks are taps.
 
 ## Voice calls
 

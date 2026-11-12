@@ -1,6 +1,7 @@
-//! Turns a touch screen's samples into [`Key`] presses, for boards without
-//! a keyboard. Dragging up or down moves the selection a row at a time,
-//! following the finger. A tap is Enter, and a swipe to the right is Escape.
+//! Turns a touch screen's samples into gestures, for boards without a
+//! keyboard. Dragging up or down moves the selection a row at a time,
+//! following the finger, and a swipe to the right is Escape. Taps keep where
+//! they were, for [`super::App::handle_tap`].
 
 use alloc::vec::Vec;
 
@@ -8,6 +9,12 @@ use super::Key;
 
 /// A point on the screen in pixels, from the top left.
 pub type Point = (u16, u16);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gesture {
+	Key(Key),
+	Tap(Point),
+}
 
 /// How far a finger drags for each row the selection moves.
 const STEP: u16 = 24;
@@ -35,8 +42,8 @@ impl Gestures {
 	}
 
 	/// Takes where the screen is touched right now, if anywhere, and returns
-	/// the key presses since the last call.
-	pub fn update(&mut self, point: Option<Point>) -> Vec<Key> {
+	/// the gestures since the last call.
+	pub fn update(&mut self, point: Option<Point>) -> Vec<Gesture> {
 		let mut keys = Vec::new();
 		match (point, &mut self.touch) {
 			(Some(point), None) => {
@@ -68,30 +75,30 @@ impl Touch {
 		self.last.1.abs_diff(self.start.1) > self.last.0.abs_diff(self.start.0)
 	}
 
-	fn drag(&mut self, keys: &mut Vec<Key>) {
+	fn drag(&mut self, keys: &mut Vec<Gesture>) {
 		let y = self.last.1;
 		while y >= self.anchor + STEP {
-			keys.push(Key::Down);
+			keys.push(Gesture::Key(Key::Down));
 			self.anchor += STEP;
 			self.dragged = true;
 		}
 		while y + STEP <= self.anchor {
-			keys.push(Key::Up);
+			keys.push(Gesture::Key(Key::Up));
 			self.anchor -= STEP;
 			self.dragged = true;
 		}
 	}
 
-	fn release(&self) -> Option<Key> {
+	fn release(&self) -> Option<Gesture> {
 		if self.dragged {
 			return None;
 		}
 		let across = self.last.0.abs_diff(self.start.0);
 		let down = self.last.1.abs_diff(self.start.1);
 		if self.last.0 > self.start.0 && across >= SWIPE && across > down {
-			Some(Key::Escape)
+			Some(Gesture::Key(Key::Escape))
 		} else if across <= TAP_SLOP && down <= TAP_SLOP {
-			Some(Key::Enter)
+			Some(Gesture::Tap(self.start))
 		} else {
 			None
 		}
@@ -102,7 +109,7 @@ impl Touch {
 mod tests {
 	use super::*;
 
-	fn run(points: &[Option<Point>]) -> Vec<Key> {
+	fn run(points: &[Option<Point>]) -> Vec<Gesture> {
 		let mut gestures = Gestures::new();
 		points
 			.iter()
@@ -111,10 +118,10 @@ mod tests {
 	}
 
 	#[test]
-	fn a_steady_touch_is_enter() {
+	fn a_steady_touch_is_a_tap_where_it_started() {
 		assert_eq!(
 			run(&[Some((100, 100)), Some((104, 97)), None]),
-			[Key::Enter]
+			[Gesture::Tap((100, 100))]
 		);
 	}
 
@@ -122,19 +129,20 @@ mod tests {
 	fn a_swipe_right_is_escape_and_left_is_nothing() {
 		assert_eq!(
 			run(&[Some((50, 100)), Some((90, 104)), Some((130, 108)), None]),
-			[Key::Escape]
+			[Gesture::Key(Key::Escape)]
 		);
 		assert_eq!(run(&[Some((130, 100)), Some((50, 100)), None]), []);
 	}
 
 	#[test]
-	fn dragging_moves_a_row_per_step_and_ends_without_enter() {
+	fn dragging_moves_a_row_per_step_and_ends_without_a_tap() {
 		let keys = run(&[
 			Some((100, 100)),
 			Some((101, 100 + STEP * 2 + 5)),
 			Some((101, 100 - STEP)),
 			None,
 		]);
-		assert_eq!(keys, [Key::Down, Key::Down, Key::Up, Key::Up, Key::Up]);
+		let [down, up] = [Key::Down, Key::Up].map(Gesture::Key);
+		assert_eq!(keys, [down, down, up, up, up]);
 	}
 }

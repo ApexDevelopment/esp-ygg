@@ -4,6 +4,7 @@
 //! - `type <text>` types the text after the space.
 //! - `key <name>...` presses keys by name: `enter`, `esc`, `tab`,
 //!   `backspace`, `space`, `up`, `down`, `left` and `right`.
+//! - `tap <column> <row>` taps the touch screen at a character cell.
 //! - `screen` asks for the screen as text.
 //! - `talk on` and `talk off` hold and release the push-to-talk button.
 //! - `mute on` and `mute off` silence the speaker, for quiet testing.
@@ -23,6 +24,7 @@ pub const SCREEN_END: &str = "--- end ---";
 #[derive(Debug, PartialEq, Eq)]
 pub enum Remote {
 	Keys(Vec<Key>),
+	Tap(u16, u16),
 	Screen,
 	Talk(bool),
 	Mute(bool),
@@ -39,6 +41,13 @@ pub fn parse(line: &str) -> Result<Remote, String> {
 			.map(|name| key_named(name).ok_or_else(|| alloc::format!("No key named {name}")))
 			.collect::<Result<_, _>>()
 			.map(Remote::Keys),
+		"tap" => {
+			let mut numbers = rest.split_whitespace().map(str::parse::<u16>);
+			match (numbers.next(), numbers.next(), numbers.next()) {
+				(Some(Ok(column)), Some(Ok(row)), None) => Ok(Remote::Tap(column, row)),
+				_ => Err(alloc::format!("Tap at a column and row, not {rest}")),
+			}
+		}
 		"screen" => Ok(Remote::Screen),
 		"talk" if rest == "on" => Ok(Remote::Talk(true)),
 		"talk" if rest == "off" => Ok(Remote::Talk(false)),
@@ -110,6 +119,8 @@ mod tests {
 			parse("key down enter"),
 			Ok(Remote::Keys(alloc::vec![Key::Down, Key::Enter]))
 		);
+		assert_eq!(parse("tap 3 12"), Ok(Remote::Tap(3, 12)));
+		assert!(parse("tap 3").is_err());
 		assert_eq!(parse("screen"), Ok(Remote::Screen));
 		assert_eq!(parse("talk on"), Ok(Remote::Talk(true)));
 		assert!(parse("key sideways").is_err());

@@ -50,8 +50,18 @@ pub enum ToUi {
 pub static TO_UI: Channel<CriticalSectionRawMutex, ToUi, 16> = Channel::new();
 /// What the UI asks the network side to do.
 pub static FROM_UI: Channel<CriticalSectionRawMutex, Command, 8> = Channel::new();
-/// Key presses, from the board's keyboard or touch screen, or the serial port.
-pub static KEYS: Channel<CriticalSectionRawMutex, Key, 16> = Channel::new();
+/// Key presses and taps, from the board's keyboard or touch screen, or the
+/// serial port.
+pub static INPUT: Channel<CriticalSectionRawMutex, Input, 16> = Channel::new();
+
+pub enum Input {
+	Key(Key),
+	/// A tap on the touch screen, at a character cell.
+	Tap {
+		column: u16,
+		row: u16,
+	},
+}
 
 /// Whether the serial port asked to see the screen.
 static SCREEN_WANTED: AtomicBool = AtomicBool::new(false);
@@ -74,8 +84,9 @@ async fn run(mut screen: Screen, mut slot: Slot, settings: Settings) {
 	loop {
 		#[cfg(feature = "cardputer")]
 		second_core::report_stack();
-		match select3(KEYS.receive(), TO_UI.receive(), Timer::after(TICK)).await {
-			Either3::First(key) => app.handle_key(key),
+		match select3(INPUT.receive(), TO_UI.receive(), Timer::after(TICK)).await {
+			Either3::First(Input::Key(key)) => app.handle_key(key),
+			Either3::First(Input::Tap { column, row }) => app.handle_tap(column, row),
 			Either3::Second(message) => handle_message(&mut app, message),
 			Either3::Third(()) => {}
 		}
@@ -127,9 +138,10 @@ async fn serial(usb: USB_DEVICE<'static>) {
 			match remote::parse(&text) {
 				Ok(Remote::Keys(keys)) => {
 					for key in keys {
-						KEYS.send(key).await;
+						INPUT.send(Input::Key(key)).await;
 					}
 				}
+				Ok(Remote::Tap(column, row)) => INPUT.send(Input::Tap { column, row }).await,
 				Ok(Remote::Screen) => SCREEN_WANTED.store(true, Ordering::Relaxed),
 				#[cfg(feature = "voice")]
 				Ok(Remote::Talk(on)) => crate::audio::REMOTE_TALK.store(on, Ordering::Relaxed),
