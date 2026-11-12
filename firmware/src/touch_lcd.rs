@@ -64,7 +64,7 @@ mod screen {
 	use esp_hal::time::Rate;
 	use esp_ygg_app::ui::touch::Point;
 	use log::{info, warn};
-	use mipidsi::interface::SpiInterface;
+	use mipidsi::interface::{Interface, SpiInterface};
 	use mipidsi::models::ST7789;
 	use mipidsi::options::{ColorInversion, Orientation, Rotation};
 	use static_cell::StaticCell;
@@ -178,6 +178,41 @@ mod screen {
 		Delay::new().delay_millis(500);
 	}
 
+	/// Waveshare's settings for this panel's voltages, timing and gamma, from
+	/// their examples. With the controller's own defaults, the panel holds a
+	/// faint copy of whatever it showed for a while. Their list also sets
+	/// how the controller orders bytes, which is left as the driver set it.
+	const PANEL_SETTINGS: &[(u8, &[u8])] = &[
+		// Porch timing
+		(0xB2, &[0x0C, 0x0C, 0x00, 0x33, 0x33]),
+		// Gate voltages
+		(0xB7, &[0x75]),
+		// The common voltage the liquid crystal is driven around
+		(0xBB, &[0x1A]),
+		(0xC0, &[0x2C]),
+		(0xC2, &[0x01, 0xFF]),
+		// Source voltages
+		(0xC3, &[0x13]),
+		(0xC4, &[0x20]),
+		// 60 frames a second
+		(0xC6, &[0x0F]),
+		(0xD0, &[0xA4, 0xA1]),
+		(0xD6, &[0xA1]),
+		// Gamma, for light and dark
+		(
+			0xE0,
+			&[
+				0xD0, 0x0D, 0x14, 0x0D, 0x0D, 0x09, 0x38, 0x44, 0x4E, 0x3A, 0x17, 0x18, 0x2F, 0x30,
+			],
+		),
+		(
+			0xE1,
+			&[
+				0xD0, 0x09, 0x0F, 0x08, 0x07, 0x14, 0x37, 0x44, 0x4D, 0x38, 0x15, 0x16, 0x2C, 0x2E,
+			],
+		),
+	];
+
 	/// Starts the display, cleared to black.
 	fn display(bus: &'static Bus, cs: GPIO11<'static>, dc: GPIO10<'static>) -> Display {
 		let cs = Output::new(cs, Level::High, OutputConfig::default());
@@ -190,6 +225,14 @@ mod screen {
 			.invert_colors(ColorInversion::Inverted)
 			.init(&mut Delay::new())
 			.expect("starting the display");
+		// SAFETY: these settings leave alone the orientation, pixel format
+		// and byte order the driver set up and relies on.
+		let commands = unsafe { display.dcs() };
+		for &(command, arguments) in PANEL_SETTINGS {
+			if let Err(error) = commands.send_command(command, arguments) {
+				warn!("Setting up the panel failed: {error:?}");
+			}
+		}
 		// The panel powers up with random contents, and interfaces only draw
 		// what changes.
 		display.clear(Rgb565::BLACK).expect("clearing the display");
