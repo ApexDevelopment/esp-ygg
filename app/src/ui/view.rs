@@ -13,7 +13,7 @@ use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 #[cfg(feature = "apps")]
 use super::APPS;
 use super::{App, FIELDS, Field, Group, Lookup, MENU, MENUS, Screen, TextInput, Uplink};
-use crate::time::format_offset;
+use crate::time::{format_offset, short_uptime};
 
 /// Where the speaker icon's two cells start, counted from the title
 /// bar's right edge.
@@ -171,11 +171,7 @@ fn draw_home(frame: &mut Frame, area: Rect, app: &App) {
 			lines.push(Line::styled(
 				format!(
 					" {} neighbors  {} peers  {} known",
-					status
-						.neighbors
-						.iter()
-						.filter(|neighbor| neighbor.key.is_some())
-						.count(),
+					status.connected_neighbors(),
 					status.peers.len(),
 					status.known.len()
 				),
@@ -243,15 +239,6 @@ fn app_unread(app: &App, screen: Screen) -> usize {
 		#[cfg(feature = "irc")]
 		Screen::Irc => app.irc.unread(),
 		_ => 0,
-	}
-}
-
-fn short_uptime(seconds: u64) -> String {
-	match seconds {
-		0..60 => format!("{seconds} s"),
-		60..3600 => format!("{} min", seconds / 60),
-		3600..86_400 => format!("{} h {} min", seconds / 3600, seconds / 60 % 60),
-		_ => format!("{} d {} h", seconds / 86_400, seconds / 3600 % 24),
 	}
 }
 

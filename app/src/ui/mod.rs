@@ -162,6 +162,14 @@ pub struct Status {
 }
 
 impl Status {
+	/// ESP-NOW neighbors that have finished the Yggdrasil handshake.
+	pub fn connected_neighbors(&self) -> usize {
+		self.neighbors
+			.iter()
+			.filter(|neighbor| neighbor.key.is_some())
+			.count()
+	}
+
 	pub fn from_node<P: Platform>(node: &Node<P>, board: &BoardInfo, uplink: Uplink) -> Self {
 		let debug = node.network().debug();
 		let own = node.public_key();

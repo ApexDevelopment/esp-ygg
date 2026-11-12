@@ -96,6 +96,17 @@ pub fn format_offset(minutes: i16) -> String {
 	format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60)
 }
 
+
+/// How long something has been up, to the nearest unit worth showing.
+pub fn short_uptime(seconds: u64) -> String {
+	match seconds {
+		0..60 => format!("{seconds} s"),
+		60..3600 => format!("{} min", seconds / 60),
+		3600..86_400 => format!("{} h {} min", seconds / 3600, seconds / 60 % 60),
+		_ => format!("{} d {} h", seconds / 86_400, seconds / 3600 % 24),
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
