@@ -1,0 +1,17 @@
+[package]
+name = "esp-ygg-gui"
+version = "0.1.0"
+edition = "2024"
+description = "A graphical interface for esp-ygg boards with larger screens, made with Slint"
+license-file = "../LICENSE"
+publish = false
+
+[dependencies]
+slint = { version = "1.18.1", default-features = false, features = ["compat-1-2", "unsafe-single-threaded", "libm", "renderer-software"] }
+
+[build-dependencies]
+slint-build = "1.18.1"
+
+[dev-dependencies]
+# Saves what the screen shows, in the screenshot example
+png = "0.18.1"

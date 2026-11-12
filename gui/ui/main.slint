@@ -1,0 +1,46 @@
+import { SmallAppBar, ListTile, Switch, FilledButton, MaterialText, MaterialTypography, MaterialPalette, MaterialWindow } from "@material";
+
+export component MainWindow inherits MaterialWindow {
+    in property <string> address: "200:df46:a2ec:76e9:82a7:4f61:fe3d:e486";
+    in property <int> neighbors: 1;
+    in property <int> known: 3;
+    in-out property <bool> bridge: false;
+    callback ping();
+
+    width: 320px;
+    height: 240px;
+
+    VerticalLayout {
+        SmallAppBar {
+            title: "esp-ygg";
+        }
+        MaterialText {
+            text: root.address;
+            style: MaterialTypography.body_small;
+            color: MaterialPalette.on_surface_variant;
+            horizontal_alignment: center;
+        }
+        ListTile {
+            text: "Yggdrasil Nodes";
+            supporting_text: root.known + " known";
+        }
+        HorizontalLayout {
+            padding_left: 16px;
+            padding_right: 16px;
+            spacing: 16px;
+            alignment: space_between;
+            MaterialText {
+                text: "Bridge";
+                style: MaterialTypography.body_large;
+                vertical_alignment: center;
+            }
+            Switch {
+                checked <=> root.bridge;
+            }
+            FilledButton {
+                text: "Ping";
+                clicked => { root.ping(); }
+            }
+        }
+    }
+}

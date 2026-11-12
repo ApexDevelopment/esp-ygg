@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["app", "node"]
+members = ["app", "gui", "node"]
 exclude = ["firmware"]
 
 # The same rustls as the firmware, so tests run what boards run.
