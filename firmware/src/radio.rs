@@ -66,7 +66,7 @@ fn record_send(mac: Mac, delivered: bool) {
 }
 
 /// The recent average signal in dBm and loss in percent for `mac`.
-#[cfg_attr(not(feature = "cardputer"), allow(dead_code))]
+#[cfg_attr(not(feature = "ui"), allow(dead_code))]
 pub fn quality(mac: &Mac) -> (Option<i8>, Option<u8>) {
 	QUALITY.lock(|quality| {
 		let entry = quality.borrow().get(mac).copied().unwrap_or_default();
@@ -78,7 +78,7 @@ pub fn quality(mac: &Mac) -> (Option<i8>, Option<u8>) {
 }
 
 /// Forgets every address but `keep`, making room for new neighbors.
-#[cfg_attr(not(feature = "cardputer"), allow(dead_code))]
+#[cfg_attr(not(feature = "ui"), allow(dead_code))]
 pub fn forget_others(keep: &[Mac]) {
 	QUALITY.lock(|quality| quality.borrow_mut().retain(|mac, _| keep.contains(mac)));
 }

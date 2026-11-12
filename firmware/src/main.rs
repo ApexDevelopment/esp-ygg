@@ -20,7 +20,9 @@ mod sdcard;
 #[cfg(feature = "voice")]
 mod speaker;
 mod storage;
-#[cfg(feature = "cardputer")]
+#[cfg(feature = "c6-touch-lcd")]
+mod touch_lcd;
+#[cfg(feature = "ui")]
 mod ui;
 mod uplink;
 
@@ -41,7 +43,7 @@ use esp_radio::esp_now::{
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{Config as WifiConfig, ControllerConfig, Interface, WifiController};
 use esp_storage::FlashStorage;
-#[cfg(feature = "cardputer")]
+#[cfg(feature = "ui")]
 use esp_ygg_app::ui::{Command, Status, Uplink, WifiNetwork};
 use esp_ygg_app::{BoardInfo, Overlay, Settings};
 use log::{info, warn};
@@ -60,7 +62,7 @@ const DEFAULT_CHANNEL: u8 = 1;
 const MAX_ESPNOW_PEERS: usize = 20;
 const STALL_WARNING: Duration = Duration::from_millis(500);
 /// How often the UI gets a fresh status.
-#[cfg(feature = "cardputer")]
+#[cfg(feature = "ui")]
 const STATUS_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(feature = "esp32s3")]
@@ -217,7 +219,7 @@ async fn main(spawner: Spawner) -> ! {
 			gpio6: peripherals.GPIO6,
 			gpio7: peripherals.GPIO7,
 		};
-		ui::start(
+		ui::second_core::start(
 			peripherals.CPU_CTRL,
 			(peripherals.FROM_CPU_INTR1, peripherals.FROM_CPU_INTR3),
 			pins,
@@ -245,7 +247,30 @@ async fn main(spawner: Spawner) -> ! {
 			settings.clone(),
 		);
 	}
-	#[cfg(feature = "cardputer")]
+	#[cfg(feature = "c6-touch-lcd")]
+	{
+		let pins = touch_lcd::Pins {
+			spi: peripherals.SPI2,
+			sck: peripherals.GPIO0,
+			mosi: peripherals.GPIO1,
+			cs: peripherals.GPIO11,
+			dc: peripherals.GPIO10,
+			sd_cs: peripherals.GPIO23,
+			i2c: peripherals.I2C0,
+			sda: peripherals.GPIO6,
+			scl: peripherals.GPIO7,
+			boot_button: peripherals.GPIO9,
+		};
+		let screen = touch_lcd::start(&spawner, pins);
+		ui::spawn(
+			&spawner,
+			screen,
+			ui::Slot,
+			peripherals.USB_DEVICE,
+			settings.clone(),
+		);
+	}
+	#[cfg(feature = "ui")]
 	let mut next_status = Instant::now();
 	#[cfg(feature = "voice")]
 	let mut call = call::CallLink::default();
@@ -267,7 +292,7 @@ async fn main(spawner: Spawner) -> ! {
 		.min()
 		.unwrap_or_else(|| Instant::now() + Duration::from_secs(1))
 		.min(next_save);
-		#[cfg(feature = "cardputer")]
+		#[cfg(feature = "ui")]
 		{
 			wake = wake.min(next_status);
 		}
@@ -287,13 +312,13 @@ async fn main(spawner: Spawner) -> ! {
 			Wake::Uplink(message) => handle_uplink(&mut node, &mut stream, message),
 			Wake::Lost(lost) => node.frame_lost(lost.mac, &lost.frame),
 			Wake::Hotspot(frame) => overlay.receive_hotspot_frame(&mut node, &frame),
-			#[cfg(feature = "cardputer")]
+			#[cfg(feature = "ui")]
 			Wake::Ui(UiInput::Command(command)) => {
 				carry_out(command, &mut node, &mut overlay, &mut store);
 			}
 			#[cfg(feature = "voice")]
 			Wake::Ui(UiInput::Voice(frame)) => call.send(&mut overlay, &frame, node.now()),
-			#[cfg(feature = "cardputer")]
+			#[cfg(feature = "ui")]
 			Wake::Ui(UiInput::Networks(networks)) => {
 				if !bridge {
 					// Scanning hops channels, so return to the mesh's.
@@ -327,7 +352,7 @@ async fn main(spawner: Spawner) -> ! {
 			let _ = hotspot::TO_HOTSPOT.try_send(frame);
 		}
 
-		#[cfg(feature = "cardputer")]
+		#[cfg(feature = "ui")]
 		{
 			// If the UI falls behind, it misses some updates rather than
 			// holding up the network.
@@ -350,7 +375,7 @@ async fn main(spawner: Spawner) -> ! {
 			}
 		}
 		// Without a screen, the console's messages go to the log.
-		#[cfg(not(feature = "cardputer"))]
+		#[cfg(not(feature = "ui"))]
 		while let Some(_event) = overlay.poll_event() {
 			#[cfg(feature = "console")]
 			if let esp_ygg_app::Event::Datagram { from, data } = _event {
@@ -401,7 +426,7 @@ enum Wake {
 	/// A frame the radio could not deliver
 	Lost(radio::Outgoing),
 	Hotspot(Vec<u8>),
-	#[cfg(feature = "cardputer")]
+	#[cfg(feature = "ui")]
 	Ui(UiInput),
 }
 
@@ -414,9 +439,9 @@ async fn next_wake(receiver: &mut EspNowReceiver, at: Instant) -> Wake {
 	let uplink = async { Wake::Uplink(TO_NODE.receive().await) };
 	let lost = async { Wake::Lost(radio::LOST.receive().await) };
 	let hotspot = async { Wake::Hotspot(hotspot::FROM_HOTSPOT.receive().await) };
-	#[cfg(feature = "cardputer")]
+	#[cfg(feature = "ui")]
 	let ui = async { Wake::Ui(next_ui_input().await) };
-	#[cfg(not(feature = "cardputer"))]
+	#[cfg(not(feature = "ui"))]
 	let ui = core::future::pending::<Wake>();
 	match select4(frame, timer, uplink, select3(lost, hotspot, ui)).await {
 		Either4::First(wake)
@@ -426,7 +451,7 @@ async fn next_wake(receiver: &mut EspNowReceiver, at: Instant) -> Wake {
 	}
 }
 
-#[cfg(feature = "cardputer")]
+#[cfg(feature = "ui")]
 enum UiInput {
 	Command(Command),
 	Networks(Vec<uplink::ScannedNetwork>),
@@ -436,7 +461,7 @@ enum UiInput {
 }
 
 /// A command from the UI, the results of a scan it asked for, or voice.
-#[cfg(feature = "cardputer")]
+#[cfg(feature = "ui")]
 async fn next_ui_input() -> UiInput {
 	let command = async { UiInput::Command(ui::FROM_UI.receive().await) };
 	let networks = async { UiInput::Networks(uplink::SCAN_RESULTS.receive().await) };
@@ -449,7 +474,7 @@ async fn next_ui_input() -> UiInput {
 	}
 }
 
-#[cfg(feature = "cardputer")]
+#[cfg(feature = "ui")]
 fn show_networks(networks: Vec<uplink::ScannedNetwork>) {
 	let networks = networks
 		.into_iter()
@@ -463,7 +488,7 @@ fn show_networks(networks: Vec<uplink::ScannedNetwork>) {
 }
 
 /// Gives the UI the node's state, with each neighbor's radio quality.
-#[cfg(feature = "cardputer")]
+#[cfg(feature = "ui")]
 fn send_status(
 	node: &Node<EspPlatform>,
 	board: &BoardInfo,
@@ -484,17 +509,17 @@ fn send_status(
 	let _ = ui::TO_UI.try_send(ui::ToUi::Status(status));
 }
 
-#[cfg(feature = "cardputer")]
+#[cfg(feature = "ui")]
 fn model_name() -> &'static str {
-	ui::model_name()
+	ui::board::model_name()
 }
 
-#[cfg(not(feature = "cardputer"))]
+#[cfg(not(feature = "ui"))]
 fn model_name() -> &'static str {
 	CHIP
 }
 
-#[cfg(feature = "cardputer")]
+#[cfg(feature = "ui")]
 fn uplink_state(bridge: bool, node: &Node<EspPlatform>, stream: Option<StreamId>) -> Uplink {
 	if !bridge {
 		Uplink::Off
@@ -507,7 +532,7 @@ fn uplink_state(bridge: bool, node: &Node<EspPlatform>, stream: Option<StreamId>
 	}
 }
 
-#[cfg(feature = "cardputer")]
+#[cfg(feature = "ui")]
 fn carry_out(
 	command: Command,
 	node: &mut Node<EspPlatform>,

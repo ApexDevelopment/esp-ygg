@@ -1,38 +1,41 @@
-//! Runs the on-device UI on the second core, so drawing and scanning keys
-//! never delay the radio and network work on the first. The cores exchange
-//! messages through channels.
+//! Runs the on-device UI and talks to the network side through channels.
+//! On the Cardputer, the UI has the second core to itself, so drawing and
+//! scanning keys never delay the radio and network work on the first. On
+//! single-core boards, it runs as a task beside the network.
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
+use embassy_executor::Spawner;
 use embassy_futures::select::{Either3, select3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use embedded_io_async::Read;
-#[cfg(feature = "voice")]
-use esp_hal::peripherals::FROM_CPU_INTR2;
-use esp_hal::peripherals::{CPU_CTRL, FROM_CPU_INTR1, FROM_CPU_INTR3, USB_DEVICE};
-use esp_hal::system::Stack;
+use esp_hal::peripherals::USB_DEVICE;
 use esp_hal::usb::usb_serial_jtag::UsbSerialJtag;
-use esp_rtos::embassy::Executor;
 use esp_ygg_app::ui::remote::{self, Remote};
-use esp_ygg_app::ui::{self, App, Command, Status, WifiNetwork};
+use esp_ygg_app::ui::{self, App, Command, Key, Status, WifiNetwork};
 use esp_ygg_app::{Event, Settings};
-use log::{info, warn};
-use static_cell::StaticCell;
+use log::warn;
+use mousefood::EmbeddedBackend;
+use mousefood::embedded_graphics::pixelcolor::Rgb565;
+use ratatui::Terminal;
 use yggdrasil_espnow::PublicKey;
 
-use crate::cardputer::{self, KEYS, Model, Pins, Screen};
+#[cfg(feature = "cardputer")]
+pub(crate) use crate::cardputer as board;
 use crate::platform::now;
-use crate::sdcard::Slot;
+#[cfg(feature = "c6-touch-lcd")]
+pub(crate) use crate::touch_lcd as board;
+
+pub type Screen = Terminal<EmbeddedBackend<'static, board::Display, Rgb565>>;
 
 /// How often the UI runs its timers when nothing else happens.
 const TICK: Duration = Duration::from_millis(100);
-/// TLS for Gemini goes deepest, at 14 KB in a handshake with an elliptic
-/// curve certificate. RSA certificates need more.
-const STACK_SIZE: usize = 24 * 1024;
+/// The longest command line read from the serial port.
+const MAX_COMMAND: usize = 512;
 
 /// What the network side tells the UI.
 pub enum ToUi {
@@ -45,101 +48,30 @@ pub enum ToUi {
 pub static TO_UI: Channel<CriticalSectionRawMutex, ToUi, 16> = Channel::new();
 /// What the UI asks the network side to do.
 pub static FROM_UI: Channel<CriticalSectionRawMutex, Command, 8> = Channel::new();
+/// Key presses, from the board's keyboard or touch screen, or the serial port.
+pub static KEYS: Channel<CriticalSectionRawMutex, Key, 16> = Channel::new();
 
-/// 0 until the second core has detected the board.
-static MODEL: AtomicU8 = AtomicU8::new(0);
 /// Whether the serial port asked to see the screen.
 static SCREEN_WANTED: AtomicBool = AtomicBool::new(false);
-/// The longest command line read from the serial port.
-const MAX_COMMAND: usize = 512;
-/// Fills the UI's stack at first, to tell later how deep it has been used.
-const UNUSED: u8 = 0xa5;
-static STACK_BOTTOM: AtomicUsize = AtomicUsize::new(0);
 
-/// The most of the UI's stack used so far. The stack grows down, so this
-/// counts from the bottom up to the first byte that is no longer marked.
-fn stack_used() -> usize {
-	let bottom = STACK_BOTTOM.load(Ordering::Relaxed) as *const u8;
-	// The bottom holds esp-rtos's guard, which is not marked.
-	const GUARD: usize = 256;
-	let unused = (GUARD..STACK_SIZE)
-		// SAFETY: reads within the stack, which lives forever.
-		.take_while(|&offset| unsafe { bottom.add(offset).read_volatile() } == UNUSED)
-		.count();
-	STACK_SIZE - GUARD - unused
-}
-
-/// Starts the screen, the keyboard and the UI on the second core.
-pub fn start(
-	cpu_control: CPU_CTRL<'static>,
-	(interrupt, park): (FROM_CPU_INTR1<'static>, FROM_CPU_INTR3<'static>),
-	pins: Pins,
-	sd: crate::sdcard::Pins,
+/// Starts the UI task and the serial port's, once the board has its screen.
+pub fn spawn(
+	spawner: &Spawner,
+	screen: Screen,
+	slot: Slot,
 	usb: USB_DEVICE<'static>,
-	#[cfg(feature = "voice")] audio: (crate::audio::Pins, FROM_CPU_INTR2<'static>),
 	settings: Settings,
 ) {
-	static STACK: StaticCell<Stack<STACK_SIZE>> = StaticCell::new();
-	let stack = STACK.init(Stack::new());
-	// SAFETY: the stack is not in use until the core starts below.
-	unsafe {
-		stack
-			.mem
-			.as_mut_ptr()
-			.cast::<u8>()
-			.write_bytes(UNUSED, STACK_SIZE);
-	}
-	STACK_BOTTOM.store(stack.mem.as_ptr() as usize, Ordering::Relaxed);
-	esp_rtos::start_second_core(cpu_control, interrupt, stack, move || {
-		static EXECUTOR: StaticCell<Executor> = StaticCell::new();
-		crate::park::arm(park);
-		EXECUTOR.init(Executor::new()).run(|spawner| {
-			let (model, screen) = cardputer::start(&spawner, pins);
-			MODEL.store(model as u8 + 1, Ordering::Relaxed);
-			#[cfg(feature = "voice")]
-			start_audio(audio, model);
-			let slot = crate::sdcard::Slot::new(sd);
-			spawner.spawn(run(screen, slot, settings).expect("spawning the UI task"));
-			spawner.spawn(serial(usb).expect("spawning the serial task"));
-		});
-	});
-}
-
-/// Runs audio from an interrupt, so it goes ahead of drawing the screen
-/// and the DMA never runs dry.
-#[cfg(feature = "voice")]
-fn start_audio((pins, interrupt): (crate::audio::Pins, FROM_CPU_INTR2<'static>), model: Model) {
-	use esp_rtos::embassy::InterruptExecutor;
-	static EXECUTOR: StaticCell<InterruptExecutor<2>> = StaticCell::new();
-	let spawner = EXECUTOR
-		.init(InterruptExecutor::new(interrupt))
-		.start(esp_hal::interrupt::Priority::Priority1);
-	spawner.spawn(crate::audio::run(pins, model).expect("spawning the audio task"));
-}
-
-/// The board's name, once the second core has detected it.
-pub fn model_name() -> &'static str {
-	match MODEL.load(Ordering::Relaxed) {
-		1 => Model::Original.name(),
-		2 => Model::Adv.name(),
-		_ => "M5Stack Cardputer",
-	}
+	spawner.spawn(run(screen, slot, settings).expect("spawning the UI task"));
+	spawner.spawn(serial(usb).expect("spawning the serial task"));
 }
 
 #[embassy_executor::task]
 async fn run(mut screen: Screen, mut slot: Slot, settings: Settings) {
 	let mut app = App::new(settings, now());
-	let mut stack_reported = 0;
 	loop {
-		let used = stack_used();
-		if used >= stack_reported + 1024 {
-			info!(
-				"The UI has used {} of {} KB of its stack",
-				used / 1024,
-				STACK_SIZE / 1024
-			);
-			stack_reported = used;
-		}
+		#[cfg(feature = "cardputer")]
+		second_core::report_stack();
 		match select3(KEYS.receive(), TO_UI.receive(), Timer::after(TICK)).await {
 			Either3::First(key) => app.handle_key(key),
 			Either3::Second(message) => handle_message(&mut app, message),
@@ -153,7 +85,7 @@ async fn run(mut screen: Screen, mut slot: Slot, settings: Settings) {
 		app.tick(now());
 		while let Some(command) = app.poll_command() {
 			match command {
-				// The card is on this core's side, and quick enough to wait for.
+				// The card is on this side, and quick enough to wait for.
 				Command::ExportSettings(text) => {
 					app.settings_exported(slot.export_settings(&text, app.local_time()))
 				}
@@ -216,5 +148,128 @@ fn handle_message(app: &mut App, message: ToUi) {
 		ToUi::Event(event) => app.handle_event(event),
 		ToUi::NodeInfo(key, info) => app.handle_nodeinfo(key, info),
 		ToUi::Networks(networks) => app.set_networks(networks),
+	}
+}
+
+#[cfg(feature = "cardputer")]
+pub use crate::sdcard::Slot;
+
+/// Stands in for an SD card slot on boards that have no driver for one.
+#[cfg(not(feature = "cardputer"))]
+pub struct Slot;
+
+#[cfg(not(feature = "cardputer"))]
+impl Slot {
+	const MISSING: &str = "No SD card on this board";
+
+	fn export_settings(
+		&mut self,
+		_text: &str,
+		_time: Option<esp_ygg_app::time::DateTime>,
+	) -> Result<(), String> {
+		Err(Self::MISSING.into())
+	}
+
+	fn import_settings(&mut self) -> Result<String, String> {
+		Err(Self::MISSING.into())
+	}
+}
+
+/// Starting the UI on the second core, with a stack of its own.
+#[cfg(feature = "cardputer")]
+pub mod second_core {
+	use core::sync::atomic::{AtomicUsize, Ordering};
+
+	#[cfg(feature = "voice")]
+	use esp_hal::peripherals::FROM_CPU_INTR2;
+	use esp_hal::peripherals::{CPU_CTRL, FROM_CPU_INTR1, FROM_CPU_INTR3, USB_DEVICE};
+	use esp_hal::system::Stack;
+	use esp_rtos::embassy::Executor;
+	use esp_ygg_app::Settings;
+	use log::info;
+	use static_cell::StaticCell;
+
+	#[cfg(feature = "voice")]
+	use crate::cardputer::Model;
+	use crate::cardputer::{self, Pins};
+
+	/// TLS for Gemini goes deepest, at 14 KB in a handshake with an elliptic
+	/// curve certificate. RSA certificates need more.
+	const STACK_SIZE: usize = 24 * 1024;
+	/// Fills the UI's stack at first, to tell later how deep it has been used.
+	const UNUSED: u8 = 0xa5;
+	static STACK_BOTTOM: AtomicUsize = AtomicUsize::new(0);
+	static STACK_REPORTED: AtomicUsize = AtomicUsize::new(0);
+
+	/// Starts the screen, the keyboard and the UI on the second core.
+	pub fn start(
+		cpu_control: CPU_CTRL<'static>,
+		(interrupt, park): (FROM_CPU_INTR1<'static>, FROM_CPU_INTR3<'static>),
+		pins: Pins,
+		sd: crate::sdcard::Pins,
+		usb: USB_DEVICE<'static>,
+		#[cfg(feature = "voice")] audio: (crate::audio::Pins, FROM_CPU_INTR2<'static>),
+		settings: Settings,
+	) {
+		static STACK: StaticCell<Stack<STACK_SIZE>> = StaticCell::new();
+		let stack = STACK.init(Stack::new());
+		// SAFETY: the stack is not in use until the core starts below.
+		unsafe {
+			stack
+				.mem
+				.as_mut_ptr()
+				.cast::<u8>()
+				.write_bytes(UNUSED, STACK_SIZE);
+		}
+		STACK_BOTTOM.store(stack.mem.as_ptr() as usize, Ordering::Relaxed);
+		esp_rtos::start_second_core(cpu_control, interrupt, stack, move || {
+			static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+			crate::park::arm(park);
+			EXECUTOR.init(Executor::new()).run(|spawner| {
+				let (_model, screen) = cardputer::start(&spawner, pins);
+				#[cfg(feature = "voice")]
+				start_audio(audio, _model);
+				let slot = crate::sdcard::Slot::new(sd);
+				super::spawn(&spawner, screen, slot, usb, settings);
+			});
+		});
+	}
+
+	/// Runs audio from an interrupt, so it goes ahead of drawing the screen
+	/// and the DMA never runs dry.
+	#[cfg(feature = "voice")]
+	fn start_audio((pins, interrupt): (crate::audio::Pins, FROM_CPU_INTR2<'static>), model: Model) {
+		use esp_rtos::embassy::InterruptExecutor;
+		static EXECUTOR: StaticCell<InterruptExecutor<2>> = StaticCell::new();
+		let spawner = EXECUTOR
+			.init(InterruptExecutor::new(interrupt))
+			.start(esp_hal::interrupt::Priority::Priority1);
+		spawner.spawn(crate::audio::run(pins, model).expect("spawning the audio task"));
+	}
+
+	/// Logs each further kilobyte of the UI's stack that has been used.
+	pub fn report_stack() {
+		let used = stack_used();
+		if used >= STACK_REPORTED.load(Ordering::Relaxed) + 1024 {
+			info!(
+				"The UI has used {} of {} KB of its stack",
+				used / 1024,
+				STACK_SIZE / 1024
+			);
+			STACK_REPORTED.store(used, Ordering::Relaxed);
+		}
+	}
+
+	/// The most of the UI's stack used so far. The stack grows down, so this
+	/// counts from the bottom up to the first byte that is no longer marked.
+	fn stack_used() -> usize {
+		let bottom = STACK_BOTTOM.load(Ordering::Relaxed) as *const u8;
+		// The bottom holds esp-rtos's guard, which is not marked.
+		const GUARD: usize = 256;
+		let unused = (GUARD..STACK_SIZE)
+			// SAFETY: reads within the stack, which lives forever.
+			.take_while(|&offset| unsafe { bottom.add(offset).read_volatile() } == UNUSED)
+			.count();
+		STACK_SIZE - GUARD - unused
 	}
 }

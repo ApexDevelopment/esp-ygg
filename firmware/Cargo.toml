@@ -50,16 +50,18 @@ irc = ["esp-ygg-app/irc"]
 gemini = ["esp-ygg-app/gemini", "dep:getrandom"]
 # Voice calls with push-to-talk, on the Cardputers
 voice = ["cardputer", "esp-ygg-app/voice"]
-# M5Stack Cardputer and Cardputer ADV: screen, keyboard and on-device UI
-cardputer = [
-	"esp32s3",
+# The on-device UI, which each board with a screen turns on
+ui = [
 	"esp-ygg-app/ui",
 	"dep:embedded-hal-bus",
-	"dep:embedded-sdmmc",
 	"dep:mipidsi",
 	"dep:mousefood",
 	"dep:ratatui",
 ]
+# M5Stack Cardputer and Cardputer ADV: screen, keyboard and SD card
+cardputer = ["esp32s3", "ui", "dep:embedded-sdmmc"]
+# Waveshare ESP32-C6-Touch-LCD-2.8: touch screen
+c6-touch-lcd = ["esp32c6", "ui"]
 esp32s3 = [
 	"esp-alloc/esp32s3",
 	"esp-backtrace/esp32s3",

@@ -121,7 +121,7 @@ impl Store {
 	}
 
 	// Only boards with a UI change settings.
-	#[cfg_attr(not(feature = "cardputer"), allow(dead_code))]
+	#[cfg_attr(not(feature = "ui"), allow(dead_code))]
 	pub fn save_settings(&mut self, settings: &Settings) {
 		let encoded = settings.encode();
 		let mut record = (encoded.len() as u16).to_le_bytes().to_vec();

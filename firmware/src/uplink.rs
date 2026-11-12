@@ -47,7 +47,7 @@ pub static SCANS: Channel<CriticalSectionRawMutex, (), 1> = Channel::new();
 pub static SCAN_RESULTS: Channel<CriticalSectionRawMutex, Vec<ScannedNetwork>, 1> = Channel::new();
 
 // Only boards with a UI ask for scans.
-#[cfg_attr(not(feature = "cardputer"), allow(dead_code))]
+#[cfg_attr(not(feature = "ui"), allow(dead_code))]
 pub struct ScannedNetwork {
 	pub ssid: String,
 	pub signal: i8,

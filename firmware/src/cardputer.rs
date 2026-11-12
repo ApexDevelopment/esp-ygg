@@ -3,9 +3,8 @@
 //! 74HC138 decoder, and the ADV reads them from a TCA8418 over I2C.
 
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU8, Ordering};
 
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use embedded_hal_bus::spi::{ExclusiveDevice, NoDelay};
 use esp_hal::Blocking;
@@ -19,7 +18,6 @@ use esp_hal::peripherals::{
 use esp_hal::spi::Mode;
 use esp_hal::spi::master::Spi;
 use esp_hal::time::Rate;
-use esp_ygg_app::ui::Key;
 use esp_ygg_app::ui::keyboard::{Keyboard, Position};
 use log::info;
 use mipidsi::interface::SpiInterface;
@@ -31,13 +29,12 @@ use mousefood::{EmbeddedBackend, EmbeddedBackendConfig};
 use ratatui::Terminal;
 use static_cell::StaticCell;
 
-/// Key presses, ready for the UI.
-pub static KEYS: Channel<CriticalSectionRawMutex, Key, 16> = Channel::new();
+use crate::ui::{KEYS, Screen};
 
 const KEYBOARD_CONTROLLER: u8 = 0x34;
 const SCAN_INTERVAL: Duration = Duration::from_millis(10);
 
-type Display = mipidsi::Display<
+pub type Display = mipidsi::Display<
 	SpiInterface<
 		'static,
 		ExclusiveDevice<Spi<'static, Blocking>, Output<'static>, NoDelay>,
@@ -46,7 +43,18 @@ type Display = mipidsi::Display<
 	ST7789,
 	Output<'static>,
 >;
-pub type Screen = Terminal<EmbeddedBackend<'static, Display, Rgb565>>;
+
+/// 0 until the board has been detected, then the model's number plus one.
+static MODEL: AtomicU8 = AtomicU8::new(0);
+
+/// The board's name, once it has been detected.
+pub fn model_name() -> &'static str {
+	match MODEL.load(Ordering::Relaxed) {
+		1 => Model::Original.name(),
+		2 => Model::Adv.name(),
+		_ => "M5Stack Cardputer",
+	}
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Model {
@@ -91,6 +99,7 @@ pub fn start(spawner: &embassy_executor::Spawner, mut pins: Pins) -> (Model, Scr
 	} else {
 		Model::Original
 	};
+	MODEL.store(model as u8 + 1, Ordering::Relaxed);
 	info!("Board: {}", model.name());
 	let screen = screen(
 		pins.spi,

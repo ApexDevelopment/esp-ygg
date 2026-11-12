@@ -12,9 +12,9 @@ Every board runs a few services on its Yggdrasil address:
 - the time over NTP on UDP port 123, once it knows it
 - replies to pings, `yggdrasilctl getNodeInfo` and the `debug_remoteGet*` requests
 
-On an M5Stack Cardputer or Cardputer ADV, the screen and keyboard give an interface for browsing the network, pinging nodes, using the console and changing settings.
+On an M5Stack Cardputer or Cardputer ADV, the screen and keyboard give an interface for browsing the network, pinging nodes, using the console and changing settings. The Waveshare ESP32-C6-Touch-LCD-2.8 shows the same interface on its touch screen.
 
-The mesh, the gateway and the services have been tested on two ESP32-S3 boards (M5Stack Cardputers), one acting as a gateway to a yggdrasil-rs node over WiFi. The on-device interface has only run in the desktop preview so far. An ESP32-C3 and an ESP32-C6 have also booted and peered with each other over ESP-NOW. The original ESP32 builds but has not been tried.
+The mesh, the gateway and the services have been tested on two ESP32-S3 boards (M5Stack Cardputers), one acting as a gateway to a yggdrasil-rs node over WiFi. The on-device interface has only run in the desktop preview so far. An ESP32-C3 and an ESP32-C6 have also booted and peered with each other over ESP-NOW, and the interface runs on the Waveshare board's touch screen. The original ESP32 builds but has not been tried.
 
 ## Layout
 
@@ -37,6 +37,7 @@ cargo cardputer  # M5Stack Cardputer or Cardputer ADV
 cargo s3     # ESP32-S3
 cargo c3     # ESP32-C3
 cargo c6     # ESP32-C6
+cargo c6-touch  # Waveshare ESP32-C6-Touch-LCD-2.8
 cargo esp32  # original ESP32
 ```
 
@@ -78,7 +79,7 @@ Clients take memory only while they are in use, so most of the cost of a service
 
 ## On-device interface
 
-On a Cardputer, the home screen shows the board's address and how many nodes it knows, with a menu below:
+On a board with a screen, the home screen shows the board's address and how many nodes it knows, with a menu below:
 
 - Yggdrasil Nodes lists every node the board knows, direct peers first, named from their nodeinfo. Open one to see its details, then press `p` to ping it or `m` to send it a console message.
 - ESP-NOW Neighbors lists the boards in radio range, with their recent signal strength and the share of frames sent to them that went unacknowledged, for finding where boards still reach each other.
@@ -95,6 +96,8 @@ Once the board knows the time, the title bar shows it. A bridged board gets the 
 In fields that take an address, typing the start of a known node's address or name and pressing Tab fills in its address, and pressing Tab again moves to the next node that matches. Names come from nodeinfo, which the board looks up while these screens are open.
 
 The arrow keys are Fn with `;` `.` `,` and `/`, and Escape is Fn with `` ` ``. In lists, the same keys work without Fn.
+
+On the touch screen, dragging up or down moves the selection a row at a time, following the finger. A tap is Enter, and a swipe to the right or the BOOT button is Escape. It has no on-screen keyboard yet, so text has to be typed over the serial port, as below. Exporting and importing settings is not supported on the Waveshare board yet.
 
 The interface can also be driven from a computer over the USB serial port, for testing without someone at the keyboard. `firmware/drive.py` sends lines such as `type 200::1`, `key down enter` and `screen`, which prints what the screen shows, and it does so without resetting the board:
 
@@ -146,7 +149,7 @@ host=<board address>
 Then `Dial(IAX2/kitchen/s)` rings the board.
 
 
-A Cardputer stores the settings chosen in its interface in flash. Until then, and on boards without a screen, settings come from environment variables read when the firmware is built.
+A board with a screen stores the settings chosen in its interface in flash. Until then, and on boards without a screen, settings come from environment variables read when the firmware is built.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -192,7 +195,7 @@ nc -6u <board address> 4242
 
 The first request after the boards come up can take several seconds while routes form. After that, a ping across a gateway and one ESP-NOW hop typically takes 30 to 70 ms.
 
-On a Cardputer, ESP-NOW Neighbors shows each neighbor's signal and the share of frames it did not acknowledge. A few failures are normal and are resent.
+On a board with a screen, ESP-NOW Neighbors shows each neighbor's signal and the share of frames it did not acknowledge. A few failures are normal and are resent.
 
 ## Limits
 
