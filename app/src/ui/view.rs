@@ -357,18 +357,17 @@ fn draw_neighbors(frame: &mut Frame, area: Rect, app: &App) {
 					.name_of(&key)
 					.map(String::from)
 					.unwrap_or_else(|| Ipv6Addr::from(addr_for_key(&key).0).to_string()),
-				None => mac_text(&neighbor.mac),
+				None => neighbor.mac_text(),
 			};
 			let label = format!(" {:<17} ", truncate(&label, 17));
 			let mut spans = Vec::from([Span::raw(label)]);
-			match neighbor.signal {
-				Some(signal) => {
-					let bars = signal_bars(signal);
+			match (neighbor.signal, neighbor.signal_bars()) {
+				(Some(signal), Some(bars)) => {
 					spans.push(Span::styled("▮".repeat(bars), Style::new().fg(ACCENT)));
 					spans.push(Span::styled("▮".repeat(4 - bars), DIM));
 					spans.push(Span::raw(format!(" {signal:>4} dBm")));
 				}
-				None => spans.push(Span::styled("    no signal", DIM)),
+				_ => spans.push(Span::styled("    no signal", DIM)),
 			}
 			if neighbor.key.is_none() {
 				spans.push(Span::styled(" linking", DIM));
@@ -379,22 +378,6 @@ fn draw_neighbors(frame: &mut Frame, area: Rect, app: &App) {
 		})
 		.collect();
 	frame.render_widget(Paragraph::new(lines), area);
-}
-
-/// Four bars for a strong signal, none for one about to drop out.
-fn signal_bars(dbm: i8) -> usize {
-	match dbm {
-		-55.. => 4,
-		-65.. => 3,
-		-75.. => 2,
-		-85.. => 1,
-		_ => 0,
-	}
-}
-
-fn mac_text(mac: &[u8; 6]) -> String {
-	let [a, b, c, d, e, f] = mac;
-	format!("{a:02x}:{b:02x}:{c:02x}:{d:02x}:{e:02x}:{f:02x}")
 }
 
 fn truncate(text: &str, width: usize) -> String {

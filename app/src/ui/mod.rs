@@ -221,6 +221,25 @@ pub struct Neighbor {
 	pub loss: Option<u8>,
 }
 
+impl Neighbor {
+	/// How strong its signal is, from none to four bars, once heard.
+	pub fn signal_bars(&self) -> Option<usize> {
+		Some(match self.signal? {
+			-55.. => 4,
+			-65.. => 3,
+			-75.. => 2,
+			-85.. => 1,
+			_ => 0,
+		})
+	}
+
+	/// Its MAC address, as it is usually written.
+	pub fn mac_text(&self) -> String {
+		let [a, b, c, d, e, f] = self.mac;
+		format!("{a:02x}:{b:02x}:{c:02x}:{d:02x}:{e:02x}:{f:02x}")
+	}
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WifiNetwork {
 	pub ssid: String,
