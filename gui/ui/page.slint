@@ -1,0 +1,63 @@
+import { MaterialPalette, MaterialText, MaterialTypography } from "@material";
+
+/// The title at the top of a page.
+export component PageTitle inherits HorizontalLayout {
+    in property <string> text;
+
+    padding_left: 16px;
+    padding_right: 16px;
+    padding_top: 12px;
+    padding_bottom: 4px;
+
+    MaterialText {
+        text: root.text;
+        style: MaterialTypography.title_medium;
+    }
+}
+
+/// A word about why a list is empty.
+export component EmptyNote inherits HorizontalLayout {
+    in property <string> text;
+
+    padding: 16px;
+
+    MaterialText {
+        text: root.text;
+        style: MaterialTypography.body_medium;
+        color: MaterialPalette.on_surface_variant;
+    }
+}
+
+/// A row of a list, two lines tall, with room on the right for a mark.
+export component Row {
+    in property <string> text;
+    in property <string> supporting_text;
+
+    height: 52px;
+
+    HorizontalLayout {
+        padding_left: 16px;
+        padding_right: 16px;
+        spacing: 8px;
+
+        VerticalLayout {
+            alignment: center;
+            horizontal_stretch: 1;
+
+            MaterialText {
+                text: root.text;
+                style: MaterialTypography.body_large;
+                overflow: elide;
+            }
+
+            if root.supporting_text != "": MaterialText {
+                text: root.supporting_text;
+                style: MaterialTypography.body_small;
+                color: MaterialPalette.on_surface_variant;
+                overflow: elide;
+            }
+        }
+
+        @children
+    }
+}

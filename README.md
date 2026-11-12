@@ -122,16 +122,16 @@ cargo run -p esp-ygg-app --example preview -- png shots "key down down down down
 
 ## Graphical interface
 
-The touch board can show a graphical interface instead of the text one, made with [Slint](https://slint.dev) and its Material 3 components. The `tui` and `gui` features choose between them, as `cargo c6-touch` and `cargo c6-gui` do. It is at an early stage: a home screen with the node's status, and nothing to tap through yet.
+The touch board can show a graphical interface instead of the text one, made with [Slint](https://slint.dev) and its Material 3 components. The `tui` and `gui` features choose between them, as `cargo c6-touch` and `cargo c6-gui` do. It is at an early stage, with three pages: Home, with the node's status; Nodes, every node it knows, named once they answer; and Radio, the boards in ESP-NOW range with their signal. The navigation runs down the side of a wide screen and along the bottom of a tall one, so the interface suits boards held either way.
 
-Slint is licensed under the GPLv3 on microcontrollers, so firmware built with `gui` is distributed under the GPLv3. The rest of the project, and every other build, stays under the LGPLv3. The Material components in `gui/material-1.1.0` are under the MIT license, and the Roboto font in `gui/fonts` under the SIL Open Font License.
+Slint is licensed under the GPLv3 on microcontrollers, so firmware built with `gui` is distributed under the GPLv3. The rest of the project, and every other build, stays under the LGPLv3. The Material components in `gui/material-1.1.0` are under the MIT license, the Roboto font in `gui/fonts` under the SIL Open Font License, and the icons in `gui/icons`, from Google's Material Symbols, under the Apache License 2.0.
 
 The board draws text with glyphs made ahead of time, for printable ASCII and the characters written in the interface's own files. Other characters, such as in a node's name, do not show yet.
 
-To see the interface without a board, draw it as the board does and save a picture:
+To see the interface without a board, draw it as a board does, for a small made-up mesh, and save each page wide and tall as pictures in a folder:
 
 ```sh
-cargo run -p esp-ygg-gui --example screenshot -- screen.png
+cargo run -p esp-ygg-gui --example screenshot -- screens
 ```
 
 ## Voice calls

@@ -1,93 +1,73 @@
-import { MaterialPalette, MaterialText, MaterialTypography, MaterialWindow, OutlinedCard } from "@material";
+import { MaterialWindow, NavigationBar, NavigationItem, NavigationRail } from "@material";
 import { Palette } from "std-widgets.slint";
+import { HomePage } from "home.slint";
+import { NeighborsPage } from "neighbors.slint";
+import { NodesPage } from "nodes.slint";
+export { Node, NodeEntry, NeighborEntry } from "state.slint";
 import "../fonts/Roboto-Regular.ttf";
 import "../fonts/Roboto-Medium.ttf";
 
-/// A count with what it counts, on a card.
-component Stat inherits OutlinedCard {
-    in property <int> count;
-    in property <string> label;
+/// The page chosen in the navigation, filling the room beside it.
+component Pages inherits VerticalLayout {
+    in property <int> page;
 
-    VerticalLayout {
-        padding: 12px;
-        spacing: 2px;
-
-        MaterialText {
-            text: root.count;
-            style: MaterialTypography.headline_small;
-        }
-
-        MaterialText {
-            text: root.label;
-            style: MaterialTypography.label_medium;
-            color: MaterialPalette.on_surface_variant;
-        }
-    }
+    if root.page == 0: HomePage { }
+    if root.page == 1: NodesPage { }
+    if root.page == 2: NeighborsPage { }
 }
 
+/// The navigation runs down the side on a wide screen and along the
+/// bottom on a tall one, leaving pages much the same room either way.
 export component MainWindow inherits MaterialWindow {
-    in property <string> name: "esp-ygg";
-    /// Empty until the node has started.
-    in property <string> address;
-    in property <int> neighbors;
-    in property <int> peers;
-    in property <int> known;
-    /// How long the board has been up, as text.
-    in property <string> uptime;
-    /// Free memory, in kilobytes.
-    in property <int> free_memory;
+    /// Home, Nodes or Neighbors, in that order.
+    in_out property <int> page;
 
-    width: 320px;
-    height: 240px;
+    property <bool> portrait: self.height > self.width;
+    property <[NavigationItem]> destinations: [
+        {
+            icon: @image-url("../icons/home.svg"),
+            selected_icon: @image-url("../icons/home_fill1.svg"),
+            text: "Home",
+        },
+        {
+            icon: @image-url("../icons/lan.svg"),
+            selected_icon: @image-url("../icons/lan_fill1.svg"),
+            text: "Nodes",
+        },
+        {
+            icon: @image-url("../icons/cell_tower.svg"),
+            selected_icon: @image-url("../icons/cell_tower_fill1.svg"),
+            text: "Radio",
+        },
+    ];
+
+    preferred_width: 320px;
+    preferred_height: 240px;
     default_font_family: "Roboto";
 
     init => {
         Palette.color_scheme = ColorScheme.dark;
     }
 
-    VerticalLayout {
-        padding: 16px;
-        spacing: 16px;
-        alignment: start;
-
-        VerticalLayout {
-            spacing: 4px;
-
-            MaterialText {
-                text: root.name;
-                style: MaterialTypography.title_large;
-            }
-
-            MaterialText {
-                text: root.address == "" ? "Starting…" : root.address;
-                style: MaterialTypography.body_small;
-                color: MaterialPalette.on_surface_variant;
-            }
+    if !root.portrait: HorizontalLayout {
+        NavigationRail {
+            items: root.destinations;
+            current_index <=> root.page;
         }
 
-        HorizontalLayout {
-            spacing: 8px;
+        Pages {
+            page: root.page;
+        }
+    }
 
-            Stat {
-                count: root.neighbors;
-                label: "neighbors";
-            }
-
-            Stat {
-                count: root.peers;
-                label: "peers";
-            }
-
-            Stat {
-                count: root.known;
-                label: "known";
-            }
+    if root.portrait: VerticalLayout {
+        Pages {
+            page: root.page;
         }
 
-        MaterialText {
-            text: "up \{root.uptime} · \{root.free_memory} KB free";
-            style: MaterialTypography.body_small;
-            color: MaterialPalette.on_surface_variant;
+        NavigationBar {
+            items: root.destinations;
+            current_index <=> root.page;
         }
     }
 }

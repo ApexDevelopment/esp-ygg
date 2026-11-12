@@ -5,6 +5,9 @@
 
 extern crate alloc;
 
-slint::include_modules!();
+mod front;
 
+pub use front::Gui;
 pub use slint;
+
+slint::include_modules!();

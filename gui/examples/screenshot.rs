@@ -1,20 +1,25 @@
-//! Draws the interface with Slint's software renderer, as a board does, and
-//! saves it as a PNG.
+//! Draws the interface with Slint's software renderer, as a board does, for
+//! a small made-up mesh, and saves each page in both orientations as PNGs.
 //!
-//! `cargo run -p esp-ygg-gui --example screenshot -- <file.png>`
+//! `cargo run -p esp-ygg-gui --example screenshot -- <folder>`
 
 use std::fs::File;
 use std::io::BufWriter;
+use std::path::Path;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use esp_ygg_gui::MainWindow;
+use esp_ygg_app::BoardInfo;
+use esp_ygg_app::ui::{Neighbor, Status, Uplink};
+use esp_ygg_gui::Gui;
 use slint::ComponentHandle;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel};
 use slint::platform::{Platform, WindowAdapter};
+use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
+use yggdrasil_espnow::{PrivateKey, PublicKey};
 
-const WIDTH: u32 = 320;
-const HEIGHT: u32 = 240;
+const PAGES: [&str; 3] = ["home", "nodes", "neighbors"];
+const SIZES: [(&str, u32, u32); 2] = [("landscape", 320, 240), ("portrait", 240, 320)];
 
 struct Desktop {
 	window: Rc<MinimalSoftwareWindow>,
@@ -26,43 +31,88 @@ impl Platform for Desktop {
 		Ok(self.window.clone())
 	}
 
-	fn duration_since_start(&self) -> core::time::Duration {
+	fn duration_since_start(&self) -> Duration {
 		self.started.elapsed()
 	}
 }
 
 fn main() {
-	let path = std::env::args()
-		.nth(1)
-		.unwrap_or_else(|| "screen.png".into());
+	let folder = std::env::args().nth(1).unwrap_or_else(|| "screens".into());
+	std::fs::create_dir_all(&folder).expect("creating the folder");
 	let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
 	slint::platform::set_platform(Box::new(Desktop {
 		window: window.clone(),
 		started: Instant::now(),
 	}))
 	.expect("setting the platform");
-	let ui = MainWindow::new().expect("creating the window");
-	// A board a few minutes after starting, with one neighbor
-	ui.set_address("200:df46:a2ec:76e9:82a7:4f61:fe3d:e486".into());
-	ui.set_neighbors(1);
-	ui.set_peers(1);
-	ui.set_known(3);
-	ui.set_uptime("5 min".into());
-	ui.set_free_memory(159);
-	ui.show().expect("showing the window");
-	window.set_size(slint::PhysicalSize::new(WIDTH, HEIGHT));
-	let mut pixels = vec![Rgb565Pixel(0); (WIDTH * HEIGHT) as usize];
-	slint::platform::update_timers_and_animations();
-	window.draw_if_needed(|renderer| {
-		renderer.render(&mut pixels, WIDTH as usize);
-	});
-	save(&pixels, &path);
-	println!("{path}");
+	let mut gui = Gui::new().expect("creating the interface");
+	let keys: Vec<PublicKey> = (2..6)
+		.map(|seed| PrivateKey::from_seed(&[seed; 32]).public_key())
+		.collect();
+	gui.set_status(status(&keys));
+	// Names come back for some nodes and not others.
+	gui.window().set_page(1);
+	gui.tick();
+	for (key, name) in keys.iter().zip(["kitchen", "attic"]) {
+		let info = format!(r#"{{"name":"{name}"}}"#);
+		gui.handle_nodeinfo(*key, Some(info.as_bytes()));
+	}
+	gui.window().show().expect("showing the window");
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		for (index, page) in PAGES.iter().enumerate() {
+			gui.window().set_page(index as i32);
+			let mut pixels = vec![Rgb565Pixel(0); (width * height) as usize];
+			slint::platform::update_timers_and_animations();
+			window.request_redraw();
+			window.draw_if_needed(|renderer| {
+				renderer.render(&mut pixels, width as usize);
+			});
+			let path = Path::new(&folder).join(format!("{orientation}-{page}.png"));
+			save(&pixels, width, height, &path);
+			println!("{}", path.display());
+		}
+	}
 }
 
-fn save(pixels: &[Rgb565Pixel], path: &str) {
+/// A board a few minutes after starting, with two boards in radio range,
+/// one of them still linking, and two more nodes beyond them.
+fn status(keys: &[PublicKey]) -> Status {
+	let own = PrivateKey::from_seed(&[1; 32]).public_key();
+	Status {
+		address: std::net::Ipv6Addr::from(addr_for_key(&own).0),
+		public_key: own,
+		neighbors: vec![
+			Neighbor {
+				mac: [0x9c, 0xcc, 0x01, 0xd9, 0x1c, 0x40],
+				key: Some(keys[0]),
+				signal: Some(-58),
+				loss: Some(2),
+			},
+			Neighbor {
+				mac: [0xe8, 0xf6, 0x0a, 0xf6, 0x77, 0x08],
+				key: None,
+				signal: Some(-81),
+				loss: None,
+			},
+		],
+		peers: vec![keys[0]],
+		known: keys.to_vec(),
+		uplink: Uplink::Off,
+		hotspot: None,
+		board: BoardInfo {
+			name: "esp-ygg".into(),
+			model: "Waveshare ESP32-C6-Touch-LCD-2.8".into(),
+			uptime: Duration::from_secs(5 * 60),
+			free_heap: Some(159 * 1024),
+			time: None,
+		},
+	}
+}
+
+fn save(pixels: &[Rgb565Pixel], width: u32, height: u32, path: &Path) {
 	let file = BufWriter::new(File::create(path).expect("creating the file"));
-	let mut encoder = png::Encoder::new(file, WIDTH, HEIGHT);
+	let mut encoder = png::Encoder::new(file, width, height);
 	encoder.set_color(png::ColorType::Rgb);
 	encoder.set_depth(png::BitDepth::Eight);
 	let bytes: Vec<u8> = pixels

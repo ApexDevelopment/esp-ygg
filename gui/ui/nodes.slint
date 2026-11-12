@@ -1,0 +1,27 @@
+import { ListView, MaterialPalette, MaterialText, MaterialTypography } from "@material";
+import { EmptyNote, PageTitle, Row } from "page.slint";
+import { Node } from "state.slint";
+
+export component NodesPage inherits VerticalLayout {
+    PageTitle {
+        text: "Nodes";
+    }
+
+    if Node.nodes.length == 0: EmptyNote {
+        text: "No other nodes yet";
+    }
+
+    ListView {
+        for node in Node.nodes: Row {
+            text: node.name;
+            supporting_text: node.address;
+
+            if node.peer: MaterialText {
+                text: "peer";
+                style: MaterialTypography.label_medium;
+                color: MaterialPalette.primary;
+                vertical_alignment: center;
+            }
+        }
+    }
+}

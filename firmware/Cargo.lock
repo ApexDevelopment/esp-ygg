@@ -2332,8 +2332,10 @@ dependencies = [
 name = "esp-ygg-gui"
 version = "0.1.0"
 dependencies = [
+ "esp-ygg-app",
  "slint",
  "slint-build",
+ "yggdrasil-espnow",
 ]
 
 [[package]]

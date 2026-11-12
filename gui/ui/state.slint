@@ -1,0 +1,37 @@
+export struct NodeEntry {
+    /// Its name, or its address until the name is known.
+    name: string,
+    /// Its address, under the name once there is one.
+    address: string,
+    /// Whether it is a direct peer.
+    peer: bool,
+}
+
+export struct NeighborEntry {
+    /// Its name, its address, or its MAC address before the handshake.
+    name: string,
+    has_signal: bool,
+    /// From none to four.
+    bars: int,
+    /// In dBm.
+    signal: int,
+    /// The share of frames sent to it that went unacknowledged, or -1.
+    loss: int,
+    /// Still finishing the Yggdrasil handshake.
+    linking: bool,
+}
+
+/// What the node reports, set from Rust.
+export global Node {
+    in property <string> name: "esp-ygg";
+    /// Empty until the node has started.
+    in property <string> address;
+    in property <int> neighbor_count;
+    in property <int> peer_count;
+    in property <int> known_count;
+    in property <string> uptime;
+    /// In kilobytes.
+    in property <int> free_memory;
+    in property <[NodeEntry]> nodes;
+    in property <[NeighborEntry]> neighbors;
+}

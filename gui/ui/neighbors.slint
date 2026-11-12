@@ -1,0 +1,46 @@
+import { ListView, MaterialPalette } from "@material";
+import { EmptyNote, PageTitle, Row } from "page.slint";
+import { Node } from "state.slint";
+
+/// Four bars of rising height, lit up to the signal's strength.
+component SignalBars {
+    in property <int> bars;
+
+    width: 22px;
+    height: 16px;
+
+    for index in 4: Rectangle {
+        x: index * 6px;
+        y: parent.height - self.height;
+        width: 4px;
+        height: (index + 1) * 4px;
+        border_radius: 1px;
+        background: index < root.bars ? MaterialPalette.primary : MaterialPalette.outline_variant;
+    }
+}
+
+export component NeighborsPage inherits VerticalLayout {
+    PageTitle {
+        text: "ESP-NOW Neighbors";
+    }
+
+    if Node.neighbors.length == 0: EmptyNote {
+        text: "No boards in radio range";
+    }
+
+    ListView {
+        for neighbor in Node.neighbors: Row {
+            text: neighbor.name;
+            supporting_text: (neighbor.has_signal ? "\{neighbor.signal} dBm" : "no signal")
+                + (neighbor.linking ? " · linking" : neighbor.loss >= 0 ? " · \{neighbor.loss}% lost" : "");
+
+            VerticalLayout {
+                alignment: center;
+
+                SignalBars {
+                    bars: neighbor.has_signal ? neighbor.bars : 0;
+                }
+            }
+        }
+    }
+}
