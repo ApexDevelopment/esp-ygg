@@ -344,7 +344,7 @@ fn exports_and_imports_settings_through_the_sd_card() {
 	assert!(screen(&app).join("\n").contains("save to apply"));
 	assert_eq!((app.draft.name.as_str(), app.draft.channel), ("kitchen", 6));
 	app.settings_imported(Ok("channel = 60".into()));
-	assert!(screen(&app).join("\n").contains("Line 1: channels go"));
+	assert!(screen(&app).join("\n").contains("Line 1: Channels go"));
 	assert_eq!(app.draft.channel, 6);
 }
 

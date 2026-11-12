@@ -45,8 +45,8 @@ use crate::BoardInfo;
 use crate::overlay::Event;
 #[cfg(any(feature = "irc", feature = "gemini"))]
 use crate::overlay::Stream;
-use crate::settings::Settings;
-use crate::time::{DateTime, format_offset, parse_offset};
+use crate::settings::{Settings, TextSetting};
+use crate::time::DateTime;
 use directory::Directory;
 pub use input::TextInput;
 #[cfg(feature = "voice")]
@@ -323,6 +323,22 @@ enum Field {
 	Save,
 	Export,
 	Import,
+}
+
+impl Field {
+	/// The setting the field is typed into, if it is one.
+	fn text_setting(self) -> Option<TextSetting> {
+		Some(match self {
+			Field::Name => TextSetting::Name,
+			Field::Channel => TextSetting::Channel,
+			Field::TimeZone => TextSetting::TimeZone,
+			Field::WifiPassword => TextSetting::WifiPassword,
+			Field::Peer => TextSetting::Peer,
+			Field::HotspotName => TextSetting::HotspotName,
+			Field::HotspotPassword => TextSetting::HotspotPassword,
+			_ => return None,
+		})
+	}
 }
 
 /// Where settings are exported to and imported from on the SD card.
@@ -787,25 +803,25 @@ impl App {
 	}
 
 	fn activate(&mut self, field: Field) {
-		let input = match field {
-			Field::Name => TextInput::prefilled(&self.draft.name, 32),
-			Field::WifiPassword => TextInput::secret(&self.draft.password, 63),
-			Field::Peer => TextInput::prefilled(&self.draft.peer, 21),
-			Field::Channel => TextInput::prefilled(&self.draft.channel.to_string(), 2),
-			Field::TimeZone => TextInput::prefilled(&format_offset(self.draft.utc_offset), 6),
-			Field::HotspotName => TextInput::prefilled(&self.draft.hotspot_name, 32),
-			Field::HotspotPassword => TextInput::secret(&self.draft.hotspot_password, 63),
+		if let Some(setting) = field.text_setting() {
+			let text = self.draft.text(setting);
+			let input = if setting.is_secret() {
+				TextInput::secret(&text, setting.max_len())
+			} else {
+				TextInput::prefilled(&text, setting.max_len())
+			};
+			self.editing = Some((field, input));
+			return;
+		}
+		match field {
 			Field::Bridge => {
 				self.draft.bridge = !self.draft.bridge;
-				return;
 			}
 			Field::Hotspot => {
 				self.draft.hotspot = !self.draft.hotspot;
-				return;
 			}
 			Field::StatusPage => {
 				self.draft.status_page = !self.draft.status_page;
-				return;
 			}
 			#[cfg(feature = "voice")]
 			Field::Ringtone => {
@@ -816,7 +832,6 @@ impl App {
 					volume: self.draft.ring_volume,
 					samples: crate::voice::ringtone::PREVIEW_SAMPLES,
 				});
-				return;
 			}
 			#[cfg(feature = "voice")]
 			Field::RingVolume => {
@@ -828,18 +843,15 @@ impl App {
 					volume: self.draft.ring_volume,
 					samples: crate::voice::ringtone::BEEP_SAMPLES,
 				});
-				return;
 			}
 			Field::Open(group) => {
 				self.group_selected = 0;
 				self.screen = Screen::SettingsGroup(group);
-				return;
 			}
 			Field::Ssid => {
 				self.networks = None;
 				self.commands.push_back(Command::ScanWifi);
 				self.screen = Screen::WifiNetworks;
-				return;
 			}
 			Field::Save => {
 				if self.draft.bridge && !self.draft.can_bridge() {
@@ -849,60 +861,24 @@ impl App {
 				self.saved = self.draft.clone();
 				self.commands.push_back(Command::Save(self.draft.clone()));
 				self.notice = Some("Saved, restarting".into());
-				return;
 			}
 			Field::Export => {
 				let text = self.draft.to_text();
 				self.commands.push_back(Command::ExportSettings(text));
-				return;
 			}
 			Field::Import => {
 				self.commands.push_back(Command::ImportSettings);
-				return;
 			}
-		};
-		self.editing = Some((field, input));
+			// Fields typed in were opened above.
+			_ => {}
+		}
 	}
 
 	fn apply_field(&mut self, field: Field, text: String) {
-		match field {
-			Field::Name => self.draft.name = text,
-			Field::WifiPassword => self.draft.password = text,
-			Field::Peer => {
-				if text.is_empty() || text.parse::<core::net::SocketAddrV4>().is_ok() {
-					self.draft.peer = text;
-				} else {
-					self.notice = Some("Use an IPv4 address and port".into());
-				}
-			}
-			Field::TimeZone => match parse_offset(&text) {
-				Some(offset) => self.draft.utc_offset = offset,
-				None => self.notice = Some("Use an offset from UTC, like -05:00".into()),
-			},
-			Field::Channel => match text.parse::<u8>() {
-				Ok(channel @ 1..=13) => self.draft.channel = channel,
-				_ => self.notice = Some("Channels go from 1 to 13".into()),
-			},
-			Field::HotspotName if text.is_empty() => {
-				self.notice = Some("The hotspot needs a name".into())
-			}
-			Field::HotspotName => self.draft.hotspot_name = text,
-			Field::HotspotPassword if Settings::is_hotspot_password(&text) => {
-				self.draft.hotspot_password = text
-			}
-			Field::HotspotPassword => {
-				self.notice = Some("Use 8 or more characters, or none".into())
-			}
-			Field::Bridge
-			| Field::StatusPage
-			| Field::Ssid
-			| Field::Hotspot
-			| Field::Open(_)
-			| Field::Save
-			| Field::Export
-			| Field::Import => {}
-			#[cfg(feature = "voice")]
-			Field::Ringtone | Field::RingVolume => {}
+		if let Some(setting) = field.text_setting()
+			&& let Err(problem) = self.draft.set_text(setting, &text)
+		{
+			self.notice = Some(problem.into());
 		}
 	}
 

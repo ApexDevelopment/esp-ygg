@@ -38,6 +38,48 @@ pub struct Settings {
 	pub ring_volume: u8,
 }
 
+/// A setting written as text, on screen or in a settings file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextSetting {
+	Name,
+	Channel,
+	TimeZone,
+	Ssid,
+	WifiPassword,
+	Peer,
+	HotspotName,
+	HotspotPassword,
+}
+
+impl TextSetting {
+	/// The most characters it takes.
+	pub fn max_len(self) -> usize {
+		match self {
+			TextSetting::Name | TextSetting::Ssid | TextSetting::HotspotName => 32,
+			TextSetting::Channel => 2,
+			TextSetting::TimeZone => 6,
+			TextSetting::Peer => 21,
+			TextSetting::WifiPassword | TextSetting::HotspotPassword => 63,
+		}
+	}
+
+	/// Whether it is a password, to be shown as dots.
+	pub fn is_secret(self) -> bool {
+		matches!(
+			self,
+			TextSetting::WifiPassword | TextSetting::HotspotPassword
+		)
+	}
+
+	/// Whether it takes numbers alone, such as an address and port.
+	pub fn is_numeric(self) -> bool {
+		matches!(
+			self,
+			TextSetting::Channel | TextSetting::TimeZone | TextSetting::Peer
+		)
+	}
+}
+
 /// The hotspot's name until the user picks another.
 pub const DEFAULT_HOTSPOT_NAME: &str = "Yggdrasil";
 
@@ -60,6 +102,49 @@ impl Settings {
 	/// Whether a password is one the hotspot can use: none, or what WPA2 takes.
 	pub fn is_hotspot_password(password: &str) -> bool {
 		password.is_empty() || (8..=63).contains(&password.len())
+	}
+
+	/// A setting as text, as it is typed.
+	pub fn text(&self, setting: TextSetting) -> String {
+		match setting {
+			TextSetting::Name => self.name.clone(),
+			TextSetting::Channel => self.channel.to_string(),
+			TextSetting::TimeZone => format_offset(self.utc_offset),
+			TextSetting::Ssid => self.ssid.clone(),
+			TextSetting::WifiPassword => self.password.clone(),
+			TextSetting::Peer => self.peer.clone(),
+			TextSetting::HotspotName => self.hotspot_name.clone(),
+			TextSetting::HotspotPassword => self.hotspot_password.clone(),
+		}
+	}
+
+	/// Sets a setting from text, or says why the text will not do.
+	pub fn set_text(&mut self, setting: TextSetting, text: &str) -> Result<(), &'static str> {
+		match setting {
+			TextSetting::Name => self.name = text.into(),
+			TextSetting::Channel => match text.parse() {
+				Ok(channel @ 1..=13) => self.channel = channel,
+				_ => return Err("Channels go from 1 to 13"),
+			},
+			TextSetting::TimeZone => {
+				self.utc_offset = parse_offset(text).ok_or("Use an offset from UTC, like -05:00")?
+			}
+			TextSetting::Ssid => self.ssid = text.into(),
+			TextSetting::WifiPassword => self.password = text.into(),
+			TextSetting::Peer
+				if text.is_empty() || text.parse::<core::net::SocketAddrV4>().is_ok() =>
+			{
+				self.peer = text.into()
+			}
+			TextSetting::Peer => return Err("Use an IPv4 address and port"),
+			TextSetting::HotspotName if text.is_empty() => return Err("The hotspot needs a name"),
+			TextSetting::HotspotName => self.hotspot_name = text.into(),
+			TextSetting::HotspotPassword if Settings::is_hotspot_password(text) => {
+				self.hotspot_password = text.into()
+			}
+			TextSetting::HotspotPassword => return Err("Use 8 or more characters, or none"),
+		}
+		Ok(())
 	}
 
 	pub fn encode(&self) -> Vec<u8> {
@@ -166,28 +251,24 @@ impl Settings {
 	}
 
 	fn set(&mut self, key: &str, value: &str) -> Result<(), &'static str> {
+		let text_setting = match key {
+			"name" => Some(TextSetting::Name),
+			"channel" => Some(TextSetting::Channel),
+			"time_zone" => Some(TextSetting::TimeZone),
+			"wifi_network" => Some(TextSetting::Ssid),
+			"wifi_password" => Some(TextSetting::WifiPassword),
+			"peer" => Some(TextSetting::Peer),
+			"hotspot_name" => Some(TextSetting::HotspotName),
+			"hotspot_password" => Some(TextSetting::HotspotPassword),
+			_ => None,
+		};
+		if let Some(setting) = text_setting {
+			return self.set_text(setting, value);
+		}
 		match key {
-			"name" => self.name = value.into(),
-			"channel" => match value.parse() {
-				Ok(channel @ 1..=13) => self.channel = channel,
-				_ => return Err("channels go from 1 to 13"),
-			},
-			"time_zone" => self.utc_offset = parse_offset(value).ok_or("bad time zone")?,
 			"status_pages" => self.status_page = parse_on_off(value)?,
 			"bridge" => self.bridge = parse_on_off(value)?,
-			"wifi_network" => self.ssid = value.into(),
-			"wifi_password" => self.password = value.into(),
-			"peer" if value.is_empty() || value.parse::<core::net::SocketAddrV4>().is_ok() => {
-				self.peer = value.into()
-			}
-			"peer" => return Err("use an IPv4 address and port"),
 			"hotspot" => self.hotspot = parse_on_off(value)?,
-			"hotspot_name" if value.is_empty() => return Err("the hotspot needs a name"),
-			"hotspot_name" => self.hotspot_name = value.into(),
-			"hotspot_password" if Settings::is_hotspot_password(value) => {
-				self.hotspot_password = value.into()
-			}
-			"hotspot_password" => return Err("hotspot password too short"),
 			"ringtone" => self.ringtone = value.parse().map_err(|_| "bad ringtone")?,
 			"ring_volume" => self.ring_volume = value.parse().map_err(|_| "bad volume")?,
 			_ => return Err("unknown setting"),
@@ -287,7 +368,7 @@ mod tests {
 		let settings = Settings::new();
 		assert_eq!(
 			settings.with_text("name = a\nchannel = 14"),
-			Err("Line 2: channels go from 1 to 13".into())
+			Err("Line 2: Channels go from 1 to 13".into())
 		);
 		assert_eq!(
 			settings.with_text("colour = blue"),
