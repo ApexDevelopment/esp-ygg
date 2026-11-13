@@ -25,6 +25,9 @@ const MAX_FETCH: usize = 32 * 1024;
 /// How long a stream may go without an answer before it is given up.
 #[cfg(any(feature = "irc", feature = "gemini"))]
 const STREAM_TIMEOUT_SECS: u64 = 300;
+/// How long a stream may take to connect.
+#[cfg(any(feature = "irc", feature = "gemini"))]
+const CONNECT_TIMEOUT_SECS: u64 = 20;
 /// How much may wait to be sent on a stream.
 #[cfg(any(feature = "irc", feature = "gemini"))]
 const MAX_STREAM_BACKLOG: usize = 4096;
@@ -134,7 +137,7 @@ impl Overlay {
 		let socket = self.connect(to, receive_buffer)?;
 		let lasting = self.sockets.get_mut::<tcp::Socket>(socket);
 		lasting.set_timeout(Some(smoltcp::time::Duration::from_secs(
-			STREAM_TIMEOUT_SECS,
+			CONNECT_TIMEOUT_SECS,
 		)));
 		lasting.set_keep_alive(Some(smoltcp::time::Duration::from_secs(60)));
 		let slot = self.slot(stream);
@@ -229,6 +232,9 @@ impl Overlay {
 			let socket = self.sockets.get_mut::<tcp::Socket>(handle);
 			if slot.state == StreamState::Connecting && socket.may_send() {
 				slot.state = StreamState::Open;
+				socket.set_timeout(Some(smoltcp::time::Duration::from_secs(
+					STREAM_TIMEOUT_SECS,
+				)));
 				self.events.push_back(Event::StreamOpened(stream));
 			}
 			if slot.state == StreamState::Open

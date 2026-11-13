@@ -339,6 +339,23 @@ fn streams_carry_data_both_ways() {
 	assert!(String::from_utf8_lossy(&received).contains("Test <board>"));
 }
 
+#[test]
+fn streams_to_nobody_give_up() {
+	let (mut radio, mut overlays) = mesh(2, &[0]);
+	let nobody = SocketAddrV6::new("200:1234::1".parse().unwrap(), 6667, 0, 0);
+	overlays[0].1.open_stream(Stream::Irc, nobody).unwrap();
+	let closed = wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(30),
+		|_, overlays| match overlays[0].1.poll_event() {
+			Some(Event::StreamClosed(_)) => Some(()),
+			_ => None,
+		},
+	);
+	assert!(closed.is_some(), "the stream kept trying");
+}
+
 const PHONE_MAC: [u8; 6] = [0x8a, 0, 0, 0, 0, 2];
 const BOARD_MAC: [u8; 6] = [0x24, 0, 0, 0, 0, 1];
 
