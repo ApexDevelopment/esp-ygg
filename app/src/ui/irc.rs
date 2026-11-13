@@ -23,10 +23,32 @@ const MAX_LINES: usize = 100;
 const MAX_BUFFERS: usize = 8;
 const SERVER: &str = "server";
 
-pub(super) struct Buffer {
+/// A line in a buffer: what someone said, or what happened.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entry {
+	/// Who said it, or `None` for what happened.
+	pub from: Option<String>,
+	pub text: String,
+	pub notice: bool,
+}
+
+impl Entry {
+	/// The entry as one line of text.
+	pub fn line(&self) -> String {
+		match &self.from {
+			Some(from) if self.notice => format!("-{from}- {}", self.text),
+			Some(from) => format!("<{from}> {}", self.text),
+			None => self.text.clone(),
+		}
+	}
+}
+
+pub struct Buffer {
 	pub name: String,
-	pub lines: VecDeque<String>,
+	pub lines: VecDeque<Entry>,
 	pub unread: usize,
+	/// How many lines were ever added, counting those since dropped.
+	pub added: usize,
 }
 
 impl Buffer {
@@ -35,18 +57,19 @@ impl Buffer {
 			name: name.into(),
 			lines: VecDeque::new(),
 			unread: 0,
+			added: 0,
 		}
 	}
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Phase {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
 	Setup,
 	Connecting,
 	Connected,
 }
 
-pub(super) struct Client {
+pub struct Client {
 	pub phase: Phase,
 	/// The server, nick and channel to join.
 	pub form: [TextInput; 3],
@@ -94,7 +117,7 @@ impl Client {
 		self.buffers.iter().map(|buffer| buffer.unread).sum()
 	}
 
-	pub fn handle_key(&mut self, key: Key, commands: &mut Commands) -> Outcome {
+	pub(super) fn handle_key(&mut self, key: Key, commands: &mut Commands) -> Outcome {
 		match self.phase {
 			Phase::Setup => self.form_key(key, commands),
 			Phase::Connecting | Phase::Connected => self.chat_key(key, commands),
@@ -115,7 +138,8 @@ impl Client {
 		Outcome::Stay
 	}
 
-	fn connect(&mut self, commands: &mut Commands) {
+	/// Connects with what the form holds, or says what is wrong with it.
+	pub fn connect(&mut self, commands: &mut Commands) {
 		let Some(server) = parse_server(&self.form[0].text) else {
 			self.error = Some("Server is not an address".into());
 			self.field = 0;
@@ -162,7 +186,7 @@ impl Client {
 	}
 
 	/// Sends what was typed: a message to the current buffer, or a command.
-	fn submit(&mut self, text: &str, commands: &mut Commands) {
+	pub fn submit(&mut self, text: &str, commands: &mut Commands) {
 		if text.is_empty() {
 			return;
 		}
@@ -174,7 +198,7 @@ impl Client {
 			}
 			send(commands, irc::command("PRIVMSG", &[&target], Some(text)));
 			let nick = self.nick.clone();
-			self.log(&target, format!("<{nick}> {text}"), true);
+			self.say(&target, &nick, text, false, true);
 			return;
 		};
 		let (name, rest) = line.split_once(' ').unwrap_or((line, ""));
@@ -193,7 +217,7 @@ impl Client {
 				Some((to, message)) => {
 					send(commands, irc::command("PRIVMSG", &[to], Some(message)));
 					let nick = self.nick.clone();
-					self.log(to, format!("<{nick}> {message}"), true);
+					self.say(to, &nick, message, false, true);
 					self.switch_to(to);
 				}
 				None => self.log(&target, "Use /msg nick message".into(), true),
@@ -270,12 +294,13 @@ impl Client {
 				} else {
 					from.clone()
 				};
-				let line = match irc::action_text(message.text()) {
-					Some(action) => format!("* {from} {action}"),
-					None if message.command == "NOTICE" => format!("-{from}- {}", message.text()),
-					None => format!("<{from}> {}", message.text()),
-				};
-				self.log(&buffer, line, viewing);
+				match irc::action_text(message.text()) {
+					Some(action) => self.log(&buffer, format!("* {from} {action}"), viewing),
+					None => {
+						let notice = message.command == "NOTICE";
+						self.say(&buffer, &from, message.text(), notice, viewing);
+					}
+				}
 			}
 			"JOIN" => {
 				let channel = if message.params.is_empty() {
@@ -328,7 +353,7 @@ impl Client {
 		}
 	}
 
-	fn switch_to(&mut self, name: &str) {
+	pub fn switch_to(&mut self, name: &str) {
 		let index = self.buffer_index(name);
 		self.current = index;
 		self.buffers[index].unread = 0;
@@ -356,8 +381,27 @@ impl Client {
 		self.buffers.len() - 1
 	}
 
-	fn log(&mut self, buffer: &str, line: String, viewing: bool) {
-		let line = irc::strip_formatting(&line);
+	/// Adds what happened to a buffer.
+	fn log(&mut self, buffer: &str, text: String, viewing: bool) {
+		let entry = Entry {
+			from: None,
+			text: irc::strip_formatting(&text),
+			notice: false,
+		};
+		self.add(buffer, entry, viewing);
+	}
+
+	/// Adds what someone said to a buffer.
+	fn say(&mut self, buffer: &str, from: &str, text: &str, notice: bool, viewing: bool) {
+		let entry = Entry {
+			from: Some(from.into()),
+			text: irc::strip_formatting(text),
+			notice,
+		};
+		self.add(buffer, entry, viewing);
+	}
+
+	fn add(&mut self, buffer: &str, line: Entry, viewing: bool) {
 		let name = if buffer.is_empty() { SERVER } else { buffer };
 		let index = self.buffer_index(name);
 		let entry = &mut self.buffers[index];
@@ -365,6 +409,7 @@ impl Client {
 			entry.lines.pop_front();
 		}
 		entry.lines.push_back(line);
+		entry.added += 1;
 		if !(viewing && index == self.current) {
 			entry.unread += 1;
 		}
@@ -373,6 +418,20 @@ impl Client {
 
 fn send(commands: &mut Commands, line: Vec<u8>) {
 	commands.push_back(Command::StreamSend(Stream::Irc, line));
+}
+
+/// A nick from the board's name, keeping only what IRC allows.
+pub fn default_nick(name: &str) -> String {
+	let nick: String = name
+		.chars()
+		.filter(|character| character.is_ascii_alphanumeric() || "-_[]{}\\|^`".contains(*character))
+		.take(16)
+		.collect();
+	if nick.starts_with(|character: char| character.is_ascii_alphabetic()) {
+		nick
+	} else {
+		String::from("esp-ygg")
+	}
 }
 
 /// `[address]:port`, or a bare address for the usual IRC port.
@@ -427,7 +486,7 @@ impl Client {
 		let wrapped: Vec<String> = buffer
 			.lines
 			.iter()
-			.flat_map(|line| wrap(line, width))
+			.flat_map(|entry| wrap(&entry.line(), width))
 			.collect();
 		let height = usize::from(log.height);
 		let end = wrapped

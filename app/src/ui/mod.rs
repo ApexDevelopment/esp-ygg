@@ -14,7 +14,7 @@ mod gemini;
 mod gopher;
 mod input;
 #[cfg(feature = "irc")]
-mod irc;
+pub mod irc;
 pub mod keyboard;
 mod ping;
 pub mod remote;
@@ -72,7 +72,7 @@ pub enum Key {
 
 /// Something the host should do for the UI.
 /// What the host has been asked to do, oldest first.
-type Commands = VecDeque<Command>;
+pub type Commands = VecDeque<Command>;
 
 /// Whether a key keeps an app's screen open.
 enum Outcome {
@@ -454,7 +454,7 @@ impl App {
 			#[cfg(feature = "gopher")]
 			gopher: gopher::Browser::new(),
 			#[cfg(feature = "irc")]
-			irc: irc::Client::new(&default_nick(&settings.name)),
+			irc: irc::Client::new(&irc::default_nick(&settings.name)),
 			#[cfg(feature = "gemini")]
 			gemini: gemini::Browser::new(),
 			#[cfg(feature = "voice")]
@@ -1104,21 +1104,6 @@ impl App {
 		self.directory
 			.name_of_address(address)
 			.map_or_else(|| address.to_string(), String::from)
-	}
-}
-
-/// A nick from the board's name, keeping only what IRC allows.
-#[cfg(feature = "irc")]
-fn default_nick(name: &str) -> String {
-	let nick: String = name
-		.chars()
-		.filter(|character| character.is_ascii_alphanumeric() || "-_[]{}\\|^`".contains(*character))
-		.take(16)
-		.collect();
-	if nick.starts_with(|character: char| character.is_ascii_alphabetic()) {
-		nick
-	} else {
-		String::from("esp-ygg")
 	}
 }
 
