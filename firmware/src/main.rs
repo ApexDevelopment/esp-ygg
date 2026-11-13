@@ -633,6 +633,13 @@ fn carry_out(
 	}
 }
 
+/// Restarts the board once a panic has been printed. Otherwise it would sit
+/// frozen, and the message is lost when nothing reads the serial port.
+#[unsafe(no_mangle)]
+extern "Rust" fn custom_halt() -> ! {
+	esp_hal::system::software_reset()
+}
+
 /// Settings from environment variables at build time, used until the user
 /// saves some on the device.
 fn build_time_settings() -> Settings {
