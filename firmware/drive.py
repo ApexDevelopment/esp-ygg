@@ -13,6 +13,7 @@ Each command is one of:
 	                 as screen.png
 	talk on|off      holds or releases push-to-talk
 	mute on|off      silences the speaker
+	lock             presses the button that locks and unlocks the board
 	wait <seconds>   waits, printing whatever the board logs meanwhile
 
 For example:

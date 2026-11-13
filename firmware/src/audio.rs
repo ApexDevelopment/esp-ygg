@@ -184,7 +184,12 @@ pub async fn run(pins: Pins, model: Model) {
 	};
 	let talking = || button.is_low() || REMOTE_TALK.load(Ordering::Relaxed);
 	loop {
-		TALKING.store(talking(), Ordering::Relaxed);
+		// Outside a call, the button locks the board instead.
+		let in_call = matches!(call_state(), CallState::Up(_));
+		TALKING.store(
+			talking() && (in_call || REMOTE_TALK.load(Ordering::Relaxed)),
+			Ordering::Relaxed,
+		);
 		match call_state() {
 			CallState::Up(codec) if talking() => {
 				let mut encoder = Encoder::new(codec);
@@ -227,6 +232,14 @@ pub async fn run(pins: Pins, model: Model) {
 				})
 				.await;
 			}
+			CallState::None if button.is_low() => {
+				crate::lock::toggle();
+				while button.is_low() {
+					Timer::after(BUTTON_POLL).await;
+				}
+			}
+			// Over the serial port, push-to-talk records a few seconds and
+			// plays them back, to test the speaker and microphone.
 			CallState::None if talking() => {
 				// Kept as G.726, and reserved at once, so memory never runs
 				// out partway.

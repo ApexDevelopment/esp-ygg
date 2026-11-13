@@ -859,3 +859,15 @@ fn a_key_lights_up_while_pressed_and_a_moment_after() {
 	app.tick(at(2));
 	assert_eq!(lit(&app), unlit);
 }
+
+#[test]
+fn shows_only_that_it_is_locked_and_ignores_keys() {
+	let mut app = App::new(Settings::new(), at(0));
+	app.set_status(status(&[], &[]));
+	let before = screen(&app);
+	app.set_locked(true);
+	assert!(screen(&app).join("\n").contains("Locked"));
+	press(&mut app, &[Key::Down, Key::Enter]);
+	app.set_locked(false);
+	assert_eq!(screen(&app), before);
+}

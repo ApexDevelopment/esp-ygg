@@ -10,6 +10,7 @@
 //! - `screen` asks for the screen as text.
 //! - `talk on` and `talk off` hold and release the push-to-talk button.
 //! - `mute on` and `mute off` silence the speaker, for quiet testing.
+//! - `lock` presses the button that locks and unlocks the board.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -31,6 +32,7 @@ pub enum Remote {
 	Screen,
 	Talk(bool),
 	Mute(bool),
+	Lock,
 }
 
 /// Reads one line, or returns why it could not.
@@ -61,6 +63,7 @@ pub fn parse(line: &str) -> Result<Remote, String> {
 			}
 		}
 		"screen" => Ok(Remote::Screen),
+		"lock" => Ok(Remote::Lock),
 		"talk" if rest == "on" => Ok(Remote::Talk(true)),
 		"talk" if rest == "off" => Ok(Remote::Talk(false)),
 		"mute" if rest == "on" => Ok(Remote::Mute(true)),
@@ -136,6 +139,7 @@ mod tests {
 		assert_eq!(parse("drag 1 2 3 4"), Ok(Remote::Drag((1, 2), (3, 4))));
 		assert_eq!(parse("screen"), Ok(Remote::Screen));
 		assert_eq!(parse("talk on"), Ok(Remote::Talk(true)));
+		assert_eq!(parse("lock"), Ok(Remote::Lock));
 		assert!(parse("key sideways").is_err());
 		assert!(parse("dance").is_err());
 	}

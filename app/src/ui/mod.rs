@@ -403,6 +403,8 @@ pub struct App {
 	commands: VecDeque<Command>,
 	/// A short message about the last action, cleared by the next key.
 	notice: Option<String>,
+	/// Locked against input, showing only that it is.
+	locked: bool,
 	completion: Option<Completion>,
 
 	directory: Directory,
@@ -445,6 +447,7 @@ impl App {
 			apps_selected: 0,
 			commands: VecDeque::new(),
 			notice: None,
+			locked: false,
 			completion: None,
 			directory: Directory::new(),
 			nodes_selected: 0,
@@ -564,7 +567,22 @@ impl App {
 		}
 	}
 
+	/// Locks against input, or unlocks.
+	pub fn set_locked(&mut self, locked: bool) {
+		if locked {
+			self.keyboard.release();
+		}
+		self.locked = locked;
+	}
+
+	pub fn is_locked(&self) -> bool {
+		self.locked
+	}
+
 	pub fn handle_key(&mut self, key: Key) {
+		if self.locked {
+			return;
+		}
 		self.notice = None;
 		if key != Key::Tab {
 			self.completion = None;
@@ -609,6 +627,9 @@ impl App {
 	/// the keyboard type. Any other tap brings the keyboard up while there
 	/// is a text field to type in, and presses Enter otherwise.
 	pub fn handle_tap(&mut self, column: u16, row: u16) {
+		if self.locked {
+			return;
+		}
 		let point = Position::new(column, row);
 		if let Some((area, kind)) = self.keyboard_area()
 			&& area.contains(point)
@@ -631,6 +652,9 @@ impl App {
 	/// A finger has touched the screen at a column and row. Keys on the
 	/// keyboard light up under it.
 	pub fn handle_press(&mut self, column: u16, row: u16) {
+		if self.locked {
+			return;
+		}
 		if let Some((area, kind)) = self.keyboard_area() {
 			self.keyboard.press(area, kind, Position::new(column, row));
 		}

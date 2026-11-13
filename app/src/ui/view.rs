@@ -28,6 +28,10 @@ pub(super) const SELECTED: Style = Style::new().fg(Color::Black).bg(ACCENT);
 /// Draws the whole screen.
 pub fn draw(frame: &mut Frame, app: &App) {
 	app.drawn.set(frame.area());
+	if app.locked {
+		draw_locked(frame);
+		return;
+	}
 	let mut screen = frame.area();
 	if let Some((keyboard, kind)) = app.keyboard_area() {
 		screen = split_bottom(screen, keyboard.height).0;
@@ -72,6 +76,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
 		None => Line::styled(hints(app), DIM),
 	};
 	frame.render_widget(Paragraph::new(footer_text), footer);
+}
+
+/// A locked board shows only that it is, in the middle of the screen.
+fn draw_locked(frame: &mut Frame) {
+	let area = frame.area();
+	let middle = Rect::new(area.x, area.y + area.height / 2, area.width, 1);
+	let text = Paragraph::new(Line::styled("Locked", Style::new().fg(ACCENT)));
+	frame.render_widget(text.centered(), middle);
 }
 
 fn draw_title(frame: &mut Frame, area: Rect, app: &App) {

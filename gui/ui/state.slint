@@ -255,6 +255,11 @@ export global Setup {
     callback scan();
 }
 
+/// Whether the board is locked against input, which hides the interface.
+export global Lock {
+    in property <bool> locked;
+}
+
 /// A short message about the last action, shown for a few seconds.
 export global Notice {
     in_out property <string> text;

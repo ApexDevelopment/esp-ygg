@@ -110,6 +110,16 @@ mod screen {
 		pub gpio5: GPIO5<'static>,
 		pub gpio6: GPIO6<'static>,
 		pub gpio7: GPIO7<'static>,
+		/// The button on the side, which locks the board, unless it talks.
+		#[cfg(not(feature = "voice"))]
+		pub g0: esp_hal::peripherals::GPIO0<'static>,
+	}
+
+	/// What the keyboard task looks after besides the keys.
+	struct Controls {
+		backlight: Output<'static>,
+		#[cfg(not(feature = "voice"))]
+		lock_button: Input<'static>,
 	}
 
 	/// The microSD slot, on an SPI bus of its own.
@@ -140,7 +150,7 @@ mod screen {
 		};
 		MODEL.store(model as u8 + 1, Ordering::Relaxed);
 		info!("Board: {}", model.name());
-		let screen = screen(
+		let (screen, backlight) = screen(
 			pins.spi,
 			pins.sck,
 			pins.mosi,
@@ -164,7 +174,12 @@ mod screen {
 				],
 			},
 		};
-		spawner.spawn(keyboard(reader).expect("spawning the keyboard task"));
+		let controls = Controls {
+			backlight,
+			#[cfg(not(feature = "voice"))]
+			lock_button: input(pins.g0),
+		};
+		spawner.spawn(keyboard(reader, controls).expect("spawning the keyboard task"));
 		(model, screen)
 	}
 
@@ -206,7 +221,7 @@ mod screen {
 		dc: GPIO34<'static>,
 		reset: GPIO33<'static>,
 		backlight: GPIO38<'static>,
-	) -> Screen {
+	) -> (Screen, Output<'static>) {
 		let config = esp_hal::spi::master::Config::default()
 			.with_frequency(Rate::from_mhz(40))
 			.with_mode(Mode::_0);
@@ -230,9 +245,8 @@ mod screen {
 		// The panel powers up with random contents, and the terminal only draws
 		// cells that change, so blank cells would never be drawn over.
 		display.clear(Rgb565::BLACK).expect("clearing the display");
-		// The pin stays high once the driver is dropped. On the ADV, it also
-		// powers the RGB LED.
-		let _backlight = Output::new(backlight, Level::High, OutputConfig::default());
+		// On the ADV, the backlight's pin also powers the RGB LED.
+		let backlight = Output::new(backlight, Level::High, OutputConfig::default());
 		static DISPLAY: StaticCell<Display> = StaticCell::new();
 		#[allow(unused_mut)]
 		let mut config = EmbeddedBackendConfig::default();
@@ -244,7 +258,8 @@ mod screen {
 			});
 		}
 		let backend = EmbeddedBackend::new(DISPLAY.init(display), config);
-		Terminal::new(backend).expect("starting the terminal")
+		let terminal = Terminal::new(backend).expect("starting the terminal");
+		(terminal, backlight)
 	}
 
 	enum KeyReader {
@@ -353,10 +368,22 @@ mod screen {
 		let _ = i2c.write(KEYBOARD_CONTROLLER, &[REG_INT_STAT, 0x03]);
 	}
 
+	/// Reads the keys, and the button that locks the board, and turns the
+	/// screen off once the board has been locked a moment.
 	#[embassy_executor::task]
-	async fn keyboard(mut reader: KeyReader) {
+	async fn keyboard(mut reader: KeyReader, mut controls: Controls) {
 		let mut keyboard = Keyboard::new();
+		#[cfg(not(feature = "voice"))]
+		let mut lock_button = crate::lock::Button::default();
 		loop {
+			#[cfg(not(feature = "voice"))]
+			lock_button.update(controls.lock_button.is_low());
+			let lit = if crate::lock::is_dark() {
+				Level::Low
+			} else {
+				Level::High
+			};
+			controls.backlight.set_level(lit);
 			// The ADV's audio codec shares the keyboard's I2C bus.
 			#[cfg(feature = "voice")]
 			if let KeyReader::Controller { i2c, .. } = &mut reader {

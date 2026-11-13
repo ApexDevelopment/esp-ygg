@@ -102,9 +102,11 @@ In fields that take an address, typing the start of a known node's address or na
 
 The arrow keys are Fn with `;` `.` `,` and `/`, and Escape is Fn with `` ` ``. In lists, the same keys work without Fn.
 
-On the touch screen, dragging up or down moves the selection a row at a time, following the finger. A tap is Enter, and a swipe to the right or the BOOT button is Escape. When a tap opens a text field, a keyboard comes up on the lower half of the screen, with `123` for digits and symbols and `▼` to put it away. Tapping anywhere above it while the field is still open brings it back. Fields that only take numbers, such as the channel, time zone and peer, get a number pad of two rows instead, which leaves more of the screen to see.
+On the touch screen, dragging up or down moves the selection a row at a time, following the finger. A tap is Enter, and a swipe to the right is Escape. When a tap opens a text field, a keyboard comes up on the lower half of the screen, with `123` for digits and symbols and `▼` to put it away. Tapping anywhere above it while the field is still open brings it back. Fields that only take numbers, such as the channel, time zone and peer, get a number pad of two rows instead, which leaves more of the screen to see.
 
-The touch board's screen dims after 30 seconds without a touch, and turns off 30 seconds later. Touching it, or pressing the BOOT button, wakes it, and the touch that wakes it does nothing else.
+The touch board's screen dims after 30 seconds without a touch, and turns off 30 seconds later. Touching it wakes it, and the touch that wakes it does nothing else.
+
+The button on the side, G0 on a Cardputer and BOOT on the touch board, locks the board against input, so it can go in a pocket. The text interface says Locked, and the graphical one dims behind a lock, then the screen turns off after 5 seconds. Nothing but the button wakes it, and pressing it again unlocks. On voice builds, where G0 is also push-to-talk, it locks only outside a call, and an incoming call unlocks the board to answer.
 
 The interface can also be driven from a computer over the USB serial port, for testing without someone at the keyboard. `firmware/drive.py` sends lines such as `type 200::1`, `key down enter`, `tap 5 2`, which taps a touch screen at a column and row of characters, and `screen`, which prints what the screen shows, or for the graphical interface saves it as `screen.png`, and it does so without resetting the board:
 
@@ -112,7 +114,7 @@ The interface can also be driven from a computer over the USB serial port, for t
 python3 firmware/drive.py /dev/ttyACM0 "key down down enter" "type 200::1" "key enter" "wait 3" screen
 ```
 
-In voice builds, `talk on` and `talk off` hold and release push-to-talk, and `mute on` silences the speaker for quiet testing.
+`lock` presses the button that locks and unlocks the board. In voice builds, `talk on` and `talk off` hold and release push-to-talk, and `mute on` silences the speaker for quiet testing.
 
 To try the interface without a board, run `cargo run -p esp-ygg-app --example preview`. It shows the interface in a terminal as one of three simulated boards in a line, where the farthest one echoes console messages back. Add `-- touch` for the touch board's larger screen, where mouse clicks are taps.
 
@@ -144,7 +146,7 @@ cargo run -p esp-ygg-gui --example screenshot -- screens
 
 With the `voice` feature, the Voice Call (IAX2) app calls other boards by address, with Tab completion like the other address fields. Calls use IAX2, the protocol Asterisk speaks, on UDP port 4569, so other IAX2 software over Yggdrasil should be able to call in too. Yggdrasil already encrypts and authenticates traffic by address, so calls use no IAX2 passwords.
 
-An incoming call rings and brings up the call screen from anywhere. Enter answers and Escape declines or hangs up. Talking is push-to-talk, like a walkie-talkie: hold G0 on the side of the board to talk, and let go to listen. Outside a call, holding G0 records a few seconds and plays them back on release, to check the speaker and microphone.
+An incoming call rings and brings up the call screen from anywhere. Enter answers and Escape declines or hangs up. Talking is push-to-talk, like a walkie-talkie: hold G0 on the side of the board to talk, and let go to listen. Outside a call, G0 locks the board instead, and `talk on` over the serial port records a few seconds and plays them back at `talk off`, to check the speaker and microphone.
 
 Calls prefer G.726 at 32 kbit/s, which fits each 20 ms of voice in a single ESP-NOW frame, and fall back to G.711 μ-law for software without it. The G.726 codec matches Sun's reference implementation, which Asterisk's is built on, bit for bit. Asterisk swapped the IAX2 format bits for G.726's two byte packings from what RFC 5456 lists, and the boards follow Asterisk, offering both packings.
 

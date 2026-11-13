@@ -298,6 +298,10 @@ fn screenshots(folder: &Path, commands: &[String]) -> io::Result<()> {
 			Remote::Drag(..) => {
 				return Err(io::Error::other("Drags are for the graphical interface"));
 			}
+			Remote::Lock => {
+				let locked = sim.app.is_locked();
+				sim.app.set_locked(!locked);
+			}
 		}
 		run_for(&mut sim, &mut terminal, SETTLE)?;
 	}

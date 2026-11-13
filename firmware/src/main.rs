@@ -22,6 +22,8 @@ mod cardputer;
 #[cfg(feature = "gui")]
 mod gui;
 mod hotspot;
+#[cfg(feature = "ui")]
+mod lock;
 #[cfg(feature = "ntp")]
 mod ntp;
 mod park;
@@ -241,6 +243,8 @@ async fn main(spawner: Spawner) -> ! {
 			gpio5: peripherals.GPIO5,
 			gpio6: peripherals.GPIO6,
 			gpio7: peripherals.GPIO7,
+			#[cfg(not(feature = "voice"))]
+			g0: peripherals.GPIO0,
 		};
 		ui::second_core::start(
 			peripherals.CPU_CTRL,

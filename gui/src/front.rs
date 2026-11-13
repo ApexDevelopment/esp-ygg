@@ -277,6 +277,14 @@ impl Gui {
 		&self.window
 	}
 
+	/// Hides the interface behind a lock, or shows it again.
+	pub fn set_locked(&self, locked: bool) {
+		let lock = self.window.global::<crate::Lock>();
+		if lock.get_locked() != locked {
+			lock.set_locked(locked);
+		}
+	}
+
 	pub fn set_status(&mut self, status: Status) {
 		let node = self.window.global::<Node>();
 		node.set_address(status.address.to_string().into());

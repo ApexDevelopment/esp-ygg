@@ -11,8 +11,8 @@ import { NodesPage } from "nodes.slint";
 import { PingPage } from "ping.slint";
 import { CompactBar, CompactRail, NavigationHandle } from "rail.slint";
 import { SettingsPage } from "settings.slint";
-import { App, Keyboard, Launcher, Notice } from "state.slint";
-export { App, ChatEntry, Console, Gemini, Gopher, Irc, IrcBuffer, IrcField, Keyboard, Launcher, LineStyle, Node, NodeEntry, NeighborEntry, Notice, PageLine, Ping, Setting, Setup, WifiEntry } from "state.slint";
+import { App, Keyboard, Launcher, Lock, Notice } from "state.slint";
+export { App, ChatEntry, Console, Gemini, Gopher, Irc, IrcBuffer, IrcField, Keyboard, Launcher, LineStyle, Lock, Node, NodeEntry, NeighborEntry, Notice, PageLine, Ping, Setting, Setup, WifiEntry } from "state.slint";
 import "../fonts/Roboto-Regular.ttf";
 import "../fonts/Roboto-Medium.ttf";
 
@@ -216,5 +216,17 @@ export component MainWindow inherits MaterialWindow {
     if Keyboard.open: OnScreenKeyboard {
         width: root.width;
         height: root.height;
+    }
+
+    // Over everything, while the board is locked.
+    if Lock.locked: Rectangle {
+        background: MaterialPalette.scrim.transparentize(15%);
+
+        Image {
+            width: 48px;
+            height: 48px;
+            source: @image-url("../icons/lock.svg");
+            colorize: MaterialPalette.on_surface;
+        }
     }
 }

@@ -517,7 +517,6 @@ mod screen {
 		use embassy_time::{Duration, Timer};
 		use esp_hal::Blocking;
 		use esp_hal::i2c::master::I2c;
-		use esp_ygg_app::ui::Key;
 		use esp_ygg_app::ui::screen_timeout::ScreenTimeout;
 		use esp_ygg_app::ui::touch::{Gesture, Gestures, Point};
 		use mousefood::embedded_graphics::mono_font::MonoFont;
@@ -585,8 +584,8 @@ mod screen {
 			}
 		}
 
-		/// Reads the touch panel and the BOOT button, and dims the screen when
-		/// neither is used for a while.
+		/// Reads the touch panel and the BOOT button, which locks the board,
+		/// and dims the screen when it goes untouched for a while.
 		#[embassy_executor::task]
 		async fn touch(
 			mut i2c: I2c<'static, Blocking>,
@@ -594,10 +593,12 @@ mod screen {
 			grid: Grid,
 		) {
 			let mut gestures = Gestures::new();
-			let mut button_held = false;
+			let mut lock_button = crate::lock::Button::default();
 			let mut timeout = ScreenTimeout::new(uptime());
 			let mut backlight = u8::MAX;
 			loop {
+				lock_button.update(boot_button.is_low());
+				timeout.set_locked(uptime(), crate::lock::locked_at(), false);
 				let point = timeout.touch(uptime(), read_touch(&mut i2c));
 				for gesture in gestures.update(point) {
 					let input = match gesture {
@@ -614,11 +615,6 @@ mod screen {
 					};
 					let _ = INPUT.try_send(input);
 				}
-				// The BOOT button goes back, as a swipe to the right does.
-				if boot_button.is_low() && !button_held && timeout.input(uptime()) {
-					let _ = INPUT.try_send(Input::Key(Key::Escape));
-				}
-				button_held = boot_button.is_low();
 				let level = timeout.backlight(uptime());
 				if level != backlight {
 					set_backlight(&mut i2c, level);

@@ -76,6 +76,12 @@ fn main() {
 	save_gopher(&mut gui, &window, &folder);
 	save_navigation_over_app(&mut gui, &window, &folder);
 	save_gemini(&mut gui, &window, &folder);
+	gui.set_locked(true);
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		save_screen(&window, &folder, &format!("locked-{orientation}"));
+	}
+	gui.set_locked(false);
 }
 
 const GEMINI_PAGE: &str = "20 text/gemini\r

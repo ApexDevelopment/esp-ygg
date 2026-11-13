@@ -69,7 +69,6 @@ pub enum Input {
 }
 
 /// The time since startup.
-#[cfg(feature = "c6-touch-lcd")]
 pub fn uptime() -> core::time::Duration {
 	core::time::Duration::from_micros(embassy_time::Instant::now().as_micros())
 }
@@ -107,6 +106,7 @@ pub(crate) async fn serial(usb: USB_DEVICE<'static>) {
 				}
 				Ok(Remote::Drag(from, to)) => INPUT.send(Input::Drag { from, to }).await,
 				Ok(Remote::Screen) => SCREEN_WANTED.store(true, Ordering::Relaxed),
+				Ok(Remote::Lock) => crate::lock::toggle(),
 				#[cfg(feature = "voice")]
 				Ok(Remote::Talk(on)) => crate::audio::REMOTE_TALK.store(on, Ordering::Relaxed),
 				#[cfg(feature = "voice")]
@@ -237,6 +237,10 @@ mod text {
 				Either3::Second(message) => handle_message(&mut app, message),
 				Either3::Third(()) => {}
 			}
+			let locked = crate::lock::is_locked();
+			if locked != app.is_locked() {
+				app.set_locked(locked);
+			}
 			#[cfg(feature = "voice")]
 			{
 				app.set_talking(crate::audio::TALKING.load(Ordering::Relaxed));
@@ -268,7 +272,17 @@ mod text {
 	fn handle_message(app: &mut App, message: ToUi) {
 		match message {
 			ToUi::Status(status) => app.set_status(status),
-			ToUi::Event(event) => app.handle_event(event),
+			ToUi::Event(event) => {
+				// The call screen comes up unlocked, to answer.
+				#[cfg(feature = "voice")]
+				if let esp_ygg_app::Event::Call(esp_ygg_app::voice::iax2::CallEvent::Incoming {
+					..
+				}) = &event
+				{
+					crate::lock::unlock();
+				}
+				app.handle_event(event)
+			}
 			ToUi::NodeInfo(key, info) => app.handle_nodeinfo(key, info),
 			ToUi::Networks(networks) => app.set_networks(networks),
 		}

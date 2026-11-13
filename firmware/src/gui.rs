@@ -182,6 +182,7 @@ pub async fn run(board: Board, settings: Settings) {
 		display,
 		mut i2c,
 		mut slot,
+		boot_button,
 		..
 	} = board;
 	let mut panel = Panel::new(display);
@@ -203,10 +204,16 @@ pub async fn run(board: Board, settings: Settings) {
 	let mut backlight = u8::MAX;
 	let mut touching = None;
 	let mut serial_finger = SerialFinger::default();
+	let mut lock_button = crate::lock::Button::default();
 	loop {
 		let frame_started = Instant::now();
 		crate::ui::report_stack();
 		slint::platform::update_timers_and_animations();
+		// While locked, the screen dims behind a lock, and takes no input.
+		lock_button.update(boot_button.is_low());
+		let locked_at = crate::lock::locked_at();
+		timeout.set_locked(uptime(), locked_at, true);
+		gui.set_locked(locked_at.is_some());
 		let touch = timeout.touch(uptime(), touch_lcd::read_touch(&mut i2c));
 		let touch = touch.map(|(x, y)| {
 			slint::PhysicalPosition::new(x.into(), y.into()).to_logical(window.scale_factor())
