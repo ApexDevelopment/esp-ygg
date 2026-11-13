@@ -66,6 +66,7 @@ Each service costs memory while the board runs, so the firmware can be built wit
 | `gopher` | Gopher menu, and the Gopher screen | off |
 | `irc` | The IRC screen | off |
 | `gemini` | The Gemini screen | off |
+| `share` | Share, for sending and receiving files over SFTP, on boards with an interface | off |
 | `voice` | Voice calls, on the Cardputers | off |
 
 To add the larger ones, list them along with the board:
@@ -94,7 +95,8 @@ On a board with a screen, the home screen shows the board's address and how many
   - Gemini browses Gemini capsules, starting from an address you type. Up and down move between links, scrolling past text where there are none, and Enter follows the selected one. It answers questions servers ask and follows redirects. Gemini servers mostly sign their own certificates, so the browser trusts the certificate a server shows first and refuses a different one until the board restarts. Going back fetches the page again, to save memory.
   - IRC connects to an IRC server over Yggdrasil and joins a channel. Each channel and private conversation gets its own buffer, and Tab moves between them. The usual commands work, such as `/join`, `/part`, `/msg`, `/me`, `/nick` and `/quit`. Leaving the screen keeps the connection, and the menu counts new lines.
   - UDP Console shows text received on UDP port 4242 and sends what you type, to an address or `[address]:port`.
-- Settings changes the name, channel and time zone, turns the status pages on or off, and sets up the bridge and the hotspot. Voice builds add the ringer, with five ringtones and five volume steps, each played briefly as it changes. Saving applies the name, channel, time zone, status pages and ringer at once. Joining a network, the bridge peer and the hotspot set up WiFi as the board starts, so changing them restarts it, as does changing the channel while the hotspot is on, and the save button says when it will. Settings can also be exported to and imported from `esp-ygg/settings.txt` on a FAT32 microSD card, as `key = value` lines that are easy to edit on a computer, with passwords in plain text. A file may leave out settings it does not change, and importing fills in the settings screen without saving.
+  - Share lists the files in the shared folder on the SD card, and sends the selected one to an address you type, logging in as the user you give. It asks on screen when a peer wants in, and when a server wants a password. See [Share](#share).
+- Settings changes the name, channel and time zone, turns the status pages on or off, and sets up the bridge and the hotspot. Builds with Share add its password. Voice builds add the ringer, with five ringtones and five volume steps, each played briefly as it changes. Saving applies the name, channel, time zone, status pages, Share password and ringer at once. Joining a network, the bridge peer and the hotspot set up WiFi as the board starts, so changing them restarts it, as does changing the channel while the hotspot is on, and the save button says when it will. Settings can also be exported to and imported from `esp-ygg/settings.txt` on a FAT32 microSD card, as `key = value` lines that are easy to edit on a computer, with passwords in plain text. A file may leave out settings it does not change, and importing fills in the settings screen without saving.
 
 Once the board knows the time, the title bar shows it. A bridged board gets the time from `pool.ntp.org`, and other boards ask their peers over Yggdrasil, so it spreads through the mesh. The time zone is a fixed offset from UTC, so it needs changing by hand for daylight saving time.
 
@@ -126,7 +128,7 @@ cargo run -p esp-ygg-app --example preview -- png shots "key down down down ente
 
 ## Graphical interface
 
-The touch board can show a graphical interface instead of the text one, made with [Slint](https://slint.dev) and its Material 3 components. The `tui` and `gui` features choose between them, as `cargo c6-touch` and `cargo c6-gui` do. It has four pages: Home, a launcher for the apps: Ping, the UDP console, which a count on its icon and a short notice tell of new messages, IRC when built with `irc`, which counts unread lines the same way and lists its channels and private chats to switch between, Gopher when built with `gopher`, which wraps menus and text to the screen and goes back through the pages before, and Gemini when built with `gemini`, which does the same for gemtext, with its headings, lists, quotes and preformatted text, and asks on the keyboard when a server asks a question; Nodes, every node it knows, named once they answer; Radio, the boards in ESP-NOW range with their signal; and Settings, which shows the node's address and uptime, sets up the node, the bridge and the hotspot, and exports and imports settings on the SD card. The bridge's network is picked from a scan, or typed for one that does not show. The navigation runs down the side of a wide screen and along the bottom of a tall one, so the interface suits boards held either way. While an app is open, the navigation folds away to a thin handle, leaving the app the screen. Tapping the handle brings the navigation back over the app, tapping the app puts it away, and Home goes back to the launcher.
+The touch board can show a graphical interface instead of the text one, made with [Slint](https://slint.dev) and its Material 3 components. The `tui` and `gui` features choose between them, as `cargo c6-touch` and `cargo c6-gui` do. It has four pages: Home, a launcher for the apps: Ping, the UDP console, which a count on its icon and a short notice tell of new messages, IRC when built with `irc`, which counts unread lines the same way and lists its channels and private chats to switch between, Gopher when built with `gopher`, which wraps menus and text to the screen and goes back through the pages before, and Gemini when built with `gemini`, which does the same for gemtext, with its headings, lists, quotes and preformatted text, and asks on the keyboard when a server asks a question, and Share when built with `share`; Nodes, every node it knows, named once they answer; Radio, the boards in ESP-NOW range with their signal; and Settings, which shows the node's address and uptime, sets up the node, the bridge and the hotspot, and exports and imports settings on the SD card. The bridge's network is picked from a scan, or typed for one that does not show. The navigation runs down the side of a wide screen and along the bottom of a tall one, so the interface suits boards held either way. While an app is open, the navigation folds away to a thin handle, leaving the app the screen. Tapping the handle brings the navigation back over the app, tapping the app puts it away, and Home goes back to the launcher.
 
 Tapping a setting opens a keyboard in the style of Material 3 over the whole screen, with the setting at the top. Settings that take numbers, such as the channel and the peer, get a number pad. Enter checks the setting, with the same rules as the text interface, and says what is wrong if it will not do. Over the serial port, `type` and `key` type on the keyboard while it is up, `tap` taps at a pixel, and `drag 200 220 200 40` drags a finger from one pixel to another, which scrolls.
 
@@ -213,6 +215,22 @@ The bridge and the hotspot both use WiFi, in opposite directions. The bridge joi
 Devices that join the hotspot get an address in the board's `300:` subnet and a route to the rest of Yggdrasil through the board. They can then reach any Yggdrasil address, such as the status page of a board across the mesh. The hotspot only carries Yggdrasil traffic. It has no IPv4 and no internet, so phones may warn that the network has no internet and need telling to stay connected. Laptops on another network as well keep using it for everything else.
 
 The hotspot runs on the board's ESP-NOW channel, or on the bridge's network's channel when bridging. NetworkManager installs the route to `200::/7` that the board advertises. Where the Linux kernel handles advertisements itself, it ignores that route unless `net.ipv6.conf.<interface>.accept_ra_rt_info_max_plen` is at least 7, which matters on a laptop that has IPv6 from another network as well.
+
+## Share
+
+Share sends and receives files over SFTP, so any SFTP client or server can be on the other end, whether another board or a computer. It keeps files in `esp-ygg/share` on the SD card, a single folder that peers can list, download from and upload to. They cannot delete or rename files, or make folders.
+
+A peer that connects is let in when it gives the password set in Settings. Without a password set, or when a peer gives the wrong one, the board asks on screen whether to let it in, and turns it away after a minute without an answer. From a computer on Yggdrasil, any user name works:
+
+```sh
+sftp 'share@[<board address>]'
+```
+
+The board's SSH host key is its Yggdrasil key, so a computer sees the same key fingerprint for as long as the board keeps its identity. When sending, the board accepts whatever host key the server shows, as Yggdrasil already makes sure that the node at an address holds that address's key. It logs in with a password, asking for one on screen when the server wants it, as it has no key of its own for logging in.
+
+The card's file system can read long file names but only write short ones, so received files are named in the 8.3 style, as Windows does, such as `HOLIDA~1.JPE` for `holiday photo.jpeg`. A name that is taken gets the next number instead of replacing the file.
+
+Key exchange is curve25519 without its post-quantum ML-KEM hybrid, as that took more stack than the interface has to spare.
 
 ## Trying it out
 
