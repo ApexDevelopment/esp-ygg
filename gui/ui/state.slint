@@ -281,5 +281,7 @@ export global Keyboard {
 
     /// A character, or Key.Backspace, or Key.Return to finish.
     callback key(string);
+    /// The character at a place in a row of keys, in capitals if asked.
+    callback key_at(string, int, bool);
     callback cancel();
 }

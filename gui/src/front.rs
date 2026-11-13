@@ -931,6 +931,18 @@ fn connect(window: &MainWindow, actions: &Rc<RefCell<VecDeque<Action>>>) {
 	let keyboard = window.global::<Keyboard>();
 	let keys = actions.clone();
 	keyboard.on_key(move |text| keys.borrow_mut().push_back(Action::Key(text)));
+	let rows = actions.clone();
+	keyboard.on_key_at(move |row, index, upper| {
+		let Some(character) = usize::try_from(index).ok().and_then(|i| row.chars().nth(i)) else {
+			return;
+		};
+		let text: SharedString = if upper {
+			character.to_uppercase().collect::<String>().into()
+		} else {
+			character.to_string().into()
+		};
+		rows.borrow_mut().push_back(Action::Key(text));
+	});
 	keyboard.on_cancel(queue(|| Action::Cancel));
 }
 

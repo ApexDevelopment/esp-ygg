@@ -10,55 +10,29 @@ export enum KeyStyle {
     action,
 }
 
-/// The colors of a key's face and its label, unpressed and pressed.
-component KeyColors {
-    in property <KeyStyle> key_style: KeyStyle.letter;
-    in property <bool> pressed;
-
-    out property <color> face: (root.key_style == KeyStyle.action ? MaterialPalette.primary
-        : root.key_style == KeyStyle.function ? MaterialPalette.secondary_container
-        : MaterialPalette.surface_container_highest).mix(self.ink, root.pressed ? 0.7 : 1.0);
-    out property <color> ink: root.key_style == KeyStyle.action ? MaterialPalette.on_primary
-        : root.key_style == KeyStyle.function ? MaterialPalette.on_secondary_container
-        : MaterialPalette.on_surface;
+/// Roboto Mono's characters are 0.6 em wide. Each row of keys labels them
+/// all in one text of it, spaced a key apart, as every item costs memory.
+global Mono {
+    out property <length> advance: 16px * 0.6;
 }
 
-/// A key on its own, with a label or an icon, lit while it is held. Most
-/// keys are in rows of characters instead, which cost less.
+/// A key on its own, lit while it is held. Most keys are in rows of
+/// characters instead, which cost less.
 component Key inherits Rectangle {
-    in property <string> text;
-    in property <image> icon;
     in property <KeyStyle> key_style: KeyStyle.letter;
 
     callback clicked();
 
-    colors := KeyColors {
-        key_style: root.key_style;
-        pressed: touch.pressed;
-    }
+    out property <color> ink: root.key_style == KeyStyle.action ? MaterialPalette.on_primary
+        : root.key_style == KeyStyle.function ? MaterialPalette.on_secondary_container
+        : MaterialPalette.on_surface;
 
     // As wide as a character's key, unless given more
     horizontal_stretch: 1;
     border_radius: 8px;
-    background: colors.face;
-
-    Image {
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-        width: 24px;
-        height: 24px;
-        source: root.icon;
-        colorize: colors.ink;
-    }
-
-    Text {
-        text: root.text;
-        // Words, such as ?123, in a smaller size than single characters
-        font_size: root.text.character_count > 1 ? 14px : 16px;
-        color: colors.ink;
-        horizontal_alignment: center;
-        vertical_alignment: center;
-    }
+    background: (root.key_style == KeyStyle.action ? MaterialPalette.primary
+        : root.key_style == KeyStyle.function ? MaterialPalette.secondary_container
+        : MaterialPalette.surface_container_highest).mix(root.ink, touch.pressed ? 0.7 : 1.0);
 
     touch := TouchArea {
         clicked => {
@@ -67,43 +41,85 @@ component Key inherits Rectangle {
     }
 }
 
+/// A key with an icon.
+component IconKey inherits Key {
+    in property <image> icon;
+
+    Image {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 24px;
+        height: 24px;
+        source: root.icon;
+        colorize: root.ink;
+    }
+}
+
+/// A key with a label.
+component TextKey inherits Key {
+    in property <string> text;
+
+    Text {
+        text: root.text;
+        // Words, such as ?123, in a smaller size than single characters
+        font_size: root.text.character_count > 1 ? 14px : 16px;
+        color: root.ink;
+        horizontal_alignment: center;
+        vertical_alignment: center;
+    }
+}
+
 /// A row of keys that type their own text, sharing the row's width. One
 /// touch area serves the whole row, working out the key from where the
-/// finger is, which costs much less than one for each key.
+/// finger is, and one text labels them all.
 component Characters inherits Rectangle {
-    in property <[string]> characters;
+    /// A key for each character.
+    in property <string> keys;
     in property <bool> upper;
 
-    callback typed(string);
+    /// The key tapped, counting from the left.
+    callback typed(int);
 
+    // Slint 1.18 writes Rust that does not compile for a `for` over a bare
+    // character count, so it is put through a sum.
+    property <int> count: root.keys.character_count + 0;
     /// Each key's share of the row, in whole pixels so that every key is
     /// the same width, and the pixels left over, split either side.
-    property <length> slot: floor(self.width / root.characters.length / 1px) * 1px;
-    property <length> margin: (self.width - root.slot * root.characters.length) / 2;
+    property <length> slot: floor(self.width / root.count / 1px) * 1px;
+    property <length> margin: (self.width - root.slot * root.count) / 2;
     /// The key being held, or -1.
     property <int> held: touch.pressed ? floor((touch.pressed_x - root.margin) / root.slot) : -1;
 
-    for character[index] in root.characters: Rectangle {
+    for index in root.count: Rectangle {
         x: root.margin + index * root.slot + 2px;
         width: root.slot - 4px;
         border_radius: 8px;
-        background: MaterialPalette.surface_container_highest.mix(MaterialPalette.on_surface, index == root.held ? 0.7 : 1.0);
+        background: MaterialPalette.surface_container_highest;
+    }
 
-        Text {
-            text: root.upper ? character.to_uppercase() : character;
-            font_size: 16px;
-            color: MaterialPalette.on_surface;
-            horizontal_alignment: center;
-            vertical_alignment: center;
-        }
+    if root.held >= 0 && root.held < root.count: Rectangle {
+        x: root.margin + root.held * root.slot + 2px;
+        width: root.slot - 4px;
+        border_radius: 8px;
+        background: MaterialPalette.surface_container_highest.mix(MaterialPalette.on_surface, 0.7);
+    }
+
+    Text {
+        x: root.margin + (root.slot - Mono.advance) / 2;
+        width: root.width - self.x;
+        text: root.upper ? root.keys.to_uppercase() : root.keys;
+        font_family: "Roboto Mono";
+        font_size: 16px;
+        letter_spacing: root.slot - Mono.advance;
+        color: MaterialPalette.on_surface;
+        vertical_alignment: center;
     }
 
     touch := TouchArea {
         clicked => {
             let index = floor((self.pressed_x - root.margin) / root.slot);
-            if index >= 0 && index < root.characters.length {
-                let character = root.characters[index];
-                root.typed(root.upper ? character.to_uppercase() : character);
+            if index >= 0 && index < root.count {
+                root.typed(index);
             }
         }
     }
@@ -113,6 +129,8 @@ component Characters inherits Rectangle {
 /// share one touch area, as rows of characters do.
 component NumberPad inherits Rectangle {
     callback typed(string);
+    /// The key at a place in a string of keys.
+    callback typed_at(string, int);
     callback backspace();
     callback enter();
 
@@ -123,7 +141,7 @@ component NumberPad inherits Rectangle {
     property <length> cell_height: floor((self.height - 3 * root.gap) / 4 / 1px) * 1px;
     property <length> left: (self.width - 4 * root.cell_width - 3 * root.gap) / 2;
     property <length> top: (self.height - 4 * root.cell_height - 3 * root.gap) / 2;
-    property <[string]> characters: ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", ":"];
+    property <[string]> rows: ["123", "456", "789", ".0:"];
     /// The digit key being held, or -1.
     property <int> held: touch.pressed ? root.cell_at(touch.pressed_x, touch.pressed_y) : -1;
 
@@ -137,21 +155,35 @@ component NumberPad inherits Rectangle {
         return row * 3 + column;
     }
 
-    for character[index] in root.characters: Rectangle {
+    for index in 12: Rectangle {
         x: root.left + mod(index, 3) * (root.cell_width + root.gap);
         y: root.top + floor(index / 3) * (root.cell_height + root.gap);
         width: root.cell_width;
         height: root.cell_height;
         border_radius: 8px;
-        background: MaterialPalette.surface_container_highest.mix(MaterialPalette.on_surface, index == root.held ? 0.7 : 1.0);
+        background: MaterialPalette.surface_container_highest;
+    }
 
-        Text {
-            text: character;
-            font_size: 16px;
-            color: MaterialPalette.on_surface;
-            horizontal_alignment: center;
-            vertical_alignment: center;
-        }
+    if root.held >= 0: Rectangle {
+        x: root.left + mod(root.held, 3) * (root.cell_width + root.gap);
+        y: root.top + floor(root.held / 3) * (root.cell_height + root.gap);
+        width: root.cell_width;
+        height: root.cell_height;
+        border_radius: 8px;
+        background: MaterialPalette.surface_container_highest.mix(MaterialPalette.on_surface, 0.7);
+    }
+
+    // A text for each row of digits, spaced a key apart
+    for row[index] in root.rows: Text {
+        x: root.left + (root.cell_width - Mono.advance) / 2;
+        y: root.top + index * (root.cell_height + root.gap);
+        height: root.cell_height;
+        text: row;
+        font_family: "Roboto Mono";
+        font_size: 16px;
+        letter_spacing: root.cell_width + root.gap - Mono.advance;
+        color: MaterialPalette.on_surface;
+        vertical_alignment: center;
     }
 
     touch := TouchArea {
@@ -161,12 +193,12 @@ component NumberPad inherits Rectangle {
         clicked => {
             let index = root.cell_at(self.x + self.pressed_x, self.pressed_y);
             if index >= 0 {
-                root.typed(root.characters[index]);
+                root.typed_at(root.rows[floor(index / 3)], mod(index, 3));
             }
         }
     }
 
-    Key {
+    IconKey {
         x: root.left + 3 * (root.cell_width + root.gap);
         y: root.top;
         width: root.cell_width;
@@ -176,7 +208,7 @@ component NumberPad inherits Rectangle {
         clicked => { root.backspace(); }
     }
 
-    Key {
+    TextKey {
         x: root.left + 3 * (root.cell_width + root.gap);
         y: root.top + root.cell_height + root.gap;
         width: root.cell_width;
@@ -186,7 +218,7 @@ component NumberPad inherits Rectangle {
         clicked => { root.typed(self.text); }
     }
 
-    Key {
+    TextKey {
         x: root.left + 3 * (root.cell_width + root.gap);
         y: root.top + 2 * (root.cell_height + root.gap);
         width: root.cell_width;
@@ -196,7 +228,7 @@ component NumberPad inherits Rectangle {
         clicked => { root.typed(self.text); }
     }
 
-    Key {
+    IconKey {
         x: root.left + 3 * (root.cell_width + root.gap);
         y: root.top + 3 * (root.cell_height + root.gap);
         width: root.cell_width;
@@ -226,6 +258,12 @@ export component OnScreenKeyboard inherits Rectangle {
 
     function type(text: string) {
         Keyboard.key(text);
+        root.shifted = false;
+    }
+
+    /// Types the key at a place in a row, in capitals if `upper`.
+    function type_at(keys: string, index: int, upper: bool) {
+        Keyboard.key_at(keys, index, upper);
         root.shifted = false;
     }
 
@@ -272,7 +310,7 @@ export component OnScreenKeyboard inherits Rectangle {
                 }
             }
 
-            Key {
+            IconKey {
                 width: 56px;
                 icon: @image-url("../icons/close.svg");
                 key_style: KeyStyle.function;
@@ -286,6 +324,7 @@ export component OnScreenKeyboard inherits Rectangle {
         if Keyboard.numeric: NumberPad {
             vertical_stretch: 1;
             typed(text) => { root.type(text); }
+            typed_at(keys, index) => { root.type_at(keys, index, false); }
             backspace => { Keyboard.key(Key.Backspace); }
             enter => { root.enter(); }
         }
@@ -295,9 +334,9 @@ export component OnScreenKeyboard inherits Rectangle {
 
             if root.layer == 0: Characters {
                 height: root.row_height;
-                characters: ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"];
+                keys: "qwertyuiop";
                 upper: root.shifted;
-                typed(text) => { root.type(text); }
+                typed(index) => { root.type_at(self.keys, index, self.upper); }
             }
 
             if root.layer == 0: HorizontalLayout {
@@ -311,9 +350,9 @@ export component OnScreenKeyboard inherits Rectangle {
                 Characters {
                     vertical_stretch: 1;
                     horizontal_stretch: 9;
-                    characters: ["a", "s", "d", "f", "g", "h", "j", "k", "l"];
+                    keys: "asdfghjkl";
                     upper: root.shifted;
-                    typed(text) => { root.type(text); }
+                    typed(index) => { root.type_at(self.keys, index, self.upper); }
                 }
 
                 Rectangle {
@@ -325,7 +364,7 @@ export component OnScreenKeyboard inherits Rectangle {
                 height: root.row_height;
                 spacing: 4px;
 
-                Key {
+                IconKey {
                     width: root.wide;
                     icon: root.shifted ? @image-url("../icons/shift_fill1.svg") : @image-url("../icons/shift.svg");
                     key_style: KeyStyle.function;
@@ -335,12 +374,12 @@ export component OnScreenKeyboard inherits Rectangle {
                 Characters {
                     vertical_stretch: 1;
                     horizontal_stretch: 7;
-                    characters: ["z", "x", "c", "v", "b", "n", "m"];
+                    keys: "zxcvbnm";
                     upper: root.shifted;
-                    typed(text) => { root.type(text); }
+                    typed(index) => { root.type_at(self.keys, index, self.upper); }
                 }
 
-                Key {
+                IconKey {
                     width: root.wide;
                     icon: @image-url("../icons/backspace.svg");
                     key_style: KeyStyle.function;
@@ -350,33 +389,33 @@ export component OnScreenKeyboard inherits Rectangle {
 
             if root.layer == 1: Characters {
                 height: root.row_height;
-                characters: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
-                typed(text) => { root.type(text); }
+                keys: "1234567890";
+                typed(index) => { root.type_at(self.keys, index, self.upper); }
             }
 
             if root.layer == 1: Characters {
                 height: root.row_height;
-                characters: ["@", "#", "$", "_", "&", "-", "+", "(", ")", "/"];
-                typed(text) => { root.type(text); }
+                keys: "@#$_&-+()/";
+                typed(index) => { root.type_at(self.keys, index, self.upper); }
             }
 
             if root.layer == 2: Characters {
                 height: root.row_height;
-                characters: ["~", "`", "|", "\\", "<", ">", "{", "}", "[", "]"];
-                typed(text) => { root.type(text); }
+                keys: "~`|\\<>{}[]";
+                typed(index) => { root.type_at(self.keys, index, self.upper); }
             }
 
             if root.layer == 2: Characters {
                 height: root.row_height;
-                characters: ["%", "^", "=", "+", "-", "*", "/", "@", "#", "$"];
-                typed(text) => { root.type(text); }
+                keys: "%^=+-*/@#$";
+                typed(index) => { root.type_at(self.keys, index, self.upper); }
             }
 
             if root.layer != 0: HorizontalLayout {
                 height: root.row_height;
                 spacing: 4px;
 
-                Key {
+                TextKey {
                     width: root.wide;
                     text: root.layer == 1 ? "=\\<" : "?123";
                     key_style: KeyStyle.function;
@@ -386,11 +425,11 @@ export component OnScreenKeyboard inherits Rectangle {
                 Characters {
                     vertical_stretch: 1;
                     horizontal_stretch: 7;
-                    characters: ["*", "\"", "'", ":", ";", "!", "?"];
-                    typed(text) => { root.type(text); }
+                    keys: "*\"':;!?";
+                    typed(index) => { root.type_at(self.keys, index, self.upper); }
                 }
 
-                Key {
+                IconKey {
                     width: root.wide;
                     icon: @image-url("../icons/backspace.svg");
                     key_style: KeyStyle.function;
@@ -402,38 +441,38 @@ export component OnScreenKeyboard inherits Rectangle {
                 vertical_stretch: 1;
                 spacing: 4px;
 
-                Key {
+                TextKey {
                     width: root.wide;
                     text: root.layer == 0 ? "?123" : "abc";
                     key_style: KeyStyle.function;
                     clicked => { root.layer = root.layer == 0 ? 1 : 0; }
                 }
 
-                Key {
+                TextKey {
                     width: root.unit;
                     text: root.layer == 0 ? "-" : ",";
                     clicked => { root.type(self.text); }
                 }
 
-                Key {
+                TextKey {
                     horizontal_stretch: 4;
                     text: " ";
                     clicked => { root.type(" "); }
                 }
 
-                Key {
+                TextKey {
                     width: root.unit;
                     text: ".";
                     clicked => { root.type(self.text); }
                 }
 
-                Key {
+                TextKey {
                     width: root.unit;
                     text: ":";
                     clicked => { root.type(self.text); }
                 }
 
-                Key {
+                IconKey {
                     width: root.wide;
                     icon: @image-url("../icons/keyboard_return.svg");
                     key_style: KeyStyle.action;
