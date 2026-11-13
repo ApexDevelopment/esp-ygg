@@ -48,7 +48,7 @@ Each builds a release image, flashes it with espflash and opens the serial monit
 
 On boards that use the ESP32-S3's built-in USB port, the reset after flashing sometimes leaves the chip waiting for another download, and the monitor shows `waiting for download`. Press the board's reset button to start the firmware. If the board has a button on GPIO0, such as the Cardputer's G0, do not hold it while resetting.
 
-On first boot, the board creates a private key and saves it in the flash `nvs` partition. It keeps that key across reflashing. To give a board a new identity, erase its flash with `espflash erase-flash`.
+On first boot, the board creates a private key and saves it alongside its settings and clock in the `esp-ygg` namespace of the flash `nvs` partition. It keeps that key across reflashing when the partition is preserved. Earlier firmware stored these values in a different format; upgrading creates a new identity and resets saved settings.
 
 ## Choosing an interface
 

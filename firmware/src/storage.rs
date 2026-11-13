@@ -1,160 +1,143 @@
-//! Keeps the node's private key, a floor for its clock, and the user's
-//! settings in the flash `nvs` partition, each in sectors of their own.
-//! Rewriting a sector erases it first, so a reset at that moment loses what
-//! it held: the key is written only once, and the clock alternates between
-//! two sectors so the last save always survives.
-//!
-//! Yggdrasil numbers some messages with Unix time, and other nodes ignore
-//! numbers that go backwards. Without a real-time clock, the node starts each
-//! boot from the last time it saved plus [`SAVE_INTERVAL`], and saves at least
-//! that often, so its clock never goes backwards across reboots. It runs ahead
-//! of real time instead, which does no harm.
+//! Stores the identity, clock floor, and settings in the shared NVS partition.
+//! The clock starts ahead of its last save so message numbers do not go backwards.
 
-use alloc::vec;
+use alloc::vec::Vec;
+use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
 use esp_bootloader_esp_idf::partitions::{
 	self, DataPartitionSubType, PARTITION_TABLE_MAX_LEN, PartitionType,
 };
 use esp_hal::rng::Rng;
+use esp_nvs::{Key, Nvs, error::Error, platform::Crc};
 use esp_storage::FlashStorage;
 use esp_ygg_app::Settings;
 use log::warn;
 
 pub const SAVE_INTERVAL_SECS: u64 = 60 * 60;
-
-const MAGIC: [u8; 4] = *b"YGG1";
-/// The identity: the magic, the key's seed, and a clock floor that older
-/// firmware kept updating there.
-const RECORD_LEN: usize = 4 + 32 + 8;
-const CLOCK_MAGIC: [u8; 4] = *b"YGGT";
-const CLOCK_LEN: usize = 4 + 8;
-const CLOCK_OFFSETS: [u32; 2] = [0x2000, 0x3000];
 const BUILD_TIME: &str = env!("ESP_YGG_BUILD_TIME");
-/// Settings live in the next flash sector, so saving the clock every hour
-/// never rewrites them.
-const SETTINGS_OFFSET: u32 = 0x1000;
-const MAX_SETTINGS_LEN: usize = 1024;
+const NAMESPACE: Key = Key::from_str("esp-ygg");
+const IDENTITY: Key = Key::from_str("identity");
+const SETTINGS: Key = Key::from_str("settings");
+const CLOCK: Key = Key::from_str("clock");
 
-/// The flash partition, before the identity is loaded.
-pub struct Flash {
-	flash: FlashStorage<'static>,
-	offset: u32,
+struct NvsFlash(FlashStorage<'static>);
+impl Crc for NvsFlash {
+	fn crc32(init: u32, data: &[u8]) -> u32 {
+		esp_hal::rom::crc::crc32_le(init, data)
+	}
+}
+impl ErrorType for NvsFlash {
+	type Error = <FlashStorage<'static> as ErrorType>::Error;
+}
+impl ReadNorFlash for NvsFlash {
+	const READ_SIZE: usize = <FlashStorage<'static> as ReadNorFlash>::READ_SIZE;
+	fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+		ReadNorFlash::read(&mut self.0, offset, bytes)
+	}
+	fn capacity(&self) -> usize {
+		ReadNorFlash::capacity(&self.0)
+	}
+}
+impl NorFlash for NvsFlash {
+	const WRITE_SIZE: usize = <FlashStorage<'static> as NorFlash>::WRITE_SIZE;
+	const ERASE_SIZE: usize = <FlashStorage<'static> as NorFlash>::ERASE_SIZE;
+	fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+		NorFlash::write(&mut self.0, offset, bytes)
+	}
+	fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+		NorFlash::erase(&mut self.0, from, to)
+	}
 }
 
+pub struct Flash {
+	nvs: Nvs<NvsFlash>,
+}
 impl Flash {
 	pub fn new(mut flash: FlashStorage<'static>) -> Self {
-		let offset = nvs_offset(&mut flash);
-		Flash { flash, offset }
+		let mut buffer = [0u8; PARTITION_TABLE_MAX_LEN];
+		let table =
+			partitions::read_partition_table(&mut flash, &mut buffer).unwrap_or_else(|error| {
+				let mut probe = [0u8; 4];
+				let read_error = flash.read(0x8000, &mut probe).err();
+				panic!(
+					"reading the partition table: {error:?}; flash capacity: {}; probe: {read_error:?}",
+					flash.capacity()
+				);
+			});
+		let partition = table
+			.iter()
+			.find(|entry| {
+				entry.label_as_str() == "nvs"
+					&& entry.partition_type() == PartitionType::Data(DataPartitionSubType::Nvs)
+			})
+			.expect("the partition table has no nvs partition");
+		let nvs = Nvs::new(
+			partition.offset() as usize,
+			partition.len() as usize,
+			NvsFlash(flash),
+		)
+		.expect("opening the nvs partition");
+		Self { nvs }
 	}
-
-	/// The saved settings, if there are any.
 	pub fn settings(&mut self) -> Option<Settings> {
-		let mut length = [0u8; 2];
-		self.flash
-			.read(self.offset + SETTINGS_OFFSET, &mut length)
-			.ok()?;
-		let length = usize::from(u16::from_le_bytes(length));
-		if length > MAX_SETTINGS_LEN {
-			return None;
-		}
-		let mut bytes = vec![0u8; length];
-		self.flash
-			.read(self.offset + SETTINGS_OFFSET + 2, &mut bytes)
-			.ok()?;
+		let bytes: Vec<u8> = self.read(&SETTINGS)?;
 		Settings::decode(&bytes)
 	}
-
-	/// Loads the saved identity, or creates one. Returns the store and the
-	/// Unix time to start this boot's clock from.
 	pub fn open(mut self, rng: &Rng) -> (Store, u64) {
-		let mut record = [0u8; RECORD_LEN];
-		self.flash
-			.read(self.offset, &mut record)
-			.expect("reading identity from flash");
-		let build_time: u64 = BUILD_TIME.parse().unwrap_or(0);
-		let seed = if record[..4] == MAGIC {
-			record[4..36].try_into().expect("seed length")
-		} else {
-			warn!("No saved identity, generating a new private key");
-			let mut seed = [0u8; 32];
-			rng.read(&mut seed);
-			record[..4].copy_from_slice(&MAGIC);
-			record[4..36].copy_from_slice(&seed);
-			record[36..].copy_from_slice(&build_time.to_le_bytes());
-			if let Err(error) = self.flash.write(self.offset, &record) {
-				warn!("Saving the identity failed: {error:?}");
+		let seed = match self.read::<Vec<u8>>(&IDENTITY) {
+			Some(bytes) => bytes.try_into().expect("invalid saved identity length"),
+			None => {
+				warn!("No saved identity, generating a new private key");
+				let mut seed = [0u8; 32];
+				rng.read(&mut seed);
+				self.nvs
+					.set(&NAMESPACE, &IDENTITY, seed.as_slice())
+					.expect("saving the identity");
+				seed
 			}
-			seed
 		};
-		let identity_time = u64::from_le_bytes(record[36..].try_into().expect("time length"));
-		let clocks = CLOCK_OFFSETS.map(|offset| self.read_clock(offset));
-		let saved = clocks.into_iter().flatten().fold(identity_time, u64::max);
-		let unix_base = (saved + SAVE_INTERVAL_SECS).max(build_time);
-		// Overwrite the older save, so the newer one survives a reset.
-		let next_clock = usize::from(clocks[0].unwrap_or(0) > clocks[1].unwrap_or(0));
-		let mut store = Store {
-			flash: self,
-			seed,
-			next_clock,
-		};
+		let build_time = BUILD_TIME.parse().unwrap_or(0);
+		let saved = self.read::<u64>(&CLOCK).unwrap_or(build_time);
+		let unix_base = saved.saturating_add(SAVE_INTERVAL_SECS).max(build_time);
+		let mut store = Store { flash: self, seed };
 		store.save_time(unix_base);
 		(store, unix_base)
 	}
-
-	fn read_clock(&mut self, offset: u32) -> Option<u64> {
-		let mut record = [0u8; CLOCK_LEN];
-		self.flash.read(self.offset + offset, &mut record).ok()?;
-		(record[..4] == CLOCK_MAGIC)
-			.then(|| u64::from_le_bytes(record[4..].try_into().expect("time length")))
+	fn read<T>(&mut self, key: &Key) -> Option<T>
+	where
+		Nvs<NvsFlash>: esp_nvs::Get<T>,
+	{
+		match self.nvs.get(&NAMESPACE, key) {
+			Ok(value) => Some(value),
+			Err(Error::NamespaceNotFound | Error::KeyNotFound) => None,
+			Err(error) => panic!("reading NVS key {key}: {error:?}"),
+		}
 	}
 }
 
 pub struct Store {
 	flash: Flash,
 	seed: [u8; 32],
-	/// Which of the two clock sectors to write next
-	next_clock: usize,
 }
-
 impl Store {
 	pub fn seed(&self) -> &[u8; 32] {
 		&self.seed
 	}
-
-	// Only boards with a UI change settings.
 	#[cfg_attr(not(feature = "ui"), allow(dead_code))]
 	pub fn save_settings(&mut self, settings: &Settings) {
 		let encoded = settings.encode();
-		let mut record = (encoded.len() as u16).to_le_bytes().to_vec();
-		record.extend_from_slice(&encoded);
-		let offset = self.flash.offset + SETTINGS_OFFSET;
-		if let Some(Err(error)) =
-			crate::park::while_parked(|| self.flash.flash.write(offset, &record))
-		{
+		if let Some(Err(error)) = crate::park::while_parked(|| {
+			self.flash
+				.nvs
+				.set(&NAMESPACE, &SETTINGS, encoded.as_slice())
+		}) {
 			warn!("Saving settings failed: {error:?}");
 		}
 	}
-
 	pub fn save_time(&mut self, unix_time: u64) {
-		let mut record = [0u8; CLOCK_LEN];
-		record[..4].copy_from_slice(&CLOCK_MAGIC);
-		record[4..].copy_from_slice(&unix_time.to_le_bytes());
-		let offset = self.flash.offset + CLOCK_OFFSETS[self.next_clock];
 		if let Some(Err(error)) =
-			crate::park::while_parked(|| self.flash.flash.write(offset, &record))
+			crate::park::while_parked(|| self.flash.nvs.set(&NAMESPACE, &CLOCK, unix_time))
 		{
 			warn!("Saving the clock failed: {error:?}");
 		}
-		self.next_clock ^= 1;
 	}
-}
-
-fn nvs_offset(flash: &mut FlashStorage<'static>) -> u32 {
-	let mut table = [0u8; PARTITION_TABLE_MAX_LEN];
-	let table =
-		partitions::read_partition_table(flash, &mut table).expect("reading the partition table");
-	let nvs = table
-		.find_partition(PartitionType::Data(DataPartitionSubType::Nvs))
-		.expect("reading the partition table")
-		.expect("the partition table has no nvs partition");
-	nvs.offset()
 }

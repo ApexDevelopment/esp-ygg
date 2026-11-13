@@ -2028,6 +2028,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "911aadae41ec99104efa865bd0b6e486b4b735999f9b571963748a46d16495ab"
 
 [[package]]
+name = "esp-nvs"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "952c42de0a9b05e4c833c55ea6776075a7ca688dfc19042b16db196ef5ee5bf4"
+dependencies = [
+ "embedded-storage",
+ "strum 0.27.2",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "esp-phy"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2176,10 +2187,9 @@ dependencies = [
 [[package]]
 name = "esp-storage"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ef0e785f54e316f64a1e14a7a2f061a2ea0b038b284902ca71e1e1f5574cf47"
 dependencies = [
  "document-features",
+ "embedded-storage",
  "esp-hal",
  "esp-hal-procmacros",
  "esp-metadata-generated",
@@ -2292,10 +2302,12 @@ dependencies = [
  "embedded-hal-bus",
  "embedded-io-async 0.7.0",
  "embedded-sdmmc",
+ "embedded-storage",
  "esp-alloc",
  "esp-backtrace",
  "esp-bootloader-esp-idf",
  "esp-hal",
+ "esp-nvs",
  "esp-println",
  "esp-radio",
  "esp-radio-rtos-driver",
