@@ -113,7 +113,7 @@ impl Pinger {
 		let mut summary = format!("{} of {} answered", self.received, self.sent);
 		if self.received > 0 {
 			let average = self.total / self.received;
-			summary.push_str(&format!(" · {} ms average", average.as_millis()));
+			summary.push_str(&format!(" · {} ms", average.as_millis()));
 		}
 		self.global().set_summary(summary.into());
 	}

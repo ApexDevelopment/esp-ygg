@@ -55,7 +55,7 @@ component ComposeBar inherits HorizontalLayout {
             x: 16px;
             width: parent.width - 32px;
             height: parent.height;
-            text: Console.target == "" ? "Choose who to message" : "Message \{Console.target}";
+            text: Console.target == "" ? "Choose a node" : "Message \{Console.target}";
             style: MaterialTypography.body_medium;
             color: MaterialPalette.on_surface_variant;
             vertical_alignment: center;
@@ -116,7 +116,7 @@ export component ConsolePage inherits VerticalLayout {
         ComposeBar { }
 
         if Console.log.length == 0: EmptyNote {
-            text: "Listening on UDP port \{Console.port}";
+            text: "Listening on port \{Console.port}";
         }
 
         // Not a list view, whose rows cannot grow to fit wrapped text.

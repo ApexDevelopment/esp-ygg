@@ -447,7 +447,7 @@ impl Gui {
 					self.console.set_target(to, label);
 					Ok(())
 				}
-				None => Err("Not an address, or [address]:port"),
+				None => Err("Not an address"),
 			},
 			#[cfg(feature = "console")]
 			Field::Message => {
