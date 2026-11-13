@@ -28,6 +28,9 @@ fn check_xtensa_linker_available() {
 	println!("cargo:rerun-if-env-changed=PATH");
 
 	let target = std::env::var("TARGET").unwrap_or_default();
+	if !target.starts_with("xtensa-") {
+		return;
+	}
 	println!(
 		"cargo:rerun-if-env-changed={}",
 		cargo_linker_env_var(&target)
