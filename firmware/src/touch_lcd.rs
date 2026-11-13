@@ -146,7 +146,7 @@ mod screen {
 		// Keeps the SD card off the bus while the screen talks.
 		let sd_cs = Output::new(pins.sd_cs, Level::High, OutputConfig::default());
 		let display = display(bus, pins.cs, pins.dc);
-		expander_write(&mut i2c, EXPANDER_BACKLIGHT, u8::MAX);
+		set_backlight(&mut i2c, u8::MAX);
 		Board {
 			display,
 			i2c,
@@ -239,6 +239,24 @@ mod screen {
 		display
 	}
 
+	/// Sets the backlight, from off at 0 to full at 255.
+	pub fn set_backlight(i2c: &mut I2c<'static, Blocking>, level: u8) {
+		expander_write(i2c, EXPANDER_BACKLIGHT, level);
+	}
+
+	/// Turns the panel's picture on or off. Drawing still works while it is
+	/// off, and turning it on shows what was drawn.
+	#[cfg(feature = "gui")]
+	pub fn show_picture(display: &mut Display, on: bool) {
+		const DISPLAY_OFF: u8 = 0x28;
+		const DISPLAY_ON: u8 = 0x29;
+		let command = if on { DISPLAY_ON } else { DISPLAY_OFF };
+		// SAFETY: the driver does not keep track of whether the picture is on.
+		if let Err(error) = unsafe { display.dcs() }.send_command(command, &[]) {
+			warn!("Turning the picture on or off failed: {error:?}");
+		}
+	}
+
 	/// Where the panel is touched, if anywhere, in the turned screen's pixels.
 	pub fn read_touch(i2c: &mut I2c<'static, Blocking>) -> Option<Point> {
 		let mut data = [0u8; 9];
@@ -263,15 +281,16 @@ mod screen {
 		use esp_hal::Blocking;
 		use esp_hal::i2c::master::I2c;
 		use esp_ygg_app::ui::Key;
+		use esp_ygg_app::ui::screen_timeout::ScreenTimeout;
 		use esp_ygg_app::ui::touch::{Gesture, Gestures, Point};
 		use mousefood::embedded_graphics::mono_font::MonoFont;
 		use mousefood::{EmbeddedBackend, EmbeddedBackendConfig, TerminalAlignment};
 		use ratatui::Terminal;
 		use static_cell::StaticCell;
 
-		use super::{Display, PANEL_WIDTH, Pins, read_touch, set_up};
+		use super::{Display, PANEL_WIDTH, Pins, read_touch, set_backlight, set_up};
 		use crate::sdcard::Slot;
-		use crate::ui::{INPUT, Input, Screen};
+		use crate::ui::{INPUT, Input, Screen, uptime};
 
 		const TOUCH_INTERVAL: Duration = Duration::from_millis(20);
 
@@ -329,7 +348,8 @@ mod screen {
 			}
 		}
 
-		/// Reads the touch panel and the BOOT button.
+		/// Reads the touch panel and the BOOT button, and dims the screen when
+		/// neither is used for a while.
 		#[embassy_executor::task]
 		async fn touch(
 			mut i2c: I2c<'static, Blocking>,
@@ -338,8 +358,10 @@ mod screen {
 		) {
 			let mut gestures = Gestures::new();
 			let mut button_held = false;
+			let mut timeout = ScreenTimeout::new(uptime());
+			let mut backlight = u8::MAX;
 			loop {
-				let point = read_touch(&mut i2c);
+				let point = timeout.touch(uptime(), read_touch(&mut i2c));
 				for gesture in gestures.update(point) {
 					let input = match gesture {
 						Gesture::Key(key) => Input::Key(key),
@@ -356,10 +378,15 @@ mod screen {
 					let _ = INPUT.try_send(input);
 				}
 				// The BOOT button goes back, as a swipe to the right does.
-				if boot_button.is_low() && !button_held {
+				if boot_button.is_low() && !button_held && timeout.input(uptime()) {
 					let _ = INPUT.try_send(Input::Key(Key::Escape));
 				}
 				button_held = boot_button.is_low();
+				let level = timeout.backlight(uptime());
+				if level != backlight {
+					set_backlight(&mut i2c, level);
+					backlight = level;
+				}
 				Timer::after(TOUCH_INTERVAL).await;
 			}
 		}

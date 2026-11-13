@@ -19,6 +19,7 @@ pub mod keyboard;
 mod ping;
 pub mod remote;
 mod screen_keyboard;
+pub mod screen_timeout;
 pub mod touch;
 mod view;
 

@@ -9,6 +9,7 @@ use embedded_graphics_core::pixelcolor::Rgb565;
 use embedded_graphics_core::pixelcolor::raw::RawU16;
 use esp_ygg_app::Settings;
 use esp_ygg_app::ui::Command;
+use esp_ygg_app::ui::screen_timeout::ScreenTimeout;
 use esp_ygg_gui::{Gui, slint};
 use log::info;
 use slint::ComponentHandle;
@@ -18,7 +19,7 @@ use slint::platform::software_renderer::{
 use slint::platform::{Platform, PointerEventButton, WindowAdapter, WindowEvent};
 
 use crate::touch_lcd::{self, Board, Display};
-use crate::ui::{FROM_UI, INPUT, Input, TO_UI, ToUi};
+use crate::ui::{FROM_UI, INPUT, Input, TO_UI, ToUi, uptime};
 
 const WIDTH: u16 = 320;
 const HEIGHT: u16 = 240;
@@ -38,7 +39,7 @@ impl Platform for Esp {
 	}
 
 	fn duration_since_start(&self) -> core::time::Duration {
-		core::time::Duration::from_micros(Instant::now().as_micros())
+		uptime()
 	}
 }
 
@@ -127,13 +128,16 @@ pub async fn run(board: Board, settings: Settings) {
 		pixels: [Rgb565Pixel(0); WIDTH as usize * BATCH_LINES],
 		batch: None,
 	};
+	let mut timeout = ScreenTimeout::new(uptime());
+	let mut backlight = u8::MAX;
 	let mut touching = None;
 	// A serial tap, held until then as a finger would be.
 	let mut serial_tap: Option<(Instant, slint::LogicalPosition)> = None;
 	loop {
 		crate::ui::report_stack();
 		slint::platform::update_timers_and_animations();
-		let touch = touch_lcd::read_touch(&mut i2c).map(|(x, y)| {
+		let touch = timeout.touch(uptime(), touch_lcd::read_touch(&mut i2c));
+		let touch = touch.map(|(x, y)| {
 			slint::PhysicalPosition::new(x.into(), y.into()).to_logical(window.scale_factor())
 		});
 		let event = match (touching, touch) {
@@ -179,6 +183,9 @@ pub async fn run(board: Board, settings: Settings) {
 		}
 		// Taps over the serial port, in pixels here, for testing.
 		while let Ok(input) = INPUT.try_receive() {
+			if !timeout.input(uptime()) {
+				continue;
+			}
 			if let Input::Key(key) = input {
 				gui.type_key(key);
 			}
@@ -200,13 +207,24 @@ pub async fn run(board: Board, settings: Settings) {
 			});
 			serial_tap = None;
 		}
-		let started = Instant::now();
-		let drawn = window.draw_if_needed(|renderer| {
-			renderer.render_by_line(&mut lines);
-			lines.flush();
-		});
-		if drawn && started.elapsed() > SLOW_DRAW {
-			info!("Drawing took {} ms", started.elapsed().as_millis());
+		let level = timeout.backlight(uptime());
+		// What changed while the screen was off is drawn as it wakes.
+		if level > 0 {
+			let started = Instant::now();
+			let drawn = window.draw_if_needed(|renderer| {
+				renderer.render_by_line(&mut lines);
+				lines.flush();
+			});
+			if drawn && started.elapsed() > SLOW_DRAW {
+				info!("Drawing took {} ms", started.elapsed().as_millis());
+			}
+		}
+		if level != backlight {
+			if level == 0 || backlight == 0 {
+				touch_lcd::show_picture(lines.display, level > 0);
+			}
+			touch_lcd::set_backlight(&mut i2c, level);
+			backlight = level;
 		}
 		// While something moves, draw the next frame as soon as possible.
 		// The network's thread still goes first.

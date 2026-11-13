@@ -62,6 +62,12 @@ pub enum Input {
 	Release,
 }
 
+/// The time since startup.
+#[cfg(feature = "c6-touch-lcd")]
+pub fn uptime() -> core::time::Duration {
+	core::time::Duration::from_micros(embassy_time::Instant::now().as_micros())
+}
+
 /// Whether the serial port asked to see the screen.
 static SCREEN_WANTED: AtomicBool = AtomicBool::new(false);
 

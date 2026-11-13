@@ -104,6 +104,8 @@ The arrow keys are Fn with `;` `.` `,` and `/`, and Escape is Fn with `` ` ``. I
 
 On the touch screen, dragging up or down moves the selection a row at a time, following the finger. A tap is Enter, and a swipe to the right or the BOOT button is Escape. When a tap opens a text field, a keyboard comes up on the lower half of the screen, with `123` for digits and symbols and `▼` to put it away. Tapping anywhere above it while the field is still open brings it back. Fields that only take numbers, such as the channel, time zone and peer, get a number pad of two rows instead, which leaves more of the screen to see.
 
+The touch board's screen dims after 30 seconds without a touch, and turns off 30 seconds later. Touching it, or pressing the BOOT button, wakes it, and the touch that wakes it does nothing else.
+
 The interface can also be driven from a computer over the USB serial port, for testing without someone at the keyboard. `firmware/drive.py` sends lines such as `type 200::1`, `key down enter`, `tap 5 2`, which taps a touch screen at a column and row of characters, and `screen`, which prints what the screen shows, and it does so without resetting the board:
 
 ```sh
