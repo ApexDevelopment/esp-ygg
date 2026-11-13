@@ -54,9 +54,9 @@ console = ["esp-ygg-app/console", "esp-ygg-gui?/console"]
 ntp = ["esp-ygg-app/ntp"]
 irc = ["esp-ygg-app/irc", "esp-ygg-gui?/irc"]
 gemini = ["esp-ygg-app/gemini", "esp-ygg-gui?/gemini", "dep:getrandom"]
-# Share: sending and receiving files over SFTP, kept on the SD card, so for
-# boards with an interface
-share = ["esp-ygg-app/share", "esp-ygg-gui?/share", "dep:getrandom"]
+# Sending and receiving files over SFTP, kept on the SD card, so for boards
+# with an interface. It takes a lot of flash, so is off unless asked for.
+sftp = ["esp-ygg-app/sftp", "esp-ygg-gui?/sftp", "dep:getrandom"]
 # Voice calls with push-to-talk, on the Cardputers
 voice = ["cardputer", "tui", "esp-ygg-app/voice"]
 # What every interface needs, whichever it is. tui and gui turn it on.

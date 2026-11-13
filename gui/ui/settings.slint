@@ -239,15 +239,15 @@ export component SettingsPage inherits VerticalLayout {
                 }
             }
 
-            if Setup.share: VerticalLayout {
+            if Setup.sftp: VerticalLayout {
                 Section {
-                    text: "Share";
+                    text: "SFTP";
                 }
 
                 TextRow {
                     text: "Password";
-                    setting: Setting.share_password;
-                    value: Setup.share_password;
+                    setting: Setting.sftp_password;
+                    value: Setup.sftp_password;
                     empty: "Ask each time";
                 }
             }

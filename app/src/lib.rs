@@ -18,8 +18,8 @@ pub mod http;
 pub mod irc;
 mod overlay;
 pub mod settings;
-#[cfg(feature = "share")]
-pub mod share;
+#[cfg(feature = "sftp")]
+pub mod sftp;
 #[cfg(feature = "ntp")]
 pub mod sntp;
 pub mod time;
@@ -36,7 +36,7 @@ pub use http::BoardInfo;
 pub use overlay::CONSOLE_PORT;
 #[cfg(any(feature = "http", feature = "gopher"))]
 pub use overlay::HTTP_PORT;
-#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 pub use overlay::Stream;
 pub use overlay::{Event, Overlay, PING_TIMEOUT, SendError};
 pub use settings::Settings;

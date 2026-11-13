@@ -1,5 +1,5 @@
-//! Share: files sent and received over SFTP, so any SFTP software can trade
-//! files with a board. A board serves one folder, which peers can list,
+//! Files sent and received over SFTP, so any SFTP software can trade files
+//! with a board. A board serves one folder, which peers can list,
 //! download from and upload to, and sends its files to any SFTP server.
 //!
 //! The board's SSH host key is its Yggdrasil key, so a board sending to
@@ -20,7 +20,7 @@ use core::net::Ipv6Addr;
 pub use client::{SendError, send};
 pub use server::serve;
 
-/// The port Share serves on, SSH's own.
+/// The port SFTP serves on, SSH's own.
 pub const PORT: u16 = 22;
 
 /// The folder that is shared, holding files by name alone. It is async,
@@ -75,7 +75,7 @@ pub enum StoreError {
 	Failed,
 }
 
-/// The person at the board, as far as Share needs them. Share runs on one
+/// The person at the board, as far as SFTP needs them. SFTP runs on one
 /// thread, so its futures need not be `Send`.
 #[allow(async_fn_in_trait)]
 pub trait Attendant {
@@ -89,7 +89,7 @@ pub trait Attendant {
 	fn progress(&self, progress: Progress<'_>);
 }
 
-/// What Share is doing, for the interface to show.
+/// What SFTP is doing, for the interface to show.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Status {
 	/// A peer waiting to be let in, until the person answers.
@@ -103,7 +103,7 @@ pub struct Status {
 }
 
 impl Status {
-	/// What Share is doing or last did, in a line.
+	/// What SFTP is doing or last did, in a line.
 	pub fn summary(&self) -> String {
 		match (&self.transfer, &self.last) {
 			(Some(transfer), _) if transfer.incoming => {

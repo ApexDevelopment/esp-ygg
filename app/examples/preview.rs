@@ -390,11 +390,11 @@ fn carry_out(command: Command, radio: &mut Radio, overlay: &mut Overlay, app: &m
 		#[cfg(feature = "voice")]
 		Command::PreviewRinger { .. } => {}
 		// The desktop preview has no shared folder.
-		#[cfg(feature = "share")]
-		Command::ShareSend { .. }
-		| Command::ShareAdmit(_)
-		| Command::SharePassword(_)
-		| Command::ShareList => {}
+		#[cfg(feature = "sftp")]
+		Command::SftpSend { .. }
+		| Command::SftpAdmit(_)
+		| Command::SftpPassword(_)
+		| Command::SftpList => {}
 	}
 }
 

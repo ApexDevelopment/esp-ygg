@@ -247,15 +247,15 @@ pub async fn run(board: Board, settings: Settings) {
 				ToUi::Event(event) => gui.handle_event(event),
 			}
 		}
-		#[cfg(feature = "share")]
+		#[cfg(feature = "sftp")]
 		{
-			if let Some(status) = crate::share::status_changed() {
-				gui.set_share_status(status);
+			if let Some(status) = crate::sftp::status_changed() {
+				gui.set_sftp_status(status);
 			}
 			// The card shares the screen's bus, so waits for its drawing.
-			while let Ok((asker, request)) = crate::share::CARD_REQUESTS.try_receive() {
+			while let Ok((asker, request)) = crate::sftp::CARD_REQUESTS.try_receive() {
 				panel.finish();
-				crate::share::answer_card(asker, slot.share(request));
+				crate::sftp::answer_card(asker, slot.sftp(request));
 			}
 		}
 		gui.tick();
@@ -271,19 +271,19 @@ pub async fn run(board: Board, settings: Settings) {
 					panel.finish();
 					gui.settings_imported(slot.import_settings());
 				}
-				#[cfg(feature = "share")]
-				Command::ShareList => {
+				#[cfg(feature = "sftp")]
+				Command::SftpList => {
 					panel.finish();
-					let files = match slot.share(crate::share::CardRequest::List) {
-						crate::share::CardReply::List(Ok(files)) => files,
+					let files = match slot.sftp(crate::sftp::CardRequest::List) {
+						crate::sftp::CardReply::List(Ok(files)) => files,
 						_ => alloc::vec::Vec::new(),
 					};
-					gui.set_share_files(files);
+					gui.set_sftp_files(files);
 				}
-				#[cfg(feature = "share")]
-				command @ (Command::ShareSend { .. }
-				| Command::ShareAdmit(_)
-				| Command::SharePassword(_)) => crate::share::carry_out(command),
+				#[cfg(feature = "sftp")]
+				command @ (Command::SftpSend { .. }
+				| Command::SftpAdmit(_)
+				| Command::SftpPassword(_)) => crate::sftp::carry_out(command),
 				command => FROM_UI.send(command).await,
 			}
 		}

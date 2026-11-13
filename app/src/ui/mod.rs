@@ -20,8 +20,8 @@ mod ping;
 pub mod remote;
 mod screen_keyboard;
 pub mod screen_timeout;
-#[cfg(feature = "share")]
-mod share;
+#[cfg(feature = "sftp")]
+mod sftp;
 pub mod touch;
 mod view;
 
@@ -36,7 +36,7 @@ use core::net::Ipv6Addr;
 	feature = "gopher",
 	feature = "irc",
 	feature = "gemini",
-	feature = "share"
+	feature = "sftp"
 ))]
 use core::net::SocketAddrV6;
 
@@ -47,7 +47,7 @@ use yggdrasil_espnow::{Instant, Mac, Node, Platform, PublicKey};
 
 use crate::BoardInfo;
 use crate::overlay::Event;
-#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 use crate::overlay::Stream;
 use crate::settings::{Settings, TextSetting};
 use crate::time::DateTime;
@@ -95,11 +95,11 @@ pub enum Command {
 	#[cfg(feature = "gopher")]
 	Fetch(SocketAddrV6, Vec<u8>),
 	/// Open a lasting TCP connection, send on it, and close it.
-	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 	OpenStream(Stream, SocketAddrV6),
-	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 	StreamSend(Stream, Vec<u8>),
-	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 	CloseStream(Stream),
 	ScanWifi,
 	/// Store these settings and restart to apply them.
@@ -110,21 +110,21 @@ pub enum Command {
 	/// Read settings from the SD card. Answer with [`App::settings_imported`].
 	ImportSettings,
 	/// Send a file from the shared folder to a node, logging in as `user`.
-	#[cfg(feature = "share")]
-	ShareSend {
+	#[cfg(feature = "sftp")]
+	SftpSend {
 		to: Ipv6Addr,
 		user: String,
 		name: String,
 	},
-	/// Let in the peer Share is asking about, or not.
-	#[cfg(feature = "share")]
-	ShareAdmit(bool),
+	/// Let in the peer SFTP is asking about, or not.
+	#[cfg(feature = "sftp")]
+	SftpAdmit(bool),
 	/// The password a server asked for, or none to give up.
-	#[cfg(feature = "share")]
-	SharePassword(Option<String>),
+	#[cfg(feature = "sftp")]
+	SftpPassword(Option<String>),
 	/// List the shared folder's files.
-	#[cfg(feature = "share")]
-	ShareList,
+	#[cfg(feature = "sftp")]
+	SftpList,
 	#[cfg(feature = "voice")]
 	Call(Ipv6Addr),
 	#[cfg(feature = "voice")]
@@ -293,8 +293,8 @@ enum Screen {
 	Gemini,
 	#[cfg(feature = "voice")]
 	Call,
-	#[cfg(feature = "share")]
-	Share,
+	#[cfg(feature = "sftp")]
+	Sftp,
 	Settings,
 	/// The settings in one group, opened from the main settings.
 	SettingsGroup(Group),
@@ -337,8 +337,8 @@ enum Field {
 	Hotspot,
 	HotspotName,
 	HotspotPassword,
-	#[cfg(feature = "share")]
-	SharePassword,
+	#[cfg(feature = "sftp")]
+	SftpPassword,
 	#[cfg(feature = "voice")]
 	Ringtone,
 	#[cfg(feature = "voice")]
@@ -359,8 +359,8 @@ impl Field {
 			Field::Peer => TextSetting::Peer,
 			Field::HotspotName => TextSetting::HotspotName,
 			Field::HotspotPassword => TextSetting::HotspotPassword,
-			#[cfg(feature = "share")]
-			Field::SharePassword => TextSetting::SharePassword,
+			#[cfg(feature = "sftp")]
+			Field::SftpPassword => TextSetting::SftpPassword,
 			_ => return None,
 		})
 	}
@@ -381,8 +381,8 @@ const FIELDS: &[Field] = &[
 	Field::Open(Group::Hotspot),
 	#[cfg(feature = "voice")]
 	Field::Open(Group::Ringer),
-	#[cfg(feature = "share")]
-	Field::SharePassword,
+	#[cfg(feature = "sftp")]
+	Field::SftpPassword,
 	Field::Save,
 	Field::Export,
 	Field::Import,
@@ -412,8 +412,8 @@ const APPS: &[(&str, Screen)] = &[
 	("Gemini", Screen::Gemini),
 	#[cfg(feature = "gopher")]
 	("Gopher", Screen::Gopher),
-	#[cfg(feature = "share")]
-	("Share (SFTP)", Screen::Share),
+	#[cfg(feature = "sftp")]
+	("SFTP", Screen::Sftp),
 ];
 
 pub struct App {
@@ -444,8 +444,8 @@ pub struct App {
 	gemini: gemini::Browser,
 	#[cfg(feature = "voice")]
 	call: call::Phone,
-	#[cfg(feature = "share")]
-	share: share::Share,
+	#[cfg(feature = "sftp")]
+	sftp: sftp::Sftp,
 
 	saved: Settings,
 	draft: Settings,
@@ -485,8 +485,8 @@ impl App {
 			gemini: gemini::Browser::new(),
 			#[cfg(feature = "voice")]
 			call: call::Phone::new(),
-			#[cfg(feature = "share")]
-			share: share::Share::new(),
+			#[cfg(feature = "sftp")]
+			sftp: sftp::Sftp::new(),
 			draft: settings.clone(),
 			saved: settings,
 			settings_selected: 0,
@@ -583,25 +583,25 @@ impl App {
 				let viewing = self.screen == Screen::Console;
 				self.console.received(&sender, &data, viewing);
 			}
-			// Share's streams are the host's, and never come here.
-			#[cfg(feature = "share")]
+			// SFTP's streams are the host's, and never come here.
+			#[cfg(feature = "sftp")]
 			_ => {}
 		}
 	}
 
-	/// Takes what Share is doing, bringing its screen up when it asks
+	/// Takes what SFTP is doing, bringing its screen up when it asks
 	/// something of the person.
-	#[cfg(feature = "share")]
-	pub fn set_share_status(&mut self, status: crate::share::Status) {
-		if self.share.set_status(status, &mut self.commands) {
-			self.screen = Screen::Share;
+	#[cfg(feature = "sftp")]
+	pub fn set_sftp_status(&mut self, status: crate::sftp::Status) {
+		if self.sftp.set_status(status, &mut self.commands) {
+			self.screen = Screen::Sftp;
 		}
 	}
 
 	/// The shared folder's files, as asked for with [`Command::ShareList`].
-	#[cfg(feature = "share")]
-	pub fn set_share_files(&mut self, files: Vec<crate::share::Entry>) {
-		self.share.set_files(files);
+	#[cfg(feature = "sftp")]
+	pub fn set_sftp_files(&mut self, files: Vec<crate::sftp::Entry>) {
+		self.sftp.set_files(files);
 	}
 
 	pub fn handle_nodeinfo(&mut self, key: PublicKey, info: Option<Vec<u8>>) {
@@ -654,8 +654,8 @@ impl App {
 			Screen::Gemini => self.gemini.handle_key(key, &mut self.commands),
 			#[cfg(feature = "voice")]
 			Screen::Call => self.call.handle_key(key, self.now, &mut self.commands),
-			#[cfg(feature = "share")]
-			Screen::Share => self.share.handle_key(key, &mut self.commands),
+			#[cfg(feature = "sftp")]
+			Screen::Sftp => self.sftp.handle_key(key, &mut self.commands),
 		};
 		match outcome {
 			Outcome::Stay => {}
@@ -729,8 +729,8 @@ impl App {
 			Screen::Irc => true,
 			#[cfg(feature = "voice")]
 			Screen::Call => self.call.phase == call::Phase::Idle,
-			#[cfg(feature = "share")]
-			Screen::Share => self.share.typing(),
+			#[cfg(feature = "sftp")]
+			Screen::Sftp => self.sftp.typing(),
 			_ => false,
 		};
 		text.then_some(Kind::Text)
@@ -789,8 +789,8 @@ impl App {
 			Screen::Console => self.console.unread = 0,
 			#[cfg(feature = "irc")]
 			Screen::Irc => self.irc.mark_read(),
-			#[cfg(feature = "share")]
-			Screen::Share => self.share.opened(&mut self.commands),
+			#[cfg(feature = "sftp")]
+			Screen::Sftp => self.sftp.opened(&mut self.commands),
 			Screen::Settings => {
 				self.draft = self.saved.clone();
 				self.settings_selected = 0;
@@ -1022,8 +1022,8 @@ impl App {
 			Screen::Irc => true,
 			#[cfg(feature = "voice")]
 			Screen::Call => true,
-			#[cfg(feature = "share")]
-			Screen::Share => true,
+			#[cfg(feature = "sftp")]
+			Screen::Sftp => true,
 			_ => false,
 		}
 	}
@@ -1046,11 +1046,9 @@ impl App {
 			}
 			#[cfg(feature = "voice")]
 			Screen::Call if self.call.phase == call::Phase::Idle => Some(&mut self.call.address),
-			#[cfg(feature = "share")]
-			Screen::Share
-				if self.share.phase == share::Phase::Address && !self.share.is_asking() =>
-			{
-				Some(&mut self.share.address)
+			#[cfg(feature = "sftp")]
+			Screen::Sftp if self.sftp.phase == sftp::Phase::Address && !self.sftp.is_asking() => {
+				Some(&mut self.sftp.address)
 			}
 			#[cfg(feature = "irc")]
 			Screen::Irc if self.irc.phase == irc::Phase::Setup && self.irc.field == 0 => {

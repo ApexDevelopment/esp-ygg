@@ -219,10 +219,10 @@ mod text {
 	) {
 		spawner.spawn(run(screen, slot, settings).expect("spawning the UI task"));
 		spawner.spawn(serial(usb).expect("spawning the serial task"));
-		#[cfg(feature = "share")]
+		#[cfg(feature = "sftp")]
 		{
-			spawner.spawn(crate::share::serve_peers().expect("spawning Share's server"));
-			spawner.spawn(crate::share::send_files().expect("spawning Share's sender"));
+			spawner.spawn(crate::sftp::serve_peers().expect("spawning SFTP's server"));
+			spawner.spawn(crate::sftp::send_files().expect("spawning SFTP's sender"));
 		}
 	}
 
@@ -231,9 +231,9 @@ mod text {
 		let mut app = App::new(settings, now());
 		loop {
 			super::report_stack();
-			#[cfg(feature = "share")]
-			let card = crate::share::CARD_REQUESTS.receive();
-			#[cfg(not(feature = "share"))]
+			#[cfg(feature = "sftp")]
+			let card = crate::sftp::CARD_REQUESTS.receive();
+			#[cfg(not(feature = "sftp"))]
 			let card = core::future::pending::<()>();
 			let input = select3(INPUT.receive(), TO_UI.receive(), Timer::after(TICK));
 			match select(input, card).await {
@@ -250,10 +250,10 @@ mod text {
 				}
 				Either::First(Either3::Second(message)) => handle_message(&mut app, message),
 				Either::First(Either3::Third(())) => {}
-				// The card is on this side, for Share as for settings.
-				#[cfg(feature = "share")]
-				Either::Second((asker, request)) => crate::share::answer_card(asker, slot.share(request)),
-				#[cfg(not(feature = "share"))]
+				// The card is on this side, for SFTP as for settings.
+				#[cfg(feature = "sftp")]
+				Either::Second((asker, request)) => crate::sftp::answer_card(asker, slot.sftp(request)),
+				#[cfg(not(feature = "sftp"))]
 				Either::Second(()) => {}
 			}
 			let locked = crate::lock::is_locked();
@@ -265,9 +265,9 @@ mod text {
 				app.set_talking(crate::audio::TALKING.load(Ordering::Relaxed));
 				crate::speaker::show(app.speaker(crate::audio::MUTED.load(Ordering::Relaxed)));
 			}
-			#[cfg(feature = "share")]
-			if let Some(status) = crate::share::status_changed() {
-				app.set_share_status(status);
+			#[cfg(feature = "sftp")]
+			if let Some(status) = crate::sftp::status_changed() {
+				app.set_sftp_status(status);
 			}
 			app.tick(now());
 			while let Some(command) = app.poll_command() {
@@ -277,18 +277,18 @@ mod text {
 						app.settings_exported(slot.export_settings(&text, app.local_time()))
 					}
 					Command::ImportSettings => app.settings_imported(slot.import_settings()),
-					#[cfg(feature = "share")]
-					Command::ShareList => {
-						let files = match slot.share(crate::share::CardRequest::List) {
-							crate::share::CardReply::List(Ok(files)) => files,
+					#[cfg(feature = "sftp")]
+					Command::SftpList => {
+						let files = match slot.sftp(crate::sftp::CardRequest::List) {
+							crate::sftp::CardReply::List(Ok(files)) => files,
 							_ => alloc::vec::Vec::new(),
 						};
-						app.set_share_files(files);
+						app.set_sftp_files(files);
 					}
-					#[cfg(feature = "share")]
-					command @ (Command::ShareSend { .. }
-					| Command::ShareAdmit(_)
-					| Command::SharePassword(_)) => crate::share::carry_out(command),
+					#[cfg(feature = "sftp")]
+					command @ (Command::SftpSend { .. }
+					| Command::SftpAdmit(_)
+					| Command::SftpPassword(_)) => crate::sftp::carry_out(command),
 					command => FROM_UI.send(command).await,
 				}
 			}
@@ -340,9 +340,9 @@ pub mod second_core {
 	use crate::cardputer::{self, Pins};
 
 	/// TLS for Gemini goes deepest, at 14 KB in a handshake with an elliptic
-	/// curve certificate. RSA certificates need more, as may Share's SSH
+	/// curve certificate. RSA certificates need more, as may SFTP's SSH
 	/// handshake, which stays under 15 KB on the touch board's RISC-V core.
-	const STACK_SIZE: usize = if cfg!(feature = "share") {
+	const STACK_SIZE: usize = if cfg!(feature = "sftp") {
 		32 * 1024
 	} else {
 		24 * 1024
@@ -463,10 +463,10 @@ pub mod own_thread {
 				spawner
 					.spawn(crate::gui::run(board, settings).expect("spawning the interface task"));
 				spawner.spawn(super::serial(usb).expect("spawning the serial task"));
-				#[cfg(feature = "share")]
+				#[cfg(feature = "sftp")]
 				{
-					spawner.spawn(crate::share::serve_peers().expect("spawning Share's server"));
-					spawner.spawn(crate::share::send_files().expect("spawning Share's sender"));
+					spawner.spawn(crate::sftp::serve_peers().expect("spawning SFTP's server"));
+					spawner.spawn(crate::sftp::send_files().expect("spawning SFTP's sender"));
 				}
 			}
 		});

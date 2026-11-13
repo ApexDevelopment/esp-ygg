@@ -17,8 +17,8 @@ mod irc;
 #[cfg(any(feature = "gopher", feature = "gemini"))]
 mod page;
 mod ping;
-#[cfg(feature = "share")]
-mod share;
+#[cfg(feature = "sftp")]
+mod sftp;
 
 pub use front::Gui;
 pub use slint;

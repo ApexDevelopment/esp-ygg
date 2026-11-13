@@ -63,9 +63,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
 		Screen::Ping => app.ping.draw(frame, body),
 		#[cfg(feature = "console")]
 		Screen::Console => app.console.draw(frame, body),
-		#[cfg(feature = "share")]
-		Screen::Share => app
-			.share
+		#[cfg(feature = "sftp")]
+		Screen::Sftp => app
+			.sftp
 			.draw(frame, body, |address| app.short_name_of_address(address)),
 		Screen::Settings => draw_settings(frame, body, app, FIELDS, app.settings_selected),
 		Screen::SettingsGroup(group) => {
@@ -105,8 +105,8 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 		Screen::Ping => "Ping",
 		#[cfg(feature = "console")]
 		Screen::Console => "Console",
-		#[cfg(feature = "share")]
-		Screen::Share => "Share",
+		#[cfg(feature = "sftp")]
+		Screen::Sftp => "SFTP",
 		Screen::Settings => "Settings",
 		Screen::SettingsGroup(Group::Bridge) => "Bridge",
 		Screen::SettingsGroup(Group::Hotspot) => "Hotspot",
@@ -170,8 +170,8 @@ fn hints(app: &App) -> &'static str {
 		Screen::Ping => app.ping.hints(),
 		#[cfg(feature = "console")]
 		Screen::Console => app.console.hints(),
-		#[cfg(feature = "share")]
-		Screen::Share => app.share.hints(),
+		#[cfg(feature = "sftp")]
+		Screen::Sftp => app.sftp.hints(),
 		Screen::Settings | Screen::SettingsGroup(_) if app.editing.is_some() => {
 			"enter done  esc cancel"
 		}
@@ -313,7 +313,7 @@ fn draw_node(frame: &mut Frame, area: Rect, app: &App, key: yggdrasil_espnow::Pu
 
 /// Breaks `text` into lines of at most `width` characters, at spaces where
 /// it can.
-#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
 	let mut lines = Vec::new();
 	let mut line = String::new();
@@ -448,13 +448,10 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App, fields: &[Field], sel
 				"Password",
 				"•".repeat(draft.hotspot_password.chars().count()),
 			),
-			#[cfg(feature = "share")]
-			Field::SharePassword if draft.share_password.is_empty() => ("Share pass", "none, ask".into()),
-			#[cfg(feature = "share")]
-			Field::SharePassword => (
-				"Share pass",
-				"•".repeat(draft.share_password.chars().count()),
-			),
+			#[cfg(feature = "sftp")]
+			Field::SftpPassword if draft.sftp_password.is_empty() => ("SFTP pass", "none, ask".into()),
+			#[cfg(feature = "sftp")]
+			Field::SftpPassword => ("SFTP pass", "•".repeat(draft.sftp_password.chars().count())),
 			#[cfg(feature = "voice")]
 			Field::Open(Group::Ringer) if draft.ring_volume == 0 => ("Ringer", "off".into()),
 			#[cfg(feature = "voice")]

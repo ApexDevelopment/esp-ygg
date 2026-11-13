@@ -113,11 +113,11 @@ impl Slot {
 		})
 	}
 
-	/// Carries out a request of Share's, in the shared folder.
-	#[cfg(feature = "share")]
-	pub fn share(&mut self, request: crate::share::CardRequest) -> crate::share::CardReply {
-		use crate::share::{CardReply, CardRequest};
-		use esp_ygg_app::share::StoreError;
+	/// Carries out a request of SFTP's, in the shared folder.
+	#[cfg(feature = "sftp")]
+	pub fn sftp(&mut self, request: crate::sftp::CardRequest) -> crate::sftp::CardReply {
+		use crate::sftp::{CardReply, CardRequest};
+		use esp_ygg_app::sftp::StoreError;
 		// What to answer if there is no card to ask.
 		let failed = Err(StoreError::Failed);
 		let no_card = match &request {
@@ -154,7 +154,7 @@ impl Slot {
 					let mut entries = Vec::new();
 					let listed = folder.iterate_dir_lfn(&mut names, |entry, long| {
 						if !entry.attributes.is_directory() && !entry.attributes.is_volume() {
-							entries.push(esp_ygg_app::share::Entry {
+							entries.push(esp_ygg_app::sftp::Entry {
 								name: long
 									.map_or_else(|| alloc::format!("{}", entry.name), String::from),
 								size: entry.size.into(),
@@ -197,7 +197,7 @@ impl Slot {
 						// kept, rather than emptied as it goes.
 						let mut number = u32::from(keep_existing);
 						let short = loop {
-							let short = esp_ygg_app::share::short_name(&name, number);
+							let short = esp_ygg_app::sftp::short_name(&name, number);
 							let plain = number == 0 && short.eq_ignore_ascii_case(&name);
 							if plain
 								|| folder
@@ -290,18 +290,18 @@ fn wake<'a>(
 	Ok((card, card_type))
 }
 
-/// Where Share keeps the files it shares, inside the board's own folder.
-#[cfg(feature = "share")]
-const SHARE_FOLDER: &str = "esp-ygg/share";
+/// Where SFTP keeps the files it shares, inside the board's own folder.
+#[cfg(feature = "sftp")]
+const SHARE_FOLDER: &str = "esp-ygg/sftp";
 
-#[cfg(feature = "share")]
+#[cfg(feature = "sftp")]
 fn card_problem(error: Error<SdCardError>) -> String {
 	problem(error)
 }
 
-#[cfg(feature = "share")]
-fn store_error(error: Error<SdCardError>) -> esp_ygg_app::share::StoreError {
-	use esp_ygg_app::share::StoreError;
+#[cfg(feature = "sftp")]
+fn store_error(error: Error<SdCardError>) -> esp_ygg_app::sftp::StoreError {
+	use esp_ygg_app::sftp::StoreError;
 	match error {
 		Error::NotFound => StoreError::NotFound,
 		Error::NotEnoughSpace => StoreError::Full,

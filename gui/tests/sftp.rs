@@ -1,10 +1,10 @@
-//! Share's questions, answered on the graphical interface.
+//! SFTP's questions, answered on the graphical interface.
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use esp_ygg_app::Settings;
-use esp_ygg_app::share::Status;
+use esp_ygg_app::sftp::Status;
 use esp_ygg_app::ui::{Command, Key};
 use esp_ygg_gui::Gui;
 use slint::ComponentHandle;
@@ -26,9 +26,9 @@ impl Platform for Headless {
 	}
 }
 
-fn share_commands(gui: &mut Gui) -> Vec<Command> {
+fn sftp_commands(gui: &mut Gui) -> Vec<Command> {
 	std::iter::from_fn(|| gui.poll_command())
-		.filter(|command| matches!(command, Command::SharePassword(_) | Command::ShareAdmit(_)))
+		.filter(|command| matches!(command, Command::SftpPassword(_) | Command::SftpAdmit(_)))
 		.collect()
 }
 
@@ -44,10 +44,10 @@ fn answers_a_password_once_and_only_with_it() {
 	gui.window().show().expect("showing the window");
 
 	let asked = Status {
-		password_for: Some("share".into()),
+		password_for: Some("sftp".into()),
 		..Status::default()
 	};
-	gui.set_share_status(asked.clone());
+	gui.set_sftp_status(asked.clone());
 	gui.tick();
 	for character in "sesame".chars() {
 		gui.type_key(Key::Char(character));
@@ -55,15 +55,15 @@ fn answers_a_password_once_and_only_with_it() {
 	gui.type_key(Key::Enter);
 	gui.tick();
 	assert_eq!(
-		share_commands(&mut gui),
-		[Command::SharePassword(Some("sesame".into()))]
+		sftp_commands(&mut gui),
+		[Command::SftpPassword(Some("sesame".into()))]
 	);
 
 	// Asked again, and given up on
-	gui.set_share_status(Status::default());
-	gui.set_share_status(asked);
+	gui.set_sftp_status(Status::default());
+	gui.set_sftp_status(asked);
 	gui.tick();
 	gui.type_key(Key::Escape);
 	gui.tick();
-	assert_eq!(share_commands(&mut gui), [Command::SharePassword(None)]);
+	assert_eq!(sftp_commands(&mut gui), [Command::SftpPassword(None)]);
 }

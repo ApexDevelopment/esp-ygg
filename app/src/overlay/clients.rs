@@ -23,18 +23,18 @@ pub(super) const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 #[cfg(feature = "gopher")]
 const MAX_FETCH: usize = 32 * 1024;
 /// How long a stream may go without an answer before it is given up.
-#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 const STREAM_TIMEOUT_SECS: u64 = 300;
 /// How long a stream may take to connect.
-#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 const CONNECT_TIMEOUT_SECS: u64 = 20;
 /// How much may wait to be sent on a stream.
-#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 const MAX_STREAM_BACKLOG: usize = 4096;
 
 /// The lasting connections the board can hold, one for each client that
 /// needs one, so they can stay open side by side.
-#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stream {
 	#[cfg(feature = "irc")]
@@ -42,21 +42,21 @@ pub enum Stream {
 	#[cfg(feature = "gemini")]
 	Gemini,
 	/// Sending a file to another node.
-	#[cfg(feature = "share")]
-	Share,
-	/// A peer connected to the board's own Share server, which listens
+	#[cfg(feature = "sftp")]
+	Sftp,
+	/// A peer connected to the board's own SFTP server, which listens
 	/// again once it closes.
-	#[cfg(feature = "share")]
-	ShareIncoming,
+	#[cfg(feature = "sftp")]
+	SftpIncoming,
 }
 
-#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 impl Stream {
 	/// Whether the host reads the stream itself, with
 	/// [`Overlay::stream_receive`], rather than taking events of its data.
-	#[cfg(feature = "share")]
+	#[cfg(feature = "sftp")]
 	fn is_pulled(self) -> bool {
-		matches!(self, Stream::Share | Stream::ShareIncoming)
+		matches!(self, Stream::Sftp | Stream::SftpIncoming)
 	}
 
 	/// Each stream, with its receive buffer size.
@@ -66,25 +66,25 @@ impl Stream {
 		#[cfg(feature = "gemini")]
 		(Stream::Gemini, 4096),
 		// Room for an SSH packet
-		#[cfg(feature = "share")]
-		(Stream::Share, 2048),
-		#[cfg(feature = "share")]
-		(Stream::ShareIncoming, 2048),
+		#[cfg(feature = "sftp")]
+		(Stream::Sftp, 2048),
+		#[cfg(feature = "sftp")]
+		(Stream::SftpIncoming, 2048),
 	];
 }
 
-#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StreamState {
 	Closed,
 	/// Waiting for a peer to connect.
-	#[cfg(feature = "share")]
+	#[cfg(feature = "sftp")]
 	Listening,
 	Connecting,
 	Open,
 }
 
-#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 pub(super) struct StreamSlot {
 	stream: Stream,
 	receive_buffer: usize,
@@ -94,7 +94,7 @@ pub(super) struct StreamSlot {
 	outgoing: Vec<u8>,
 }
 
-#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 pub(super) fn stream_slots() -> Vec<StreamSlot> {
 	Stream::ALL
 		.iter()
@@ -148,7 +148,7 @@ impl Overlay {
 
 	/// Opens a lasting TCP connection, replacing the one `stream` had open.
 	/// Its progress arrives as [`Event`]s.
-	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 	pub fn open_stream(&mut self, stream: Stream, to: SocketAddrV6) -> Result<(), SendError> {
 		let slot = self.slot(stream);
 		let receive_buffer = slot.receive_buffer;
@@ -170,7 +170,7 @@ impl Overlay {
 	}
 
 	/// Queues data for an open stream.
-	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 	pub fn stream_send(&mut self, stream: Stream, data: &[u8]) -> Result<(), SendError> {
 		let slot = self.slot(stream);
 		if slot.state == StreamState::Closed {
@@ -185,7 +185,7 @@ impl Overlay {
 
 	/// Takes up to `max` bytes that came on a stream the host reads itself,
 	/// if any did.
-	#[cfg(feature = "share")]
+	#[cfg(feature = "sftp")]
 	pub fn stream_receive(&mut self, stream: Stream, max: usize) -> Option<Vec<u8>> {
 		let handle = self.slot(stream).socket?;
 		let socket = self.sockets.get_mut::<tcp::Socket>(handle);
@@ -199,7 +199,7 @@ impl Overlay {
 	}
 
 	/// How much is waiting to be sent on a stream.
-	#[cfg(feature = "share")]
+	#[cfg(feature = "sftp")]
 	pub fn stream_backlog(&mut self, stream: Stream) -> usize {
 		let slot = self.slot(stream);
 		let (queued, socket) = (slot.outgoing.len(), slot.socket);
@@ -210,14 +210,14 @@ impl Overlay {
 	}
 
 	/// Closes a stream once what is queued has been sent.
-	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 	pub fn close_stream(&mut self, stream: Stream) {
 		if let Some(socket) = self.slot(stream).socket {
 			self.sockets.get_mut::<tcp::Socket>(socket).close();
 		}
 	}
 
-	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 	fn slot(&mut self, stream: Stream) -> &mut StreamSlot {
 		self.streams
 			.iter_mut()
@@ -270,9 +270,9 @@ impl Overlay {
 		});
 	}
 
-	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 	pub(super) fn progress_streams(&mut self) {
-		#[cfg(feature = "share")]
+		#[cfg(feature = "sftp")]
 		let mut listen_again = false;
 		for slot in &mut self.streams {
 			let Some(handle) = slot.socket else {
@@ -280,7 +280,7 @@ impl Overlay {
 			};
 			let stream = slot.stream;
 			let socket = self.sockets.get_mut::<tcp::Socket>(handle);
-			#[cfg(feature = "share")]
+			#[cfg(feature = "sftp")]
 			if slot.state == StreamState::Listening {
 				if !socket.may_send() {
 					continue;
@@ -309,11 +309,11 @@ impl Overlay {
 			{
 				slot.outgoing.drain(..sent);
 			}
-			// The host reads Share's streams itself, as fast as it can take
+			// The host reads SFTP's streams itself, as fast as it can take
 			// them, so the sender slows to match.
-			#[cfg(feature = "share")]
+			#[cfg(feature = "sftp")]
 			let pulled = stream.is_pulled();
-			#[cfg(not(feature = "share"))]
+			#[cfg(not(feature = "sftp"))]
 			let pulled = false;
 			while !pulled && socket.can_recv() {
 				let mut data = Vec::new();
@@ -333,32 +333,32 @@ impl Overlay {
 				slot.outgoing = Vec::new();
 				self.sockets.remove(handle);
 				self.events.push_back(Event::StreamClosed(stream));
-				#[cfg(feature = "share")]
-				if stream == Stream::ShareIncoming {
+				#[cfg(feature = "sftp")]
+				if stream == Stream::SftpIncoming {
 					listen_again = true;
 				}
 			}
 		}
-		#[cfg(feature = "share")]
+		#[cfg(feature = "sftp")]
 		if listen_again {
-			self.listen_for_share();
+			self.listen_for_sftp();
 		}
 	}
 
-	/// Waits for a peer to connect to the board's Share server.
-	#[cfg(feature = "share")]
-	pub(super) fn listen_for_share(&mut self) {
-		let slot = self.slot(Stream::ShareIncoming);
+	/// Waits for a peer to connect to the board's SFTP server.
+	#[cfg(feature = "sftp")]
+	pub(super) fn listen_for_sftp(&mut self) {
+		let slot = self.slot(Stream::SftpIncoming);
 		let receive_buffer = slot.receive_buffer;
 		let mut socket = tcp::Socket::new(
 			tcp::SocketBuffer::new(vec![0; receive_buffer]),
 			tcp::SocketBuffer::new(vec![0; 1024]),
 		);
-		if socket.listen(crate::share::PORT).is_err() {
+		if socket.listen(crate::sftp::PORT).is_err() {
 			return;
 		}
 		let handle = self.sockets.add(socket);
-		let slot = self.slot(Stream::ShareIncoming);
+		let slot = self.slot(Stream::SftpIncoming);
 		slot.socket = Some(handle);
 		slot.state = StreamState::Listening;
 	}

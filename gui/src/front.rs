@@ -3,7 +3,7 @@
 //! the apps and on the settings page, and typed on the keyboard.
 
 use alloc::collections::VecDeque;
-#[cfg(any(feature = "console", feature = "irc", feature = "share"))]
+#[cfg(any(feature = "console", feature = "irc", feature = "sftp"))]
 use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
@@ -33,8 +33,8 @@ use crate::gopher::Gopher;
 #[cfg(feature = "irc")]
 use crate::irc::Irc;
 use crate::ping::Pinger;
-#[cfg(feature = "share")]
-use crate::share::ShareApp;
+#[cfg(feature = "sftp")]
+use crate::sftp::SftpApp;
 use crate::{
 	App, Keyboard, Launcher, MainWindow, NeighborEntry, Node, NodeEntry, Notice, Ping, Setting,
 	Setup, WifiEntry,
@@ -45,9 +45,9 @@ use crate::{
 const SHOWN_TYPED: usize = 24;
 /// The longest an IPv6 address can be written.
 const ADDRESS_LEN: usize = 45;
-#[cfg(feature = "share")]
+#[cfg(feature = "sftp")]
 const SHARE_USER_LEN: usize = 32;
-#[cfg(feature = "share")]
+#[cfg(feature = "sftp")]
 const SHARE_PASSWORD_LEN: usize = 64;
 /// The longest an IPv6 address and port can be written.
 #[cfg(feature = "console")]
@@ -113,12 +113,12 @@ enum Action {
 	BackGemini,
 	#[cfg(feature = "gemini")]
 	StopGemini,
-	#[cfg(feature = "share")]
-	PickShareTarget(NodeEntry),
-	#[cfg(feature = "share")]
-	TypeShareAddress,
-	#[cfg(feature = "share")]
-	AdmitShare(bool),
+	#[cfg(feature = "sftp")]
+	PickSftpTarget(NodeEntry),
+	#[cfg(feature = "sftp")]
+	TypeSftpAddress,
+	#[cfg(feature = "sftp")]
+	AdmitSftp(bool),
 	PickNetwork(WifiEntry),
 	Save,
 	Export,
@@ -158,13 +158,13 @@ enum Field {
 	#[cfg(feature = "gemini")]
 	GeminiAnswer(bool),
 	/// An address to send a shared file to, then who to log in as there.
-	#[cfg(feature = "share")]
-	ShareAddress,
-	#[cfg(feature = "share")]
-	ShareUser,
+	#[cfg(feature = "sftp")]
+	SftpAddress,
+	#[cfg(feature = "sftp")]
+	SftpUser,
 	/// The password a server asked for while sending.
-	#[cfg(feature = "share")]
-	SharePassword,
+	#[cfg(feature = "sftp")]
+	SftpPassword,
 }
 
 impl Field {
@@ -188,12 +188,12 @@ impl Field {
 			Field::GeminiAddress => GEMINI_ADDRESS_LEN,
 			#[cfg(feature = "gemini")]
 			Field::GeminiAnswer(_) => GEMINI_ANSWER_LEN,
-			#[cfg(feature = "share")]
-			Field::ShareAddress => ADDRESS_LEN,
-			#[cfg(feature = "share")]
-			Field::ShareUser => SHARE_USER_LEN,
-			#[cfg(feature = "share")]
-			Field::SharePassword => SHARE_PASSWORD_LEN,
+			#[cfg(feature = "sftp")]
+			Field::SftpAddress => ADDRESS_LEN,
+			#[cfg(feature = "sftp")]
+			Field::SftpUser => SHARE_USER_LEN,
+			#[cfg(feature = "sftp")]
+			Field::SftpPassword => SHARE_PASSWORD_LEN,
 		}
 	}
 
@@ -202,8 +202,8 @@ impl Field {
 			Field::Setting(setting) => setting.is_secret(),
 			#[cfg(feature = "gemini")]
 			Field::GeminiAnswer(secret) => secret,
-			#[cfg(feature = "share")]
-			Field::SharePassword => true,
+			#[cfg(feature = "sftp")]
+			Field::SftpPassword => true,
 			_ => false,
 		}
 	}
@@ -234,14 +234,14 @@ pub struct Gui {
 	gopher: Gopher,
 	#[cfg(feature = "gemini")]
 	gemini: Gemini,
-	#[cfg(feature = "share")]
-	share: ShareApp,
+	#[cfg(feature = "sftp")]
+	sftp: SftpApp,
 	/// Where a typed address said to send, until a user is typed too.
-	#[cfg(feature = "share")]
-	share_to: Option<Ipv6Addr>,
-	/// Whether the Share app was open, to list the folder as it opens.
-	#[cfg(feature = "share")]
-	share_was_open: bool,
+	#[cfg(feature = "sftp")]
+	sftp_to: Option<Ipv6Addr>,
+	/// Whether the SFTP app was open, to list the folder as it opens.
+	#[cfg(feature = "sftp")]
+	sftp_was_open: bool,
 	/// The settings in use.
 	saved: Settings,
 	/// The settings as edited, until saved.
@@ -282,10 +282,10 @@ impl Gui {
 				App::Gopher,
 				#[cfg(feature = "gemini")]
 				App::Gemini,
-				#[cfg(feature = "share")]
-				App::Share,
+				#[cfg(feature = "sftp")]
+				App::Sftp,
 			]))));
-		window.global::<Setup>().set_share(cfg!(feature = "share"));
+		window.global::<Setup>().set_sftp(cfg!(feature = "sftp"));
 		let gui = Gui {
 			window: window.clone_strong(),
 			directory: Directory::new(),
@@ -302,12 +302,12 @@ impl Gui {
 			gopher: Gopher::new(&window),
 			#[cfg(feature = "gemini")]
 			gemini: Gemini::new(&window),
-			#[cfg(feature = "share")]
-			share: ShareApp::new(&window),
-			#[cfg(feature = "share")]
-			share_to: None,
-			#[cfg(feature = "share")]
-			share_was_open: false,
+			#[cfg(feature = "sftp")]
+			sftp: SftpApp::new(&window),
+			#[cfg(feature = "sftp")]
+			sftp_to: None,
+			#[cfg(feature = "sftp")]
+			sftp_was_open: false,
 			draft: settings.clone(),
 			saved: settings,
 			editing: None,
@@ -418,8 +418,8 @@ impl Gui {
 		if let Some((question, secret)) = self.gemini.refresh() {
 			self.open_keyboard(Field::GeminiAnswer(secret), question.into());
 		}
-		#[cfg(feature = "share")]
-		self.tick_share();
+		#[cfg(feature = "sftp")]
+		self.tick_sftp();
 		// The switches change the edits in the interface alone.
 		if self.window.get_page() == 3 {
 			self.take_switches();
@@ -431,7 +431,7 @@ impl Gui {
 		let choosing = match self.window.global::<Launcher>().get_open() {
 			App::Ping => self.window.global::<Ping>().get_choosing(),
 			App::Console => self.window.global::<crate::Console>().get_choosing(),
-			App::Share => self.window.global::<crate::Share>().get_sending() != "",
+			App::Sftp => self.window.global::<crate::Sftp>().get_sending() != "",
 			App::Irc | App::Gopher | App::Gemini | App::None => false,
 		};
 		let wanted: Vec<PublicKey> = match self.window.get_page() {
@@ -569,21 +569,21 @@ impl Gui {
 			Action::BackGemini => self.gemini.back(&mut self.commands),
 			#[cfg(feature = "gemini")]
 			Action::StopGemini => self.gemini.stop(&mut self.commands),
-			#[cfg(feature = "share")]
-			Action::PickShareTarget(node) => {
-				if let (Some(to), Some(name)) = (address_of(&node), self.share.sending()) {
-					self.commands.push_back(Command::ShareSend {
+			#[cfg(feature = "sftp")]
+			Action::PickSftpTarget(node) => {
+				if let (Some(to), Some(name)) = (address_of(&node), self.sftp.sending()) {
+					self.commands.push_back(Command::SftpSend {
 						to,
-						user: self.share.user.clone(),
+						user: self.sftp.user.clone(),
 						name: name.into(),
 					});
 				}
-				self.share.stop_choosing();
+				self.sftp.stop_choosing();
 			}
-			#[cfg(feature = "share")]
-			Action::TypeShareAddress => self.open_keyboard(Field::ShareAddress, "Address".into()),
-			#[cfg(feature = "share")]
-			Action::AdmitShare(admit) => self.commands.push_back(Command::ShareAdmit(admit)),
+			#[cfg(feature = "sftp")]
+			Action::TypeSftpAddress => self.open_keyboard(Field::SftpAddress, "Address".into()),
+			#[cfg(feature = "sftp")]
+			Action::AdmitSftp(admit) => self.commands.push_back(Command::SftpAdmit(admit)),
 			#[cfg(feature = "console")]
 			Action::WriteMessage => {
 				let label = self.window.global::<crate::Console>().get_target();
@@ -665,10 +665,10 @@ impl Gui {
 			Field::GeminiAddress => self.gemini.address(),
 			#[cfg(feature = "gemini")]
 			Field::GeminiAnswer(_) => String::new(),
-			#[cfg(feature = "share")]
-			Field::ShareUser => self.share.user.clone(),
-			#[cfg(feature = "share")]
-			Field::ShareAddress | Field::SharePassword => String::new(),
+			#[cfg(feature = "sftp")]
+			Field::SftpUser => self.sftp.user.clone(),
+			#[cfg(feature = "sftp")]
+			Field::SftpAddress | Field::SftpPassword => String::new(),
 		};
 		self.editing = Some(Edit { field, text });
 		let keyboard = self.window.global::<Keyboard>();
@@ -776,45 +776,45 @@ impl Gui {
 				self.gemini.answer(&answer, &mut self.commands);
 				Ok(())
 			}
-			#[cfg(feature = "share")]
-			Field::ShareAddress => match edit.text.trim().parse::<Ipv6Addr>() {
+			#[cfg(feature = "sftp")]
+			Field::SftpAddress => match edit.text.trim().parse::<Ipv6Addr>() {
 				Ok(to) => {
-					self.share_to = Some(to);
+					self.sftp_to = Some(to);
 					Ok(())
 				}
 				Err(_) => Err("Not an IPv6 address"),
 			},
-			#[cfg(feature = "share")]
-			Field::ShareUser => {
-				self.share.user = edit.text.trim().into();
-				if let (Some(to), Some(name)) = (self.share_to.take(), self.share.sending()) {
-					self.commands.push_back(Command::ShareSend {
+			#[cfg(feature = "sftp")]
+			Field::SftpUser => {
+				self.sftp.user = edit.text.trim().into();
+				if let (Some(to), Some(name)) = (self.sftp_to.take(), self.sftp.sending()) {
+					self.commands.push_back(Command::SftpSend {
 						to,
-						user: self.share.user.clone(),
+						user: self.sftp.user.clone(),
 						name: name.into(),
 					});
 				}
-				self.share.stop_choosing();
+				self.sftp.stop_choosing();
 				Ok(())
 			}
-			#[cfg(feature = "share")]
-			Field::SharePassword => {
+			#[cfg(feature = "sftp")]
+			Field::SftpPassword => {
 				let password = edit.text.clone();
 				self.commands
-					.push_back(Command::SharePassword(Some(password)));
-				self.share.password_answered();
+					.push_back(Command::SftpPassword(Some(password)));
+				self.sftp.password_answered();
 				Ok(())
 			}
 		};
-		#[cfg(feature = "share")]
-		let then_user = matches!(edit.field, Field::ShareAddress) && applied.is_ok();
+		#[cfg(feature = "sftp")]
+		let then_user = matches!(edit.field, Field::SftpAddress) && applied.is_ok();
 		match applied {
 			Ok(()) => {
 				self.close_keyboard();
 				self.show_settings();
-				#[cfg(feature = "share")]
+				#[cfg(feature = "sftp")]
 				if then_user {
-					self.open_keyboard(Field::ShareUser, "User".into());
+					self.open_keyboard(Field::SftpUser, "User".into());
 				}
 			}
 			Err(problem) => self.window.global::<Keyboard>().set_error(problem.into()),
@@ -839,15 +839,15 @@ impl Gui {
 			self.gemini.cancel_answer();
 		}
 		// Giving up on the password gives up on sending.
-		#[cfg(feature = "share")]
+		#[cfg(feature = "sftp")]
 		if let Some(Edit {
-			field: Field::SharePassword,
+			field: Field::SftpPassword,
 			..
 		}) = self.editing
-			&& self.share.password_for().is_some()
+			&& self.sftp.password_for().is_some()
 		{
-			self.commands.push_back(Command::SharePassword(None));
-			self.share.password_answered();
+			self.commands.push_back(Command::SftpPassword(None));
+			self.sftp.password_answered();
 		}
 		self.editing = None;
 		self.window.global::<Keyboard>().set_open(false);
@@ -903,11 +903,11 @@ impl Gui {
 			&draft.hotspot_password,
 		);
 		setup.set_hotspot_password(hotspot_password.into());
-		let share_password = shown_value(
-			Field::Setting(TextSetting::SharePassword),
-			&draft.share_password,
+		let sftp_password = shown_value(
+			Field::Setting(TextSetting::SftpPassword),
+			&draft.sftp_password,
 		);
-		setup.set_share_password(share_password.into());
+		setup.set_sftp_password(sftp_password.into());
 		setup.set_status_pages(draft.status_page);
 		setup.set_bridge(draft.bridge);
 		setup.set_hotspot(draft.hotspot);
@@ -921,45 +921,45 @@ impl Gui {
 		}
 	}
 
-	/// Shows what Share is doing, from the board's Share tasks.
-	#[cfg(feature = "share")]
-	pub fn set_share_status(&mut self, status: esp_ygg_app::share::Status) {
+	/// Shows what SFTP is doing, from the board's SFTP tasks.
+	#[cfg(feature = "sftp")]
+	pub fn set_sftp_status(&mut self, status: esp_ygg_app::sftp::Status) {
 		let directory = &self.directory;
 		let label = |address: &Ipv6Addr| match directory.name_of_address(address) {
 			Some(name) => name.into(),
 			None => address.to_string(),
 		};
-		if self.share.set_status(status, label) {
-			self.commands.push_back(Command::ShareList);
+		if self.sftp.set_status(status, label) {
+			self.commands.push_back(Command::SftpList);
 		}
 	}
 
 	/// The shared folder's files, as asked for with [`Command::ShareList`].
-	#[cfg(feature = "share")]
-	pub fn set_share_files(&mut self, files: Vec<esp_ygg_app::share::Entry>) {
-		self.share.set_files(files);
+	#[cfg(feature = "sftp")]
+	pub fn set_sftp_files(&mut self, files: Vec<esp_ygg_app::sftp::Entry>) {
+		self.sftp.set_files(files);
 	}
 
-	/// Lists the folder as Share opens, and asks for a password while a
+	/// Lists the folder as SFTP opens, and asks for a password while a
 	/// server wants one.
-	#[cfg(feature = "share")]
-	fn tick_share(&mut self) {
-		let open = self.window.global::<Launcher>().get_open() == App::Share;
-		if open && !self.share_was_open {
-			self.commands.push_back(Command::ShareList);
+	#[cfg(feature = "sftp")]
+	fn tick_sftp(&mut self) {
+		let open = self.window.global::<Launcher>().get_open() == App::Sftp;
+		if open && !self.sftp_was_open {
+			self.commands.push_back(Command::SftpList);
 		}
-		self.share_was_open = open;
+		self.sftp_was_open = open;
 		let typing = matches!(
 			self.editing,
 			Some(Edit {
-				field: Field::SharePassword,
+				field: Field::SftpPassword,
 				..
 			})
 		);
-		match self.share.password_for() {
+		match self.sftp.password_for() {
 			Some(user) if !typing => {
 				let label = format!("Password for {user}");
-				self.open_keyboard(Field::SharePassword, label.into());
+				self.open_keyboard(Field::SftpPassword, label.into());
 			}
 			// The server gave up asking.
 			None if typing => {
@@ -1095,14 +1095,14 @@ fn connect(window: &MainWindow, actions: &Rc<RefCell<VecDeque<Action>>>) {
 		let opens = actions.clone();
 		gemini.on_open(move |link| opens.borrow_mut().push_back(Action::OpenGemini(link)));
 	}
-	#[cfg(feature = "share")]
+	#[cfg(feature = "sftp")]
 	{
-		let share = window.global::<crate::Share>();
-		share.on_type_address(queue(|| Action::TypeShareAddress));
+		let sftp = window.global::<crate::Sftp>();
+		sftp.on_type_address(queue(|| Action::TypeSftpAddress));
 		let picks = actions.clone();
-		share.on_pick(move |node| picks.borrow_mut().push_back(Action::PickShareTarget(node)));
+		sftp.on_pick(move |node| picks.borrow_mut().push_back(Action::PickSftpTarget(node)));
 		let admits = actions.clone();
-		share.on_admit(move |admit| admits.borrow_mut().push_back(Action::AdmitShare(admit)));
+		sftp.on_admit(move |admit| admits.borrow_mut().push_back(Action::AdmitSftp(admit)));
 	}
 	let keyboard = window.global::<Keyboard>();
 	let keys = actions.clone();
@@ -1142,7 +1142,7 @@ fn text_setting(setting: Setting) -> TextSetting {
 		Setting::Peer => TextSetting::Peer,
 		Setting::HotspotName => TextSetting::HotspotName,
 		Setting::HotspotPassword => TextSetting::HotspotPassword,
-		Setting::SharePassword => TextSetting::SharePassword,
+		Setting::SftpPassword => TextSetting::SftpPassword,
 	}
 }
 

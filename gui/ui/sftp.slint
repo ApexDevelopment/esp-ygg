@@ -1,67 +1,67 @@
 import { MaterialPalette, MaterialText, MaterialTypography } from "@material/material.slint";
 import { NodeChooser } from "chooser.slint";
 import { AppBar, EmptyNote, Row } from "page.slint";
-import { App, Launcher, Share } from "state.slint";
+import { App, Launcher, Sftp } from "state.slint";
 import { Button, ButtonKind, ListView } from "widgets.slint";
 
 /// The shared folder's files, to send by tapping, and how sending and
 /// receiving are going.
-export component SharePage inherits VerticalLayout {
-    if Share.sending != "": NodeChooser {
+export component SftpPage inherits VerticalLayout {
+    if Sftp.sending != "": NodeChooser {
         pick(node) => {
-            Share.pick(node);
+            Sftp.pick(node);
         }
 
         other => {
-            Share.type_address();
+            Sftp.type_address();
         }
 
         cancel => {
-            Share.sending = "";
+            Sftp.sending = "";
         }
     }
 
-    if Share.sending == "": VerticalLayout {
+    if Sftp.sending == "": VerticalLayout {
         AppBar {
-            text: "Share";
+            text: "SFTP";
 
             back => {
                 Launcher.open = App.none;
             }
         }
 
-        if Share.status != "": HorizontalLayout {
+        if Sftp.status != "": HorizontalLayout {
             padding_left: 16px;
             padding_right: 16px;
             padding_bottom: 4px;
 
             MaterialText {
-                text: Share.status;
+                text: Sftp.status;
                 style: MaterialTypography.body_small;
                 color: MaterialPalette.on_surface_variant;
             }
         }
 
-        if Share.files.length == 0: EmptyNote {
+        if Sftp.files.length == 0: EmptyNote {
             text: "No files yet";
         }
 
         ListView {
-            for file in Share.files: Row {
+            for file in Sftp.files: Row {
                 text: file.name;
                 supporting_text: file.size;
                 clickable: true;
 
                 clicked => {
-                    Share.sending = file.name;
+                    Sftp.sending = file.name;
                 }
             }
         }
     }
 }
 
-/// Asks whether to let in someone who wants to share files, over whatever
-/// is showing.
+/// Asks, over whatever is showing, whether to let in a peer that wants
+/// SFTP access.
 export component AdmitDialog inherits Rectangle {
     background: MaterialPalette.scrim.transparentize(40%);
 
@@ -82,12 +82,12 @@ export component AdmitDialog inherits Rectangle {
             spacing: 16px;
 
             MaterialText {
-                text: "Share files with";
+                text: "Allow SFTP from";
                 style: MaterialTypography.title_medium;
             }
 
             MaterialText {
-                text: Share.asking;
+                text: Sftp.asking;
                 style: MaterialTypography.body_medium;
                 color: MaterialPalette.on_surface_variant;
                 wrap: char_wrap;
@@ -102,7 +102,7 @@ export component AdmitDialog inherits Rectangle {
                     kind: ButtonKind.text;
 
                     clicked => {
-                        Share.admit(false);
+                        Sftp.admit(false);
                     }
                 }
 
@@ -111,7 +111,7 @@ export component AdmitDialog inherits Rectangle {
                     kind: ButtonKind.text;
 
                     clicked => {
-                        Share.admit(true);
+                        Sftp.admit(true);
                     }
                 }
             }

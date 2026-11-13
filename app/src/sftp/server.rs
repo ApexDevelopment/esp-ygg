@@ -60,7 +60,7 @@ pub async fn serve<S: Store, A: Attendant>(
 					}
 				}
 				ServEvent::PubkeyAuth(auth) => auth.reject()?,
-				ServEvent::Authenticated => info!("{from} logged in to Share"),
+				ServEvent::Authenticated => info!("{from} logged in to SFTP"),
 				ServEvent::OpenSession(open) if session.is_none() => {
 					session = Some(open.accept()?);
 				}

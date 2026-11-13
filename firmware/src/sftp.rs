@@ -1,4 +1,4 @@
-//! Share on the board. Two tasks on the UI's side run SSH sessions, one
+//! SFTP on the board. Two tasks on the UI's side run SSH sessions, one
 //! serving peers and one sending, so the board can do both at once, and
 //! even send to itself. The network loop carries the sessions' bytes, reading them
 //! only as fast as the task takes them so TCP slows the sender to match.
@@ -20,7 +20,7 @@ use embassy_sync::channel::{Channel, TrySendError};
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
-use esp_ygg_app::share::{
+use esp_ygg_app::sftp::{
 	self, Attendant, Entry, Mode, Progress, SendError, Status, Store, StoreError, Transfer,
 };
 use esp_ygg_app::ui::Command;
@@ -41,7 +41,7 @@ const MOST_BACKLOG: usize = 3072;
 /// card is woken less often.
 const CARD_CHUNK: usize = 4096;
 
-/// What happens on one of Share's streams.
+/// What happens on one of SFTP's streams.
 pub enum Wire {
 	/// A peer connected to the board's server.
 	Accepted(Ipv6Addr),
@@ -72,7 +72,7 @@ static PASSWORD: Signal<CriticalSectionRawMutex, Option<String>> = Signal::new()
 static SERVER_PASSWORD: CriticalSectionMutex<RefCell<Option<String>>> =
 	CriticalSectionMutex::new(RefCell::new(None));
 
-/// What Share is doing, for the interface, and whether that changed.
+/// What SFTP is doing, for the interface, and whether that changed.
 static STATUS: CriticalSectionMutex<RefCell<Status>> =
 	CriticalSectionMutex::new(RefCell::new(Status {
 		asking: None,
@@ -93,21 +93,21 @@ pub fn set_password(password: &str) {
 	SERVER_PASSWORD.lock(|cell| *cell.borrow_mut() = password);
 }
 
-/// Carries out a Share command from the interface.
+/// Carries out a SFTP command from the interface.
 pub fn carry_out(command: Command) {
 	match command {
-		Command::ShareSend { to, user, name } => {
+		Command::SftpSend { to, user, name } => {
 			if SENDS.try_send((to, user, name)).is_err() {
 				warn!("Already sending");
 			}
 		}
-		Command::ShareAdmit(admit) => ADMIT.signal(admit),
-		Command::SharePassword(password) => PASSWORD.signal(password),
+		Command::SftpAdmit(admit) => ADMIT.signal(admit),
+		Command::SftpPassword(password) => PASSWORD.signal(password),
 		_ => {}
 	}
 }
 
-/// What Share is doing, if that changed since last asked.
+/// What SFTP is doing, if that changed since last asked.
 pub fn status_changed() -> Option<Status> {
 	STATUS_CHANGED
 		.swap(false, Ordering::Relaxed)
@@ -119,7 +119,7 @@ fn update_status(change: impl FnOnce(&mut Status)) {
 	STATUS_CHANGED.store(true, Ordering::Relaxed);
 }
 
-/// The network loop's side: routes Share's events, and pulls what came on
+/// The network loop's side: routes SFTP's events, and pulls what came on
 /// its streams as the task has room.
 #[derive(Default)]
 pub struct Pump {
@@ -128,34 +128,29 @@ pub struct Pump {
 }
 
 impl Pump {
-	/// Keeps an event of Share's, giving back any other.
+	/// Keeps an event of SFTP's, giving back any other.
 	pub fn route(&mut self, event: Event) -> Option<Event> {
 		match event {
 			Event::StreamAccepted {
-				stream: Stream::ShareIncoming,
+				stream: Stream::SftpIncoming,
 				from,
 			} => self.incoming.push_back(Wire::Accepted(from)),
-			Event::StreamClosed(Stream::ShareIncoming) => self.incoming.push_back(Wire::Closed),
-			Event::StreamOpened(Stream::Share) => self.outgoing.push_back(Wire::Opened),
-			Event::StreamClosed(Stream::Share) => self.outgoing.push_back(Wire::Closed),
+			Event::StreamClosed(Stream::SftpIncoming) => self.incoming.push_back(Wire::Closed),
+			Event::StreamOpened(Stream::Sftp) => self.outgoing.push_back(Wire::Opened),
+			Event::StreamClosed(Stream::Sftp) => self.outgoing.push_back(Wire::Closed),
 			event => return Some(event),
 		}
 		None
 	}
 
 	pub fn pump(&mut self, overlay: &mut Overlay) {
-		pump_stream(
-			overlay,
-			Stream::ShareIncoming,
-			&mut self.incoming,
-			&INCOMING,
-		);
-		pump_stream(overlay, Stream::Share, &mut self.outgoing, &OUTGOING);
+		pump_stream(overlay, Stream::SftpIncoming, &mut self.incoming, &INCOMING);
+		pump_stream(overlay, Stream::Sftp, &mut self.outgoing, &OUTGOING);
 		INCOMING_BACKLOG.store(
-			overlay.stream_backlog(Stream::ShareIncoming),
+			overlay.stream_backlog(Stream::SftpIncoming),
 			Ordering::Relaxed,
 		);
-		OUTGOING_BACKLOG.store(overlay.stream_backlog(Stream::Share), Ordering::Relaxed);
+		OUTGOING_BACKLOG.store(overlay.stream_backlog(Stream::Sftp), Ordering::Relaxed);
 	}
 }
 
@@ -188,7 +183,7 @@ struct Connection {
 impl Connection {
 	fn new(stream: Stream) -> Self {
 		let (pipe, backlog) = match stream {
-			Stream::ShareIncoming => (&INCOMING, &INCOMING_BACKLOG),
+			Stream::SftpIncoming => (&INCOMING, &INCOMING_BACKLOG),
 			_ => (&OUTGOING, &OUTGOING_BACKLOG),
 		};
 		Connection {
@@ -345,13 +340,13 @@ pub async fn send_files() {
 }
 
 async fn serve(from: Ipv6Addr) {
-	info!("Share connection from {from}");
+	info!("SFTP connection from {from}");
 	let seed = SEED.lock(Cell::get);
 	let password = SERVER_PASSWORD.lock(|cell| cell.borrow().clone());
-	let mut connection = Connection::new(Stream::ShareIncoming);
-	let mut output = Connection::new(Stream::ShareIncoming);
+	let mut connection = Connection::new(Stream::SftpIncoming);
+	let mut output = Connection::new(Stream::SftpIncoming);
 	let mut store = CardStore(Asker::Server);
-	let result = share::serve(
+	let result = sftp::serve(
 		&mut connection,
 		&mut output,
 		from,
@@ -362,7 +357,7 @@ async fn serve(from: Ipv6Addr) {
 	)
 	.await;
 	if let Err(error) = result {
-		info!("Share session with {from} ended: {error:?}");
+		info!("SFTP session with {from} ended: {error:?}");
 	}
 	update_status(|status| status.transfer = None);
 	connection.close().await;
@@ -371,11 +366,11 @@ async fn serve(from: Ipv6Addr) {
 async fn send(to: Ipv6Addr, user: &str, name: &str) {
 	info!("Sending {name} to {to}");
 	update_status(|status| status.last = None);
-	let address = SocketAddrV6::new(to, share::PORT, 0, 0);
+	let address = SocketAddrV6::new(to, sftp::PORT, 0, 0);
 	FROM_UI
-		.send(Command::OpenStream(Stream::Share, address))
+		.send(Command::OpenStream(Stream::Sftp, address))
 		.await;
-	let mut connection = Connection::new(Stream::Share);
+	let mut connection = Connection::new(Stream::Sftp);
 	let opened = async {
 		loop {
 			match connection.pipe.receive().await {
@@ -387,9 +382,9 @@ async fn send(to: Ipv6Addr, user: &str, name: &str) {
 	};
 	let result = match select(opened, Timer::after(CONNECT_TIME)).await {
 		Either::First(true) => {
-			let mut output = Connection::new(Stream::Share);
+			let mut output = Connection::new(Stream::Sftp);
 			let mut store = CardStore(Asker::Sender);
-			share::send(
+			sftp::send(
 				&mut connection,
 				&mut output,
 				user,

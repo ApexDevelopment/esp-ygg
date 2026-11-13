@@ -262,7 +262,7 @@ fn edits_and_saves_settings() {
 	press(&mut app, &[Key::Enter]);
 	type_text(&mut app, "hunter22");
 	press(&mut app, &[Key::Enter, Key::Escape, Key::Down, Key::Down]);
-	// Share's password, shown as dots
+	// SFTP's password, shown as dots
 	assert!(screen(&app).join("\n").contains("none, ask"));
 	press(&mut app, &[Key::Enter]);
 	type_text(&mut app, "sesame");
@@ -279,7 +279,7 @@ fn edits_and_saves_settings() {
 		hotspot: true,
 		hotspot_name: "pocket".into(),
 		hotspot_password: "hunter22".into(),
-		share_password: "sesame".into(),
+		sftp_password: "sesame".into(),
 		..Settings::new()
 	};
 	assert_eq!(commands(&mut app), [Command::Save(expected)]);
@@ -875,15 +875,15 @@ fn shows_only_that_it_is_locked_and_ignores_keys() {
 	assert_eq!(screen(&app), before);
 }
 
-#[cfg(feature = "share")]
+#[cfg(feature = "sftp")]
 #[test]
-fn sends_a_file_and_answers_what_share_asks() {
-	use crate::share::{Entry, Status as ShareStatus};
+fn sends_a_file_and_answers_what_sftp_asks() {
+	use crate::sftp::{Entry, Status as SftpStatus};
 
 	let mut app = App::new(Settings::new(), at(0));
-	open(&mut app, "Share (SFTP)");
-	assert_eq!(commands(&mut app), [Command::ShareList]);
-	app.set_share_files(Vec::from([
+	open(&mut app, "SFTP");
+	assert_eq!(commands(&mut app), [Command::SftpList]);
+	app.set_sftp_files(Vec::from([
 		Entry {
 			name: "NOTES.TXT".into(),
 			size: 2048,
@@ -904,41 +904,41 @@ fn sends_a_file_and_answers_what_share_asks() {
 	let to = "200::1".parse().unwrap();
 	assert_eq!(
 		commands(&mut app),
-		[Command::ShareSend {
+		[Command::SftpSend {
 			to,
-			user: "sharbox".into(),
+			user: "sftbox".into(),
 			name: "NOTES.TXT".into(),
 		}]
 	);
 
 	// The server wants a password
-	let asked = ShareStatus {
-		password_for: Some("sharbox".into()),
-		..ShareStatus::default()
+	let asked = SftpStatus {
+		password_for: Some("sftbox".into()),
+		..SftpStatus::default()
 	};
-	app.set_share_status(asked);
+	app.set_sftp_status(asked);
 	type_text(&mut app, "sesame");
 	assert!(screen(&app).join("\n").contains("••••••"));
 	press(&mut app, &[Key::Enter]);
 	assert_eq!(
 		commands(&mut app),
-		[Command::SharePassword(Some("sesame".into()))]
+		[Command::SftpPassword(Some("sesame".into()))]
 	);
 
 	// A peer asks to come in while another screen shows
 	open(&mut app, "Settings");
-	app.set_share_status(ShareStatus {
+	app.set_sftp_status(SftpStatus {
 		asking: Some(to),
-		..ShareStatus::default()
+		..SftpStatus::default()
 	});
-	assert!(screen(&app).join("\n").contains("Share files with"));
+	assert!(screen(&app).join("\n").contains("Allow SFTP from"));
 	press(&mut app, &[Key::Escape]);
-	assert_eq!(commands(&mut app), [Command::ShareAdmit(false)]);
+	assert_eq!(commands(&mut app), [Command::SftpAdmit(false)]);
 
 	// A file came in, so the folder is listed again
-	app.set_share_status(ShareStatus {
+	app.set_sftp_status(SftpStatus {
 		last: Some("Received MAP~1.PNG".into()),
-		..ShareStatus::default()
+		..SftpStatus::default()
 	});
-	assert_eq!(commands(&mut app), [Command::ShareList]);
+	assert_eq!(commands(&mut app), [Command::SftpList]);
 }

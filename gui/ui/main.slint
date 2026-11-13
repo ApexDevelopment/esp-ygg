@@ -11,9 +11,9 @@ import { NodesPage } from "nodes.slint";
 import { PingPage } from "ping.slint";
 import { CompactBar, CompactRail, NavigationHandle } from "rail.slint";
 import { SettingsPage } from "settings.slint";
-import { AdmitDialog, SharePage } from "share.slint";
-import { App, Keyboard, Launcher, Lock, Notice, Share } from "state.slint";
-export { App, ChatEntry, Console, Gemini, Gopher, Irc, IrcBuffer, IrcField, Keyboard, Launcher, LineStyle, Lock, Node, NodeEntry, NeighborEntry, Notice, PageLine, Ping, Setting, Setup, Share, ShareFile, WifiEntry } from "state.slint";
+import { AdmitDialog, SftpPage } from "sftp.slint";
+import { App, Keyboard, Launcher, Lock, Notice, Sftp } from "state.slint";
+export { App, ChatEntry, Console, Gemini, Gopher, Irc, IrcBuffer, IrcField, Keyboard, Launcher, LineStyle, Lock, Node, NodeEntry, NeighborEntry, Notice, PageLine, Ping, Setting, Setup, Sftp, SftpFile, WifiEntry } from "state.slint";
 import "../fonts/Roboto.ttf";
 import "../fonts/RobotoMono-Regular.ttf";
 
@@ -27,7 +27,7 @@ component Pages inherits VerticalLayout {
     if root.page == 0 && Launcher.open == App.irc: IrcPage { }
     if root.page == 0 && Launcher.open == App.gopher: GopherPage { }
     if root.page == 0 && Launcher.open == App.gemini: GeminiPage { }
-    if root.page == 0 && Launcher.open == App.share: SharePage { }
+    if root.page == 0 && Launcher.open == App.sftp: SftpPage { }
     if root.page == 1: NodesPage { }
     if root.page == 2: NeighborsPage { }
     if root.page == 3: SettingsPage { }
@@ -222,7 +222,7 @@ export component MainWindow inherits MaterialWindow {
     }
 
     // A peer wants in, wherever the interface is.
-    if Share.asking != "": AdmitDialog {
+    if Sftp.asking != "": AdmitDialog {
         width: root.width;
         height: root.height;
     }

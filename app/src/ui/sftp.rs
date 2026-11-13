@@ -1,4 +1,4 @@
-//! The Share screen: the shared folder's files, sending one, and what Share
+//! The SFTP screen: the shared folder's files, sending one, and what SFTP
 //! asks of the person: whether to let a peer in, and a server's password.
 
 use alloc::format;
@@ -14,7 +14,7 @@ use ratatui::widgets::Paragraph;
 
 use super::view::{DIM, SELECTED, field_line, pad, split_top, truncate, wrap};
 use super::{Command, Commands, Key, Outcome, TextInput, navigation};
-use crate::share::{Entry, Status, size_text};
+use crate::sftp::{Entry, Status, size_text};
 
 const USER_LEN: usize = 32;
 const PASSWORD_LEN: usize = 64;
@@ -30,7 +30,7 @@ pub(super) enum Phase {
 	Password,
 }
 
-pub(super) struct Share {
+pub(super) struct Sftp {
 	files: Vec<Entry>,
 	selected: usize,
 	pub phase: Phase,
@@ -40,21 +40,21 @@ pub(super) struct Share {
 	status: Status,
 }
 
-impl Share {
+impl Sftp {
 	pub fn new() -> Self {
-		Share {
+		Sftp {
 			files: Vec::new(),
 			selected: 0,
 			phase: Phase::Files,
 			address: TextInput::new("", 45),
-			user: TextInput::new("share", USER_LEN),
+			user: TextInput::new("sftp", USER_LEN),
 			password: TextInput::new("", PASSWORD_LEN),
 			status: Status::default(),
 		}
 	}
 
 	pub fn opened(&mut self, commands: &mut Commands) {
-		commands.push_back(Command::ShareList);
+		commands.push_back(Command::SftpList);
 	}
 
 	pub fn set_files(&mut self, mut files: Vec<Entry>) {
@@ -63,11 +63,11 @@ impl Share {
 		self.files = files;
 	}
 
-	/// Takes what Share is doing. Returns whether it newly asks something
+	/// Takes what SFTP is doing. Returns whether it newly asks something
 	/// of the person, so the screen should come up.
 	pub fn set_status(&mut self, status: Status, commands: &mut Commands) -> bool {
 		if status.ended_since(&self.status) {
-			commands.push_back(Command::ShareList);
+			commands.push_back(Command::SftpList);
 		}
 		let newly_asking = status.asking.is_some() && status.asking != self.status.asking;
 		let wants_password = status.password_for.is_some() && self.status.password_for.is_none();
@@ -98,7 +98,7 @@ impl Share {
 				Some(Key::Escape | Key::Char('n')) => false,
 				_ => return Outcome::Stay,
 			};
-			commands.push_back(Command::ShareAdmit(admit));
+			commands.push_back(Command::SftpAdmit(admit));
 			self.status.asking = None;
 			return Outcome::Stay;
 		}
@@ -120,7 +120,7 @@ impl Share {
 			Phase::Password => match key {
 				Key::Enter | Key::Escape => {
 					let password = (key == Key::Enter).then(|| self.password.text.clone());
-					commands.push_back(Command::SharePassword(password));
+					commands.push_back(Command::SftpPassword(password));
 					self.status.password_for = None;
 					self.phase = Phase::Files;
 				}
@@ -148,7 +148,7 @@ impl Share {
 		else {
 			return;
 		};
-		commands.push_back(Command::ShareSend {
+		commands.push_back(Command::SftpSend {
 			to,
 			user: self.user.text.clone(),
 			name: file.name.clone(),
@@ -159,7 +159,7 @@ impl Share {
 	/// Draws the screen, naming a peer that asks to come in with `label`.
 	pub fn draw(&self, frame: &mut Frame, area: Rect, label: impl Fn(&Ipv6Addr) -> String) {
 		if let Some(asking) = &self.status.asking {
-			let mut lines = Vec::from([Line::raw(" Share files with")]);
+			let mut lines = Vec::from([Line::raw(" Allow SFTP from")]);
 			let width = usize::from(area.width.saturating_sub(1));
 			for line in wrap(&label(asking), width) {
 				lines.push(Line::styled(format!(" {line}"), DIM));

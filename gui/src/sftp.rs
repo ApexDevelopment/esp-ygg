@@ -1,35 +1,35 @@
-//! The Share app: the shared folder's files, sending them, and asking the
-//! person what Share needs to know.
+//! The SFTP app: the shared folder's files, sending them, and asking the
+//! person what SFTP needs to know.
 
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use esp_ygg_app::share::{Entry, Status, size_text};
+use esp_ygg_app::sftp::{Entry, Status, size_text};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::front::sync;
-use crate::{MainWindow, ShareFile};
+use crate::{MainWindow, SftpFile};
 
-pub struct ShareApp {
+pub struct SftpApp {
 	window: MainWindow,
-	files: Rc<VecModel<ShareFile>>,
+	files: Rc<VecModel<SftpFile>>,
 	status: Status,
 	/// Who to log in as on servers, which boards ignore.
 	pub user: String,
 }
 
-impl ShareApp {
+impl SftpApp {
 	pub fn new(window: &MainWindow) -> Self {
 		let files = Rc::new(VecModel::default());
 		window
-			.global::<crate::Share>()
+			.global::<crate::Sftp>()
 			.set_files(ModelRc::from(files.clone()));
-		ShareApp {
+		SftpApp {
 			window: window.clone_strong(),
 			files,
 			status: Status::default(),
-			user: "share".into(),
+			user: "sftp".into(),
 		}
 	}
 
@@ -37,7 +37,7 @@ impl ShareApp {
 		entries.sort_by_key(|entry| entry.name.to_lowercase());
 		let files = entries
 			.into_iter()
-			.map(|entry| ShareFile {
+			.map(|entry| SftpFile {
 				name: entry.name.into(),
 				size: size_text(entry.size).into(),
 			})
@@ -45,17 +45,17 @@ impl ShareApp {
 		sync(&self.files, files);
 	}
 
-	/// Shows what Share is doing. Returns whether the folder is worth
+	/// Shows what SFTP is doing. Returns whether the folder is worth
 	/// listing again.
 	pub fn set_status(
 		&mut self,
 		status: Status,
 		label: impl Fn(&core::net::Ipv6Addr) -> String,
 	) -> bool {
-		let share = self.window.global::<crate::Share>();
+		let sftp = self.window.global::<crate::Sftp>();
 		let asking = status.asking.as_ref().map(&label).unwrap_or_default();
-		share.set_asking(asking.into());
-		share.set_status(status.summary().into());
+		sftp.set_asking(asking.into());
+		sftp.set_status(status.summary().into());
 		let ended = status.ended_since(&self.status);
 		self.status = status;
 		ended
@@ -67,7 +67,7 @@ impl ShareApp {
 		self.status.password_for.as_deref()
 	}
 
-	/// Forgets that a password was asked for, once answered, until Share
+	/// Forgets that a password was asked for, once answered, until SFTP
 	/// asks again.
 	pub fn password_answered(&mut self) {
 		self.status.password_for = None;
@@ -75,13 +75,13 @@ impl ShareApp {
 
 	/// The file chosen to send, if one is.
 	pub fn sending(&self) -> Option<SharedString> {
-		let sending = self.window.global::<crate::Share>().get_sending();
+		let sending = self.window.global::<crate::Sftp>().get_sending();
 		(!sending.is_empty()).then_some(sending)
 	}
 
 	pub fn stop_choosing(&self) {
 		self.window
-			.global::<crate::Share>()
+			.global::<crate::Sftp>()
 			.set_sending(SharedString::new());
 	}
 }

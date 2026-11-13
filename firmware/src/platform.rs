@@ -48,7 +48,7 @@ pub fn now() -> Instant {
 
 /// Randomness for TLS and SSH. The hardware generator is truly random
 /// while the radio runs, which it always does here.
-#[cfg(any(feature = "gemini", feature = "share"))]
+#[cfg(any(feature = "gemini", feature = "sftp"))]
 #[unsafe(no_mangle)]
 unsafe extern "Rust" fn __getrandom_v03_custom(
 	destination: *mut u8,

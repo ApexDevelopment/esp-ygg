@@ -361,11 +361,11 @@ fn streams_carry_data_both_ways() {
 }
 
 #[test]
-fn boards_take_share_connections_and_say_from_whom() {
+fn boards_take_sftp_connections_and_say_from_whom() {
 	let (mut radio, mut overlays) = mesh(2, &[0, 1]);
-	let server = SocketAddrV6::new(address(&radio, 0), esp_ygg_app::share::PORT, 0, 0);
+	let server = SocketAddrV6::new(address(&radio, 0), esp_ygg_app::sftp::PORT, 0, 0);
 	let from = address(&radio, 1);
-	overlays[1].1.open_stream(Stream::Share, server).unwrap();
+	overlays[1].1.open_stream(Stream::Sftp, server).unwrap();
 	let accepted = wait_for(
 		&mut radio,
 		&mut overlays,
@@ -379,7 +379,7 @@ fn boards_take_share_connections_and_say_from_whom() {
 			None
 		},
 	);
-	assert_eq!(accepted, Some((Stream::ShareIncoming, from)));
+	assert_eq!(accepted, Some((Stream::SftpIncoming, from)));
 }
 
 #[test]

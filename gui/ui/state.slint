@@ -37,7 +37,7 @@ export enum App {
     irc,
     gopher,
     gemini,
-    share,
+    sftp,
 }
 
 /// The app open on the home page, if any, over the launcher.
@@ -211,16 +211,16 @@ export global Gemini {
     callback stop();
 }
 
-export struct ShareFile {
+export struct SftpFile {
     name: string,
     /// Its size, written for people.
     size: string,
 }
 
-/// Share, run from Rust.
-export global Share {
+/// SFTP, run from Rust.
+export global Sftp {
     /// The files in the shared folder.
-    in property <[ShareFile]> files;
+    in property <[SftpFile]> files;
     /// What is coming in or going out, or how the last ended.
     in property <string> status;
     /// Who wants to connect, until answered, or empty.
@@ -244,7 +244,7 @@ export enum Setting {
     peer,
     hotspot_name,
     hotspot_password,
-    share_password,
+    sftp_password,
 }
 
 /// The settings being edited. Rust fills in the text shown for each, and
@@ -258,12 +258,12 @@ export global Setup {
     in property <string> peer;
     in property <string> hotspot_name;
     in property <string> hotspot_password;
-    in property <string> share_password;
+    in property <string> sftp_password;
     in_out property <bool> status_pages;
     in_out property <bool> bridge;
     in_out property <bool> hotspot;
-    /// Whether the board was built with Share, which has a password.
-    in property <bool> share;
+    /// Whether the board was built with SFTP, which has a password.
+    in property <bool> sftp;
     /// Whether saving the edits restarts the board, which some need.
     in property <bool> restart;
 

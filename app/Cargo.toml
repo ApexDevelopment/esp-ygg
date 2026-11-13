@@ -18,7 +18,7 @@ rustls-rustcrypto = { version = "0.1.0-pre.0", default-features = false, feature
 serde_json = { version = "1.0.154", default-features = false, features = ["alloc"] }
 sha2 = { version = "0.11.1", default-features = false, optional = true }
 smoltcp = { version = "0.13.1", default-features = false, features = ["alloc", "medium-ip", "auto-icmp-echo-reply", "proto-ipv6", "socket-icmp", "socket-tcp", "socket-udp"] }
-# SSH and SFTP for Share, without the post-quantum key exchange, which is
+# SSH and SFTP for SFTP, without the post-quantum key exchange, which is
 # large, and which OpenSSH falls back from
 sunset = { version = "0.6.0", default-features = false, optional = true }
 sunset-async = { version = "0.6.0", default-features = false, optional = true }
@@ -40,7 +40,7 @@ gemini = ["dep:rustls", "dep:rustls-rustcrypto", "dep:sha2"]
 # Voice calls, on boards with a speaker and microphone
 voice = []
 # Sending and receiving files over SFTP, with any SFTP software
-share = [
+sftp = [
 	"dep:embassy-futures",
 	"dep:embassy-sync",
 	"dep:embedded-io-async",
@@ -51,7 +51,7 @@ share = [
 
 [dev-dependencies]
 # Turns on every service for this crate's own tests
-esp-ygg-app = { path = ".", features = ["gopher", "irc", "gemini", "voice", "share"] }
+esp-ygg-app = { path = ".", features = ["gopher", "irc", "gemini", "voice", "sftp"] }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 # Draws the touch board's screen to pictures, in the preview
 mousefood = { version = "0.5.3", default-features = false, features = ["fonts"] }
@@ -60,7 +60,7 @@ png = "0.18.1"
 rustls = { version = "0.23.46", default-features = false, features = ["std", "tls12"] }
 rustls-rustcrypto = { version = "0.1.0-pre.0", features = ["std", "tls12"] }
 smoltcp = { version = "0.13.1", default-features = false, features = ["alloc", "medium-ip", "proto-ipv6", "socket-tcp"] }
-# Runs Share against OpenSSH's sftp in tests
+# Runs SFTP against OpenSSH's sftp in tests
 embedded-io-adapters = { version = "0.7.0", features = ["tokio-1"] }
 tokio = { version = "1.54.1", features = ["io-util", "macros", "net", "process", "rt", "time"] }
 # Lets the phone example keep to one network interface

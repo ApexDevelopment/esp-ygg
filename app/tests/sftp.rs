@@ -1,4 +1,4 @@
-//! Runs Share's server against OpenSSH's `sftp`, and its sender against
+//! Runs SFTP's server against OpenSSH's `sftp`, and its sender against
 //! the server, over local TCP, with a folder on disk as the shared one.
 
 use std::cell::{Cell, RefCell};
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use embedded_io_adapters::tokio_1::FromTokio;
-use esp_ygg_app::share::{self, Attendant, Entry, Mode, Progress, SendError, Store, StoreError};
+use esp_ygg_app::sftp::{self, Attendant, Entry, Mode, Progress, SendError, Store, StoreError};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::Command;
 
@@ -20,8 +20,7 @@ struct Folder(PathBuf);
 
 impl Folder {
 	fn new(name: &str) -> Self {
-		let path =
-			std::env::temp_dir().join(format!("esp-ygg-share-{name}-{}", std::process::id()));
+		let path = std::env::temp_dir().join(format!("esp-ygg-sftp-{name}-{}", std::process::id()));
 		let _ = fs::remove_dir_all(&path);
 		fs::create_dir_all(&path).unwrap();
 		Folder(path)
@@ -139,7 +138,7 @@ async fn serve_one<F: std::future::Future>(
 		let (input, output) = stream.into_split();
 		let (mut input, mut output) = (FromTokio::new(input), FromTokio::new(output));
 		let from = Ipv6Addr::LOCALHOST;
-		let _ = share::serve(
+		let _ = sftp::serve(
 			&mut input,
 			&mut output,
 			from,
@@ -273,7 +272,7 @@ async fn send_to(
 			.unwrap();
 		let (input, output) = stream.into_split();
 		let (mut input, mut output) = (FromTokio::new(input), FromTokio::new(output));
-		share::send(&mut input, &mut output, "esp-ygg", name, sending, &sender).await
+		sftp::send(&mut input, &mut output, "esp-ygg", name, sending, &sender).await
 	})
 	.await
 }

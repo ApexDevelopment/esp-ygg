@@ -31,10 +31,10 @@ mod platform;
 mod radio;
 #[cfg(feature = "ui")]
 mod sdcard;
-#[cfg(all(feature = "share", feature = "ui"))]
-mod share;
-#[cfg(all(feature = "share", not(feature = "ui")))]
-compile_error!("Share keeps its files on the SD card, so needs a board with an interface");
+#[cfg(all(feature = "sftp", feature = "ui"))]
+mod sftp;
+#[cfg(all(feature = "sftp", not(feature = "ui")))]
+compile_error!("SFTP keeps its files on the SD card, so needs a board with an interface");
 #[cfg(feature = "voice")]
 mod speaker;
 mod storage;
@@ -110,9 +110,9 @@ async fn main(spawner: Spawner) -> ! {
 	#[cfg(not(any(feature = "esp32", all(feature = "cardputer", feature = "tui"))))]
 	esp_alloc::heap_allocator!(size: 200 * 1024);
 	// The UI's core has a stack of its own, so leave room for it, and for
-	// the larger one Share needs.
+	// the larger one SFTP needs.
 	#[cfg(all(feature = "cardputer", feature = "tui"))]
-	esp_alloc::heap_allocator!(size: if cfg!(feature = "share") { 168 * 1024 } else { 176 * 1024 });
+	esp_alloc::heap_allocator!(size: if cfg!(feature = "sftp") { 168 * 1024 } else { 176 * 1024 });
 	#[cfg(feature = "esp32")]
 	esp_alloc::heap_allocator!(size: 120 * 1024);
 	let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -165,8 +165,8 @@ async fn main(spawner: Spawner) -> ! {
 		WifiController::new(peripherals.WIFI, controller_config).expect("starting WiFi");
 	let rng = Rng::new();
 	let (mut store, unix_base) = settings_store.open(&rng);
-	#[cfg(feature = "share")]
-	share::set_up(store.seed(), &settings.share_password);
+	#[cfg(feature = "sftp")]
+	sftp::set_up(store.seed(), &settings.sftp_password);
 
 	let esp_now = controller.esp_now();
 	info!("ESP-NOW version {}", esp_now.version().unwrap_or(0));
@@ -305,8 +305,8 @@ async fn main(spawner: Spawner) -> ! {
 	let mut frame = alloc::vec![0u8; FRAME_LEN];
 	let mut stream: Option<StreamId> = None;
 	let mut next_save = Instant::now() + Duration::from_secs(SAVE_INTERVAL_SECS);
-	#[cfg(feature = "share")]
-	let mut share_pump = share::Pump::default();
+	#[cfg(feature = "sftp")]
+	let mut sftp_pump = sftp::Pump::default();
 	loop {
 		let started = Instant::now();
 		send_frames(&mut node, &manager, &mut frame);
@@ -370,8 +370,8 @@ async fn main(spawner: Spawner) -> ! {
 				show_networks(networks);
 			}
 			// The pump below hands it more.
-			#[cfg(feature = "share")]
-			Wake::Ui(UiInput::ShareRoom) => {}
+			#[cfg(feature = "sftp")]
+			Wake::Ui(UiInput::SftpRoom) => {}
 		}
 		// Whatever woke the loop, run expired timers, or a steady stream of
 		// frames would starve them.
@@ -403,8 +403,8 @@ async fn main(spawner: Spawner) -> ! {
 			// If the UI falls behind, it misses some updates rather than
 			// holding up the network.
 			while let Some(event) = overlay.poll_event() {
-				#[cfg(feature = "share")]
-				let Some(event) = share_pump.route(event) else {
+				#[cfg(feature = "sftp")]
+				let Some(event) = sftp_pump.route(event) else {
 					continue;
 				};
 				#[cfg(feature = "voice")]
@@ -413,8 +413,8 @@ async fn main(spawner: Spawner) -> ! {
 				}
 				let _ = ui::TO_UI.try_send(ui::ToUi::Event(event));
 			}
-			#[cfg(feature = "share")]
-			share_pump.pump(&mut overlay);
+			#[cfg(feature = "sftp")]
+			sftp_pump.pump(&mut overlay);
 			#[cfg(feature = "voice")]
 			call.deliver(&mut overlay);
 			while let Some((key, info)) = node.poll_nodeinfo() {
@@ -510,9 +510,9 @@ enum UiInput {
 	/// A frame from the microphone, for the call
 	#[cfg(feature = "voice")]
 	Voice(Vec<u8>),
-	/// Share took what it was given, and has room for more.
-	#[cfg(feature = "share")]
-	ShareRoom,
+	/// SFTP took what it was given, and has room for more.
+	#[cfg(feature = "sftp")]
+	SftpRoom,
 }
 
 /// A command from the UI, the results of a scan it asked for, or voice.
@@ -524,11 +524,11 @@ async fn next_ui_input() -> UiInput {
 	let voice = async { UiInput::Voice(audio::VOICE_OUT.receive().await) };
 	#[cfg(not(feature = "voice"))]
 	let voice = core::future::pending::<UiInput>();
-	#[cfg(feature = "share")]
+	#[cfg(feature = "sftp")]
 	let voice = async {
-		match embassy_futures::select::select(voice, share::ROOM.wait()).await {
+		match embassy_futures::select::select(voice, sftp::ROOM.wait()).await {
 			embassy_futures::select::Either::First(input) => input,
-			embassy_futures::select::Either::Second(()) => UiInput::ShareRoom,
+			embassy_futures::select::Either::Second(()) => UiInput::SftpRoom,
 		}
 	};
 	match select3(command, networks, voice).await {
@@ -619,19 +619,19 @@ fn carry_out(command: Command, node: &mut Node<EspPlatform>, overlay: &mut Overl
 				warn!("Fetching from {to} failed: {error:?}");
 			}
 		}
-		#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+		#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 		Command::OpenStream(stream, to) => {
 			if let Err(error) = overlay.open_stream(stream, to) {
 				warn!("Connecting to {to} failed: {error:?}");
 			}
 		}
-		#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+		#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 		Command::StreamSend(stream, data) => {
 			if let Err(error) = overlay.stream_send(stream, &data) {
 				warn!("Sending on a stream failed: {error:?}");
 			}
 		}
-		#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
+		#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 		Command::CloseStream(stream) => overlay.close_stream(stream),
 		#[cfg(feature = "voice")]
 		Command::Call(to) => {
@@ -660,12 +660,12 @@ fn carry_out(command: Command, node: &mut Node<EspPlatform>, overlay: &mut Overl
 		Command::Save(_) => {}
 		// The UI's core reads and writes the SD card itself.
 		Command::ExportSettings(_) | Command::ImportSettings => {}
-		// The UI's side runs Share's sessions.
-		#[cfg(feature = "share")]
-		Command::ShareSend { .. }
-		| Command::ShareAdmit(_)
-		| Command::SharePassword(_)
-		| Command::ShareList => {}
+		// The UI's side runs SFTP's sessions.
+		#[cfg(feature = "sftp")]
+		Command::SftpSend { .. }
+		| Command::SftpAdmit(_)
+		| Command::SftpPassword(_)
+		| Command::SftpList => {}
 	}
 }
 
@@ -716,9 +716,9 @@ fn apply_settings(
 	}
 	#[cfg(feature = "voice")]
 	audio::set_ringer(new.ringtone, new.ring_volume);
-	#[cfg(feature = "share")]
-	if new.share_password != old.share_password {
-		share::set_password(&new.share_password);
+	#[cfg(feature = "sftp")]
+	if new.sftp_password != old.sftp_password {
+		sftp::set_password(&new.sftp_password);
 	}
 }
 

@@ -76,7 +76,7 @@ fn main() {
 	save_gopher(&mut gui, &window, &folder);
 	save_navigation_over_app(&mut gui, &window, &folder);
 	save_gemini(&mut gui, &window, &folder);
-	save_share(&mut gui, &window, &folder, &keys);
+	save_sftp(&mut gui, &window, &folder, &keys);
 	gui.set_locked(true);
 	for (orientation, width, height) in SIZES {
 		window.set_size(slint::PhysicalSize::new(width, height));
@@ -154,22 +154,22 @@ fn serve_gemini(gui: &mut Gui, response: &[u8]) {
 	panic!("the Gemini exchange never finished");
 }
 
-/// Saves Share in both orientations: the folder while a file comes in,
+/// Saves SFTP in both orientations: the folder while a file comes in,
 /// then a peer asking to connect.
-fn save_share(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str, keys: &[PublicKey]) {
-	use esp_ygg_app::share::{Entry, Status, Transfer};
+fn save_sftp(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str, keys: &[PublicKey]) {
+	use esp_ygg_app::sftp::{Entry, Status, Transfer};
 	gui.window().set_page(0);
-	gui.window().global::<Launcher>().set_open(App::Share);
+	gui.window().global::<Launcher>().set_open(App::Sftp);
 	let file = |name: &str, size| Entry {
 		name: name.into(),
 		size,
 	};
-	gui.set_share_files(vec![
+	gui.set_sftp_files(vec![
 		file("holiday photo.jpeg", 1_834_221),
 		file("notes.txt", 2_301),
 		file("MAP.PNG", 48_210),
 	]);
-	gui.set_share_status(Status {
+	gui.set_sftp_status(Status {
 		transfer: Some(Transfer {
 			name: "song.ogg".into(),
 			bytes: 230_000,
@@ -181,19 +181,19 @@ fn save_share(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str, keys:
 	gui.tick();
 	for (orientation, width, height) in SIZES {
 		window.set_size(slint::PhysicalSize::new(width, height));
-		save_screen(window, folder, &format!("share-{orientation}"));
+		save_screen(window, folder, &format!("sftp-{orientation}"));
 	}
 	let asking = std::net::Ipv6Addr::from(addr_for_key(&keys[0]).0);
-	gui.set_share_status(Status {
+	gui.set_sftp_status(Status {
 		asking: Some(asking),
 		..Status::default()
 	});
 	gui.tick();
 	for (orientation, width, height) in SIZES {
 		window.set_size(slint::PhysicalSize::new(width, height));
-		save_screen(window, folder, &format!("share-{orientation}-asking"));
+		save_screen(window, folder, &format!("sftp-{orientation}-asking"));
 	}
-	gui.set_share_status(Status::default());
+	gui.set_sftp_status(Status::default());
 }
 
 /// Saves a Gemini page in both orientations, after browsing to it.
