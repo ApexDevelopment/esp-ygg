@@ -30,7 +30,7 @@ const MAX_REDIRECTS: u8 = 5;
 const MAX_RESPONSE: usize = 32 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RowKind {
+pub enum RowKind {
 	Text,
 	Heading,
 	/// Part of the link with this index.
@@ -39,14 +39,17 @@ pub(super) enum RowKind {
 	Preformatted,
 }
 
-pub(super) struct Row {
+pub struct Row {
 	pub text: String,
 	pub kind: RowKind,
 }
 
-pub(super) struct Page {
+pub struct Page {
 	pub url: Url,
-	/// The page laid out to the screen's width.
+	/// The page's lines, for an interface that lays them out itself and
+	/// takes them, or else nothing.
+	pub lines: Vec<Line>,
+	/// The page laid out to the text interface's width, or else nothing.
 	pub rows: Vec<Row>,
 	links: Vec<String>,
 	/// The first row of each link.
@@ -56,7 +59,7 @@ pub(super) struct Page {
 }
 
 impl Page {
-	fn new(url: Url, rows: Vec<Row>, links: Vec<String>) -> Self {
+	fn new(url: Url, lines: Vec<Line>, rows: Vec<Row>, links: Vec<String>) -> Self {
 		let mut link_rows = Vec::new();
 		for (index, row) in rows.iter().enumerate() {
 			if let RowKind::Link(link) = row.kind
@@ -67,6 +70,7 @@ impl Page {
 		}
 		let mut page = Page {
 			url,
+			lines,
 			rows,
 			links,
 			link_rows,
@@ -123,15 +127,10 @@ impl Page {
 			None => {}
 		}
 	}
-
-	fn selected_link(&self) -> Option<&str> {
-		let link = self.selected.filter(|&link| self.is_visible(link))?;
-		self.links.get(link).map(String::as_str)
-	}
 }
 
 /// A question the server asked, waiting for an answer.
-pub(super) struct Prompt {
+pub struct Prompt {
 	url: Url,
 	pub question: String,
 	pub answer: TextInput,
@@ -147,10 +146,14 @@ struct Request {
 	back_to: Option<usize>,
 }
 
-pub(super) struct Browser {
+pub struct Browser {
 	pub address: TextInput,
 	pub editing: bool,
 	pub page: Option<Page>,
+	/// How many pages were shown, for an interface to notice a new one.
+	pub shown: usize,
+	/// Whether to lay pages out for the text interface.
+	lay_out: bool,
 	history: Vec<(Url, usize)>,
 	request: Option<Request>,
 	pub prompt: Option<Prompt>,
@@ -160,12 +163,20 @@ pub(super) struct Browser {
 	config: Option<Arc<rustls::ClientConfig>>,
 }
 
+impl Default for Browser {
+	fn default() -> Self {
+		Browser::new()
+	}
+}
+
 impl Browser {
 	pub fn new() -> Self {
 		Browser {
 			address: TextInput::new("", 60),
 			editing: true,
 			page: None,
+			shown: 0,
+			lay_out: true,
 			history: Vec::new(),
 			request: None,
 			prompt: None,
@@ -175,17 +186,56 @@ impl Browser {
 		}
 	}
 
+	/// A browser for an interface that lays pages out itself, from their
+	/// lines.
+	pub fn without_layout() -> Self {
+		Browser {
+			lay_out: false,
+			..Browser::new()
+		}
+	}
+
 	pub fn is_loading(&self) -> bool {
 		self.request.is_some()
 	}
 
-	pub fn handle_key(&mut self, key: Key, commands: &mut Commands) -> Outcome {
+	/// Whether there is a page to go back to.
+	pub fn can_go_back(&self) -> bool {
+		!self.history.is_empty()
+	}
+
+	/// Goes back a page. Returns whether there was one.
+	pub fn back(&mut self, commands: &mut Commands) -> bool {
+		match self.history.pop() {
+			Some((url, scroll)) => {
+				self.visit(url, 0, Some(scroll), commands);
+				true
+			}
+			None => false,
+		}
+	}
+
+	/// Goes to an address typed in.
+	pub fn go_to(&mut self, text: &str, commands: &mut Commands) {
+		match Url::parse(text.trim()) {
+			Some(url) => self.visit(url, 0, None, commands),
+			None => self.error = Some("Not a Gemini address".into()),
+		}
+	}
+
+	/// Sends the answer to the question the server asked.
+	pub fn answer(&mut self, text: &str, commands: &mut Commands) {
+		if let Some(prompt) = self.prompt.take() {
+			self.visit(prompt.url.with_query(text), 0, None, commands);
+		}
+	}
+
+	pub(super) fn handle_key(&mut self, key: Key, commands: &mut Commands) -> Outcome {
 		if let Some(prompt) = &mut self.prompt {
 			match key {
 				Key::Enter => {
-					let url = prompt.url.with_query(&prompt.answer.text);
-					self.prompt = None;
-					self.visit(url, 0, None, commands);
+					let answer = prompt.answer.text.clone();
+					self.answer(&answer, commands);
 				}
 				Key::Escape => self.prompt = None,
 				Key::Backspace => prompt.answer.backspace(),
@@ -218,10 +268,7 @@ impl Browser {
 				self.editing = true;
 			}
 			Some(Key::Escape) if self.request.is_some() => self.cancel(commands),
-			Some(Key::Escape | Key::Left) => match self.history.pop() {
-				Some((url, scroll)) => self.visit(url, 0, Some(scroll), commands),
-				None => return Outcome::Leave,
-			},
+			Some(Key::Escape | Key::Left) if !self.back(commands) => return Outcome::Leave,
 			Some(Key::Up) => self.page.as_mut().map_or((), |page| page.move_by(false)),
 			Some(Key::Down) => self.page.as_mut().map_or((), |page| page.move_by(true)),
 			Some(Key::Enter | Key::Right) => self.open_selected(commands),
@@ -231,10 +278,19 @@ impl Browser {
 	}
 
 	fn open_selected(&mut self, commands: &mut Commands) {
+		let page = self.page.as_ref();
+		let selected = page.and_then(|page| page.selected.filter(|&link| page.is_visible(link)));
+		if let Some(link) = selected {
+			self.open(link, commands);
+		}
+	}
+
+	/// Follows a page's link.
+	pub fn open(&mut self, link: usize, commands: &mut Commands) {
 		let Some(page) = &self.page else {
 			return;
 		};
-		let Some(link) = page.selected_link() else {
+		let Some(link) = page.links.get(link) else {
 			return;
 		};
 		match page.url.join(link) {
@@ -281,7 +337,8 @@ impl Browser {
 		});
 	}
 
-	fn cancel(&mut self, commands: &mut Commands) {
+	/// Stops loading a page.
+	pub fn cancel(&mut self, commands: &mut Commands) {
 		if self.request.take().is_some() {
 			commands.push_back(Command::CloseStream(Stream::Gemini));
 		}
@@ -410,14 +467,26 @@ impl Browser {
 	fn show(&mut self, url: Url, header: &Header, body: &[u8], back_to: Option<usize>) {
 		let media_type = header.meta.split(';').next().unwrap_or("").trim();
 		let text = String::from_utf8_lossy(body);
-		let (rows, links) = if media_type.is_empty() || media_type == "text/gemini" {
-			lay_out(&gemini::parse_gemtext(&text))
+		let lines = if media_type.is_empty() || media_type == "text/gemini" {
+			gemini::parse_gemtext(&text)
 		} else if media_type.starts_with("text/") {
-			let lines: Vec<Line> = text.lines().map(|line| Line::Text(line.into())).collect();
-			lay_out(&lines)
+			text.lines().map(|line| Line::Text(line.into())).collect()
 		} else {
 			self.error = Some(format!("Can't show {media_type}"));
 			return;
+		};
+		let (lines, rows, links) = if self.lay_out {
+			let (rows, links) = lay_out(&lines);
+			(Vec::new(), rows, links)
+		} else {
+			let links = lines
+				.iter()
+				.filter_map(|line| match line {
+					Line::Link { url, .. } => Some(url.clone()),
+					_ => None,
+				})
+				.collect();
+			(lines, Vec::new(), links)
 		};
 		if let Some(previous) = self.page.take()
 			&& back_to.is_none()
@@ -427,12 +496,13 @@ impl Browser {
 			}
 			self.history.push((previous.url, previous.scroll));
 		}
-		let mut page = Page::new(url, rows, links);
+		let mut page = Page::new(url, lines, rows, links);
 		if let Some(scroll) = back_to {
 			page.scroll = scroll.min(page.rows.len().saturating_sub(ROWS));
 			page.selected = page.first_visible_link();
 		}
 		self.page = Some(page);
+		self.shown += 1;
 	}
 }
 
@@ -551,7 +621,7 @@ mod tests {
 		});
 		lines.extend((0..5).map(|_| Line::Text("words".into())));
 		let (rows, links) = lay_out(&lines);
-		let mut page = Page::new(Url::parse("200::1").unwrap(), rows, links);
+		let mut page = Page::new(Url::parse("200::1").unwrap(), Vec::new(), rows, links);
 		assert_eq!((page.selected, page.scroll), (Some(0), 0));
 		page.move_by(true);
 		assert_eq!((page.selected, page.scroll), (None, 8));

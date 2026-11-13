@@ -9,7 +9,7 @@ mod call;
 pub mod console;
 pub mod directory;
 #[cfg(feature = "gemini")]
-mod gemini;
+pub mod gemini;
 #[cfg(feature = "gopher")]
 pub mod gopher;
 mod input;
