@@ -7,6 +7,7 @@ use core::cell::RefCell;
 
 use embedded_hal::spi::{ErrorType, SpiBus};
 use embedded_hal_bus::spi::{ExclusiveDevice, NoDelay};
+use embedded_sdmmc::embedded_sdmmc_types::sdcard::CardType;
 use embedded_sdmmc::{
 	Error, Mode, SdCard, SdCardError, TimeSource, Timestamp, VolumeIdx, VolumeManager,
 };
@@ -41,6 +42,9 @@ pub struct Slot {
 	cs: Output<'static>,
 	/// How to set the bus back up for whatever shares it, if anything does.
 	shared_with: Option<Config>,
+	/// The card, once woken, which stays awake while it has power. Waking
+	/// it takes over half a second.
+	woken: Option<CardType>,
 }
 
 type Card<'a> =
@@ -58,6 +62,7 @@ impl Slot {
 			bus,
 			cs,
 			shared_with,
+			woken: None,
 		}
 	}
 
@@ -115,7 +120,14 @@ impl Slot {
 		use_card: impl FnOnce(Card<'_>) -> Result<R, String>,
 	) -> Result<R, String> {
 		let mut bus = self.bus.borrow_mut();
-		let result = wake(&mut *bus, &mut self.cs).and_then(use_card);
+		let result = wake(&mut *bus, &mut self.cs, self.woken).and_then(|(card, card_type)| {
+			self.woken = Some(card_type);
+			use_card(card)
+		});
+		// The card may have been swapped, so is woken afresh next time.
+		if result.is_err() {
+			self.woken = None;
+		}
 		if let Some(config) = &self.shared_with
 			&& let Err(error) = bus.apply_config(config)
 		{
@@ -125,8 +137,23 @@ impl Slot {
 	}
 }
 
-/// Wakes the card, if there is one, and speeds it up.
-fn wake<'a>(bus: &'a mut dyn SpiPort, cs: &'a mut Output<'static>) -> Result<Card<'a>, String> {
+/// Wakes the card, if there is one, and speeds it up. A card `woken` before
+/// is taken as it is.
+fn wake<'a>(
+	bus: &'a mut dyn SpiPort,
+	cs: &'a mut Output<'static>,
+	woken: Option<CardType>,
+) -> Result<(Card<'a>, CardType), String> {
+	if let Some(card_type) = woken {
+		let _ = bus.apply_config(&Config::default().with_frequency(FULL_SPEED));
+		let device = ExclusiveDevice::new_no_delay(bus, cs)
+			.map_err(|_| String::from("SD card chip select failed"))?;
+		let card = SdCard::new(device, Delay::new());
+		// SAFETY: the card was woken as this type. Were it swapped since,
+		// the new one would not answer, and is woken afresh next time.
+		unsafe { card.mark_card_as_init(card_type) };
+		return Ok((card, card_type));
+	}
 	let _ = bus.apply_config(&Config::default().with_frequency(WAKING_SPEED));
 	// Cards need 74 clocks with chip select high to wake into SPI mode.
 	cs.set_high();
@@ -143,7 +170,8 @@ fn wake<'a>(bus: &'a mut dyn SpiPort, cs: &'a mut Output<'static>) -> Result<Car
 			.bus_mut()
 			.apply_config(&Config::default().with_frequency(FULL_SPEED));
 	});
-	Ok(card)
+	let card_type = card.get_card_type().ok_or("No SD card")?;
+	Ok((card, card_type))
 }
 
 fn settings_path() -> (&'static str, &'static str) {
