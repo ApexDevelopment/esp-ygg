@@ -159,6 +159,10 @@ impl Overlay {
 		}
 	}
 
+	/// The status pages are left out of this build.
+	#[cfg(not(any(feature = "http", feature = "gopher")))]
+	pub fn set_status_pages(&mut self, _on: bool) {}
+
 	/// Moves packets between the node and the stack and runs the services.
 	/// Call it after every call to the node, and when [`Overlay::poll_at`] passes.
 	pub fn poll<P: Platform>(&mut self, node: &mut Node<P>, board: &BoardInfo) {

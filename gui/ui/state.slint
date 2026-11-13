@@ -236,6 +236,8 @@ export global Setup {
     in_out property <bool> status_pages;
     in_out property <bool> bridge;
     in_out property <bool> hotspot;
+    /// Whether saving the edits restarts the board, which some need.
+    in property <bool> restart;
 
     /// Whether the list of WiFi networks is showing in place of the
     /// settings, the networks a scan found, and whether it is still going.

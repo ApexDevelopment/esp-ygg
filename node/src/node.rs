@@ -393,6 +393,11 @@ impl<P: Platform> Node<P> {
 		self.process();
 	}
 
+	/// Replaces the nodeinfo JSON this node answers with.
+	pub fn set_nodeinfo(&mut self, nodeinfo: Vec<u8>) {
+		self.nodeinfo = nodeinfo;
+	}
+
 	/// Sends an IPv6 packet from this node. If the destination's key is not
 	/// known yet, the packet waits while it is looked up.
 	pub fn send_ipv6(&mut self, packet: &[u8]) -> Result<(), WriteError> {

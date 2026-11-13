@@ -77,6 +77,17 @@ pub(super) fn listen(sockets: &mut SocketSet<'static>) -> Vec<ServerConnection> 
 }
 
 impl Overlay {
+	/// Opens the status pages' ports, or closes them.
+	pub fn set_status_pages(&mut self, on: bool) {
+		if on && self.servers.is_empty() {
+			self.servers = listen(&mut self.sockets);
+		} else if !on {
+			for connection in self.servers.drain(..) {
+				self.sockets.remove(connection.socket);
+			}
+		}
+	}
+
 	pub(super) fn serve<P: Platform>(&mut self, node: &Node<P>, board: &BoardInfo) {
 		for connection in &mut self.servers {
 			let socket = self.sockets.get_mut::<tcp::Socket>(connection.socket);

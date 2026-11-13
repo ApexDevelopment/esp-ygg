@@ -61,6 +61,13 @@ impl Overlay {
 		self.phone().ok()?.poll_voice()
 	}
 
+	/// Changes the name calls go out under.
+	pub fn set_phone_name(&mut self, name: &str) {
+		if let Ok(phone) = self.phone() {
+			phone.set_name(name);
+		}
+	}
+
 	fn phone(&mut self) -> Result<&mut Phone, CallError> {
 		self.phone
 			.as_mut()

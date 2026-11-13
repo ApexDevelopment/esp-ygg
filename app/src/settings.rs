@@ -94,6 +94,29 @@ impl Settings {
 		}
 	}
 
+	/// Whether going from these settings to `new` takes a restart. WiFi is
+	/// set up as the board starts, so the bridge and the hotspot are, and
+	/// the hotspot holds the channel. The rest apply at once.
+	pub fn needs_restart(&self, new: &Settings) -> bool {
+		fn bridge(settings: &Settings) -> Option<(&str, &str, &str)> {
+			let network = (
+				settings.ssid.as_str(),
+				settings.password.as_str(),
+				settings.peer.as_str(),
+			);
+			settings.bridge.then_some(network)
+		}
+		fn hotspot(settings: &Settings) -> Option<(&str, &str, u8)> {
+			let network = (
+				settings.hotspot_name.as_str(),
+				settings.hotspot_password.as_str(),
+				settings.channel,
+			);
+			settings.hotspot.then_some(network)
+		}
+		bridge(self) != bridge(new) || hotspot(self) != hotspot(new)
+	}
+
 	/// Whether bridging has what it needs to start.
 	pub fn can_bridge(&self) -> bool {
 		!self.ssid.is_empty() && self.peer.parse::<core::net::SocketAddrV4>().is_ok()
@@ -306,6 +329,40 @@ fn take_text(rest: &mut &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn restarts_only_for_wifi() {
+		let old = Settings::new();
+		let mut new = old.clone();
+		new.name = "kitchen".into();
+		new.utc_offset = 60;
+		new.status_page = !old.status_page;
+		new.channel = 11;
+		new.ringtone = 2;
+		// Unused while the bridge is off
+		new.ssid = "PHOTON".into();
+		assert!(!old.needs_restart(&new));
+		let bridging = Settings {
+			bridge: true,
+			..new.clone()
+		};
+		assert!(new.needs_restart(&bridging));
+		let other_network = Settings {
+			password: "secret".into(),
+			..bridging.clone()
+		};
+		assert!(bridging.needs_restart(&other_network));
+		// The hotspot holds the channel.
+		let hotspot = Settings {
+			hotspot: true,
+			..new.clone()
+		};
+		let other_channel = Settings {
+			channel: 1,
+			..hotspot.clone()
+		};
+		assert!(hotspot.needs_restart(&other_channel));
+	}
 
 	#[test]
 	fn round_trips() {

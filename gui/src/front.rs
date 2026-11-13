@@ -373,6 +373,11 @@ impl Gui {
 		if let Some((question, secret)) = self.gemini.refresh() {
 			self.open_keyboard(Field::GeminiAnswer(secret), question.into());
 		}
+		// The switches change the edits in the interface alone.
+		if self.window.get_page() == 3 {
+			self.take_switches();
+			self.show_restart();
+		}
 		let Some(status) = &self.status else {
 			return;
 		};
@@ -545,9 +550,11 @@ impl Gui {
 					self.notify("Bridge needs network and peer".into());
 					return;
 				}
+				let restarting = self.saved.needs_restart(&self.draft);
 				self.saved = self.draft.clone();
 				self.commands.push_back(Command::Save(self.draft.clone()));
-				self.notify("Restarting".into());
+				self.notify(if restarting { "Restarting" } else { "Saved" }.into());
+				self.show_restart();
 			}
 			Action::Export => {
 				self.take_switches();
@@ -755,6 +762,15 @@ impl Gui {
 		self.draft.status_page = setup.get_status_pages();
 		self.draft.bridge = setup.get_bridge();
 		self.draft.hotspot = setup.get_hotspot();
+	}
+
+	/// Says on the save button whether saving the edits restarts the board.
+	fn show_restart(&self) {
+		let setup = self.window.global::<Setup>();
+		let restart = self.saved.needs_restart(&self.draft);
+		if setup.get_restart() != restart {
+			setup.set_restart(restart);
+		}
 	}
 
 	/// Shows the edits on the settings page.

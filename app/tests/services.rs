@@ -307,6 +307,27 @@ fn boards_serve_a_gopher_menu_linking_their_peers() {
 }
 
 #[test]
+fn status_pages_close_and_open_while_running() {
+	let (mut radio, mut overlays) = mesh(2, &[0, 1]);
+	let server = SocketAddrV6::new(address(&radio, 0), esp_ygg_app::gopher::PORT, 0, 0);
+	let fetch = |radio: &mut Radio, overlays: &mut Vec<(usize, Overlay)>| {
+		let now = radio.nodes[1].now();
+		overlays[1].1.fetch(server, b"\r\n".to_vec(), now).unwrap();
+		wait_for(radio, overlays, Duration::from_secs(30), |_, overlays| {
+			overlays[1].1.poll_event()
+		})
+		.expect("the fetch never finished")
+	};
+	overlays[0].1.set_status_pages(false);
+	assert_eq!(fetch(&mut radio, &mut overlays), Event::FetchFailed);
+	overlays[0].1.set_status_pages(true);
+	assert!(matches!(
+		fetch(&mut radio, &mut overlays),
+		Event::Fetched { .. }
+	));
+}
+
+#[test]
 fn fetching_from_a_closed_port_fails() {
 	assert_eq!(fetch_with_overlay(7, b"\r\n"), Event::FetchFailed);
 }

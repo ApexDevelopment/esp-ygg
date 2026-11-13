@@ -241,7 +241,7 @@ export component SettingsPage inherits VerticalLayout {
                 spacing: 8px;
 
                 Button {
-                    text: "Save & restart";
+                    text: Setup.restart ? "Save & restart" : "Save";
 
                     clicked => {
                         Setup.save();

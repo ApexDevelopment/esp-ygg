@@ -455,7 +455,8 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App, fields: &[Field], sel
 			Field::Ringtone => ("Ringtone", ringtone_name(draft.ringtone).into()),
 			#[cfg(feature = "voice")]
 			Field::RingVolume => ("Volume", volume(draft.ring_volume)),
-			Field::Save => ("Save and restart", String::new()),
+			Field::Save if app.saved.needs_restart(draft) => ("Save and restart", String::new()),
+			Field::Save => ("Save", String::new()),
 			Field::Export => ("Export to SD card", String::new()),
 			Field::Import => ("Import from SD card", String::new()),
 		};

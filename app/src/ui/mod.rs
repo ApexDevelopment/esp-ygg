@@ -872,9 +872,10 @@ impl App {
 					self.notice = Some("Bridge needs network and peer".into());
 					return;
 				}
+				let restarting = self.saved.needs_restart(&self.draft);
 				self.saved = self.draft.clone();
 				self.commands.push_back(Command::Save(self.draft.clone()));
-				self.notice = Some("Restarting".into());
+				self.notice = Some(if restarting { "Restarting" } else { "Saved" }.into());
 			}
 			Field::Export => {
 				let text = self.draft.to_text();

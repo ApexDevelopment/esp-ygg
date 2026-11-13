@@ -144,6 +144,10 @@ pub struct Phone {
 }
 
 impl Phone {
+	pub fn set_name(&mut self, name: &str) {
+		self.name = name.into();
+	}
+
 	/// `codecs` are the ones this side can use, most preferred first.
 	pub fn new(name: &str, codecs: &[Codec], seed: u16) -> Self {
 		Phone {

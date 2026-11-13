@@ -121,7 +121,8 @@ async fn main(spawner: Spawner) -> ! {
 	#[cfg(any(feature = "esp32s3", feature = "esp32"))]
 	let flash = unsafe { flash.multicore_ignore() };
 	let mut settings_store = storage::Flash::new(flash);
-	let settings = settings_store
+	#[cfg_attr(not(feature = "ui"), allow(unused_mut))]
+	let mut settings = settings_store
 		.settings()
 		.unwrap_or_else(build_time_settings);
 	let station = settings
@@ -205,12 +206,7 @@ async fn main(spawner: Spawner) -> ! {
 	);
 	#[cfg(feature = "voice")]
 	{
-		let name = if settings.name.is_empty() {
-			"esp-ygg"
-		} else {
-			&settings.name
-		};
-		overlay.start_phone(name, rng.random() as u16);
+		overlay.start_phone(phone_name(&settings), rng.random() as u16);
 		audio::set_ringer(settings.ringtone, settings.ring_volume);
 	}
 	if hotspot_on {
@@ -337,8 +333,22 @@ async fn main(spawner: Spawner) -> ! {
 			Wake::Lost(lost) => node.frame_lost(lost.mac, &lost.frame),
 			Wake::Hotspot(frame) => overlay.receive_hotspot_frame(&mut node, &frame),
 			#[cfg(feature = "ui")]
+			Wake::Ui(UiInput::Command(Command::Save(new))) => {
+				store.save_settings(&new);
+				if settings.needs_restart(&new) {
+					info!("Settings saved, restarting");
+					esp_hal::system::software_reset();
+				}
+				apply_settings(&settings, &new, &mut node, &mut overlay);
+				if new.channel != settings.channel && !bridge {
+					let _ = manager.set_channel(new.channel);
+				}
+				settings = new;
+				info!("Settings saved");
+			}
+			#[cfg(feature = "ui")]
 			Wake::Ui(UiInput::Command(command)) => {
-				carry_out(command, &mut node, &mut overlay, &mut store);
+				carry_out(command, &mut node, &mut overlay);
 			}
 			#[cfg(feature = "voice")]
 			Wake::Ui(UiInput::Voice(frame)) => call.send(&mut overlay, &frame, node.now()),
@@ -567,7 +577,6 @@ fn carry_out(
 	command: Command,
 	node: &mut Node<EspPlatform>,
 	overlay: &mut Overlay,
-	store: &mut Store,
 ) {
 	match command {
 		Command::Ping(target) => {
@@ -623,16 +632,14 @@ fn carry_out(
 		Command::ScanWifi => {
 			let _ = uplink::SCANS.try_send(());
 		}
-		Command::Save(settings) => {
-			store.save_settings(&settings);
-			info!("Settings saved, restarting");
-			esp_hal::system::software_reset();
-		}
+		// The main loop saves them, as it holds the settings in use.
+		Command::Save(_) => {}
 		// The UI's core reads and writes the SD card itself.
 		Command::ExportSettings(_) | Command::ImportSettings => {}
 	}
 }
 
+/// Settings from environment variables at build time, used until the user
 /// Restarts the board once a panic has been printed. Otherwise it would sit
 /// frozen, and the message is lost when nothing reads the serial port.
 #[unsafe(no_mangle)]
@@ -640,7 +647,6 @@ extern "Rust" fn custom_halt() -> ! {
 	esp_hal::system::software_reset()
 }
 
-/// Settings from environment variables at build time, used until the user
 /// saves some on the device.
 fn build_time_settings() -> Settings {
 	let mut settings = Settings::new();
@@ -661,9 +667,42 @@ fn build_time_settings() -> Settings {
 	settings
 }
 
+/// Applies the settings that need no restart, which the others' changes
+/// would have.
+#[cfg(feature = "ui")]
+fn apply_settings(old: &Settings, new: &Settings, node: &mut Node<EspPlatform>, overlay: &mut Overlay) {
+	if new.name != old.name {
+		node.set_nodeinfo(nodeinfo(new));
+		#[cfg(feature = "voice")]
+		overlay.set_phone_name(phone_name(new));
+	}
+	if new.status_page != old.status_page {
+		overlay.set_status_pages(new.status_page);
+	}
+	#[cfg(feature = "voice")]
+	audio::set_ringer(new.ringtone, new.ring_volume);
+}
+
+/// The name calls go out under.
+#[cfg(feature = "voice")]
+fn phone_name(settings: &Settings) -> &str {
+	if settings.name.is_empty() {
+		"esp-ygg"
+	} else {
+		&settings.name
+	}
+}
+
 fn node_config(store: &Store, settings: &Settings) -> Config {
 	let mut config = Config::new(PrivateKey::from_seed(store.seed()));
 	config.password = option_env!("ESP_YGG_PASSWORD").unwrap_or("").into();
+	config.nodeinfo = nodeinfo(settings);
+	config
+}
+
+/// What the node says about itself when asked: its name, if it has one,
+/// and its build.
+fn nodeinfo(settings: &Settings) -> Vec<u8> {
 	let mut given = serde_json::Map::new();
 	if !settings.name.is_empty() {
 		given.insert("name".into(), settings.name.clone().into());
@@ -678,8 +717,7 @@ fn node_config(store: &Store, settings: &Settings) -> Config {
 			"riscv32"
 		},
 	};
-	config.nodeinfo = build_nodeinfo(&given, Some(build)).expect("building nodeinfo");
-	config
+	build_nodeinfo(&given, Some(build)).expect("building nodeinfo")
 }
 
 /// Adds `mac` to ESP-NOW's peer list, making room if needed.
