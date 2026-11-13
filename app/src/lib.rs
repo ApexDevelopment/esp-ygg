@@ -18,6 +18,8 @@ pub mod http;
 pub mod irc;
 mod overlay;
 pub mod settings;
+#[cfg(feature = "share")]
+pub mod share;
 #[cfg(feature = "ntp")]
 pub mod sntp;
 pub mod time;
