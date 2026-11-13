@@ -239,12 +239,12 @@ fn edits_and_saves_settings() {
 	assert!(screen(&app).join("\n").contains("••••••"));
 	press(&mut app, &[Key::Escape]);
 	assert!(screen(&app).join("\n").contains("Bridge       on"));
-	press(&mut app, &[Key::Down; 3]);
+	press(&mut app, &[Key::Down; 4]);
 	press(&mut app, &[Key::Enter]);
 	assert!(commands(&mut app).is_empty());
 	assert!(screen(&app).join("\n").contains("needs network and peer"));
 	// Peer
-	press(&mut app, &[Key::Up; 3]);
+	press(&mut app, &[Key::Up; 4]);
 	press(&mut app, &[Key::Enter]);
 	press(&mut app, &[Key::Down; 3]);
 	press(&mut app, &[Key::Enter]);
@@ -261,10 +261,12 @@ fn edits_and_saves_settings() {
 	assert!(screen(&app).join("\n").contains("8 or more"));
 	press(&mut app, &[Key::Enter]);
 	type_text(&mut app, "hunter22");
-	press(
-		&mut app,
-		&[Key::Enter, Key::Escape, Key::Down, Key::Down, Key::Enter],
-	);
+	press(&mut app, &[Key::Enter, Key::Escape, Key::Down, Key::Down]);
+	// Share's password, shown as dots
+	assert!(screen(&app).join("\n").contains("none, ask"));
+	press(&mut app, &[Key::Enter]);
+	type_text(&mut app, "sesame");
+	press(&mut app, &[Key::Enter, Key::Down, Key::Enter]);
 	let expected = Settings {
 		name: "kitchen".into(),
 		bridge: true,
@@ -277,6 +279,7 @@ fn edits_and_saves_settings() {
 		hotspot: true,
 		hotspot_name: "pocket".into(),
 		hotspot_password: "hunter22".into(),
+		share_password: "sesame".into(),
 		..Settings::new()
 	};
 	assert_eq!(commands(&mut app), [Command::Save(expected)]);
@@ -870,4 +873,72 @@ fn shows_only_that_it_is_locked_and_ignores_keys() {
 	press(&mut app, &[Key::Down, Key::Enter]);
 	app.set_locked(false);
 	assert_eq!(screen(&app), before);
+}
+
+#[cfg(feature = "share")]
+#[test]
+fn sends_a_file_and_answers_what_share_asks() {
+	use crate::share::{Entry, Status as ShareStatus};
+
+	let mut app = App::new(Settings::new(), at(0));
+	open(&mut app, "Share (SFTP)");
+	assert_eq!(commands(&mut app), [Command::ShareList]);
+	app.set_share_files(Vec::from([
+		Entry {
+			name: "NOTES.TXT".into(),
+			size: 2048,
+		},
+		Entry {
+			name: "MAP.PNG".into(),
+			size: 300,
+		},
+	]));
+	assert!(screen(&app).join("\n").contains("MAP.PNG"));
+
+	// The list is sorted, so NOTES.TXT is second
+	press(&mut app, &[Key::Down, Key::Enter]);
+	type_text(&mut app, "200::1");
+	press(&mut app, &[Key::Enter, Key::Backspace]);
+	type_text(&mut app, "box");
+	press(&mut app, &[Key::Enter]);
+	let to = "200::1".parse().unwrap();
+	assert_eq!(
+		commands(&mut app),
+		[Command::ShareSend {
+			to,
+			user: "sharbox".into(),
+			name: "NOTES.TXT".into(),
+		}]
+	);
+
+	// The server wants a password
+	let asked = ShareStatus {
+		password_for: Some("sharbox".into()),
+		..ShareStatus::default()
+	};
+	app.set_share_status(asked);
+	type_text(&mut app, "sesame");
+	assert!(screen(&app).join("\n").contains("••••••"));
+	press(&mut app, &[Key::Enter]);
+	assert_eq!(
+		commands(&mut app),
+		[Command::SharePassword(Some("sesame".into()))]
+	);
+
+	// A peer asks to come in while another screen shows
+	open(&mut app, "Settings");
+	app.set_share_status(ShareStatus {
+		asking: Some(to),
+		..ShareStatus::default()
+	});
+	assert!(screen(&app).join("\n").contains("Share files with"));
+	press(&mut app, &[Key::Escape]);
+	assert_eq!(commands(&mut app), [Command::ShareAdmit(false)]);
+
+	// A file came in, so the folder is listed again
+	app.set_share_status(ShareStatus {
+		last: Some("Received MAP~1.PNG".into()),
+		..ShareStatus::default()
+	});
+	assert_eq!(commands(&mut app), [Command::ShareList]);
 }

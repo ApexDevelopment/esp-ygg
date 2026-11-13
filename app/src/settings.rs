@@ -36,6 +36,9 @@ pub struct Settings {
 	/// Which ringtone plays for a call, and how loudly, from 0 for silent.
 	pub ringtone: u8,
 	pub ring_volume: u8,
+	/// Lets peers into Share without asking on screen. Empty to always ask.
+	/// Stored in flash as plain text.
+	pub share_password: String,
 }
 
 /// A setting written as text, on screen or in a settings file.
@@ -49,6 +52,7 @@ pub enum TextSetting {
 	Peer,
 	HotspotName,
 	HotspotPassword,
+	SharePassword,
 }
 
 impl TextSetting {
@@ -60,6 +64,7 @@ impl TextSetting {
 			TextSetting::TimeZone => 6,
 			TextSetting::Peer => 21,
 			TextSetting::WifiPassword | TextSetting::HotspotPassword => 63,
+			TextSetting::SharePassword => 64,
 		}
 	}
 
@@ -67,7 +72,7 @@ impl TextSetting {
 	pub fn is_secret(self) -> bool {
 		matches!(
 			self,
-			TextSetting::WifiPassword | TextSetting::HotspotPassword
+			TextSetting::WifiPassword | TextSetting::HotspotPassword | TextSetting::SharePassword
 		)
 	}
 
@@ -138,6 +143,7 @@ impl Settings {
 			TextSetting::Peer => self.peer.clone(),
 			TextSetting::HotspotName => self.hotspot_name.clone(),
 			TextSetting::HotspotPassword => self.hotspot_password.clone(),
+			TextSetting::SharePassword => self.share_password.clone(),
 		}
 	}
 
@@ -166,6 +172,7 @@ impl Settings {
 				self.hotspot_password = text.into()
 			}
 			TextSetting::HotspotPassword => return Err("8 or more characters, or none"),
+			TextSetting::SharePassword => self.share_password = text.into(),
 		}
 		Ok(())
 	}
@@ -181,6 +188,7 @@ impl Settings {
 		push_text(&mut bytes, &self.hotspot_name);
 		push_text(&mut bytes, &self.hotspot_password);
 		bytes.extend_from_slice(&[self.ringtone, self.ring_volume]);
+		push_text(&mut bytes, &self.share_password);
 		bytes
 	}
 
@@ -210,6 +218,8 @@ impl Settings {
 			[ringtone, ring_volume, ..] => (*ringtone, *ring_volume),
 			_ => (defaults.ringtone, defaults.ring_volume),
 		};
+		let mut rest = rest.get(2..).unwrap_or_default();
+		let share_password = take_text(&mut rest).unwrap_or_default();
 		Some(Settings {
 			name,
 			ssid,
@@ -224,6 +234,7 @@ impl Settings {
 			hotspot_password,
 			ringtone,
 			ring_volume,
+			share_password,
 		})
 	}
 }
@@ -246,6 +257,7 @@ impl Settings {
 			("hotspot_password", self.hotspot_password.clone()),
 			("ringtone", self.ringtone.to_string()),
 			("ring_volume", self.ring_volume.to_string()),
+			("share_password", self.share_password.clone()),
 		];
 		lines
 			.iter()
@@ -283,6 +295,7 @@ impl Settings {
 			"peer" => Some(TextSetting::Peer),
 			"hotspot_name" => Some(TextSetting::HotspotName),
 			"hotspot_password" => Some(TextSetting::HotspotPassword),
+			"share_password" => Some(TextSetting::SharePassword),
 			_ => None,
 		};
 		if let Some(setting) = text_setting {
@@ -380,6 +393,7 @@ mod tests {
 			hotspot_password: "hunter22".into(),
 			ringtone: 2,
 			ring_volume: 5,
+			share_password: "sesame".into(),
 		};
 		assert_eq!(Settings::decode(&settings.encode()), Some(settings));
 	}
@@ -387,7 +401,7 @@ mod tests {
 	#[test]
 	fn reads_settings_saved_before_the_status_page_option() {
 		let mut old = Settings::new().encode();
-		old.truncate(old.len() - 2 - 3 - 1 - 1 - DEFAULT_HOTSPOT_NAME.len() - 1);
+		old.truncate(old.len() - 1 - 2 - 3 - 1 - 1 - DEFAULT_HOTSPOT_NAME.len() - 1);
 		assert_eq!(Settings::decode(&old), Some(Settings::new()));
 	}
 

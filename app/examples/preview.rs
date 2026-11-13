@@ -389,6 +389,12 @@ fn carry_out(command: Command, radio: &mut Radio, overlay: &mut Overlay, app: &m
 		// The desktop preview has no speaker.
 		#[cfg(feature = "voice")]
 		Command::PreviewRinger { .. } => {}
+		// The desktop preview has no shared folder.
+		#[cfg(feature = "share")]
+		Command::ShareSend { .. }
+		| Command::ShareAdmit(_)
+		| Command::SharePassword(_)
+		| Command::ShareList => {}
 	}
 }
 
