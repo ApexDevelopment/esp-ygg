@@ -11,7 +11,7 @@ pub mod directory;
 #[cfg(feature = "gemini")]
 mod gemini;
 #[cfg(feature = "gopher")]
-mod gopher;
+pub mod gopher;
 mod input;
 #[cfg(feature = "irc")]
 pub mod irc;

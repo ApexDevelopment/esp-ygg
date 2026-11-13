@@ -20,12 +20,12 @@ use crate::gopher::{self, Item, Url};
 
 const MAX_HISTORY: usize = 16;
 
-pub(super) enum Content {
+pub enum Content {
 	Menu { items: Vec<Item>, selected: usize },
 	Text { text: String, scroll: u16 },
 }
 
-pub(super) struct Page {
+pub struct Page {
 	pub url: Url,
 	pub content: Content,
 }
@@ -35,7 +35,7 @@ struct Pending {
 	address: Ipv6Addr,
 }
 
-pub(super) struct Browser {
+pub struct Browser {
 	pub address: TextInput,
 	pub editing: bool,
 	pub page: Option<Page>,
@@ -46,6 +46,12 @@ pub(super) struct Browser {
 	pub error: Option<String>,
 	/// Host names learned to belong to addresses, in lowercase.
 	aliases: BTreeMap<String, Ipv6Addr>,
+}
+
+impl Default for Browser {
+	fn default() -> Self {
+		Browser::new()
+	}
 }
 
 impl Browser {
@@ -66,13 +72,41 @@ impl Browser {
 		self.pending.is_some()
 	}
 
-	pub fn handle_key(&mut self, key: Key, commands: &mut Commands) -> Outcome {
-		if let Some((url, address, query)) = &mut self.search {
+	/// Whether there is a page to go back to.
+	pub fn can_go_back(&self) -> bool {
+		!self.history.is_empty()
+	}
+
+	/// Goes back a page. Returns whether there was one.
+	pub fn back(&mut self) -> bool {
+		match self.history.pop() {
+			Some(previous) => {
+				self.page = Some(previous);
+				true
+			}
+			None => false,
+		}
+	}
+
+	/// Goes to an address typed in.
+	pub fn go_to(&mut self, text: &str, commands: &mut Commands) {
+		self.address = TextInput::new(text.trim(), 60);
+		self.go_to_address(commands);
+	}
+
+	/// Sends the search waiting for its query.
+	pub fn send_search(&mut self, query: &str, commands: &mut Commands) {
+		if let Some((url, address, _)) = self.search.take() {
+			self.request(url, address, Some(query), commands);
+		}
+	}
+
+	pub(super) fn handle_key(&mut self, key: Key, commands: &mut Commands) -> Outcome {
+		if let Some((_, _, query)) = &mut self.search {
 			match key {
 				Key::Enter => {
-					let (url, address, query) = (url.clone(), *address, query.text.clone());
-					self.search = None;
-					self.request(url, address, Some(&query), commands);
+					let query = query.text.clone();
+					self.send_search(&query, commands);
 				}
 				Key::Escape => self.search = None,
 				Key::Backspace => query.backspace(),
@@ -98,10 +132,7 @@ impl Browser {
 				self.address = TextInput::prefilled(&current.unwrap_or_default(), 60);
 				self.editing = true;
 			}
-			Some(Key::Escape | Key::Left) => match self.history.pop() {
-				Some(previous) => self.page = Some(previous),
-				None => return Outcome::Leave,
-			},
+			Some(Key::Escape | Key::Left) if !self.back() => return Outcome::Leave,
 			Some(Key::Up) => self.move_by(-1),
 			Some(Key::Down) => self.move_by(1),
 			Some(Key::Enter | Key::Right) => self.open_selected(commands),
@@ -125,13 +156,24 @@ impl Browser {
 	}
 
 	fn open_selected(&mut self, commands: &mut Commands) {
+		if let Some(Page {
+			content: Content::Menu { selected, .. },
+			..
+		}) = &self.page
+		{
+			self.open(*selected, commands);
+		}
+	}
+
+	/// Opens a menu's item, or waits for a query if it is a search.
+	pub fn open(&mut self, index: usize, commands: &mut Commands) {
 		let Some(page) = &self.page else {
 			return;
 		};
-		let Content::Menu { items, selected } = &page.content else {
+		let Content::Menu { items, .. } = &page.content else {
 			return;
 		};
-		let Some(item) = items.get(*selected).filter(|item| item.is_link()) else {
+		let Some(item) = items.get(index).filter(|item| item.is_link()) else {
 			return;
 		};
 		if !item.is_supported() {
