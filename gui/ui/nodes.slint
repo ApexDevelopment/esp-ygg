@@ -16,8 +16,13 @@ export component NodesPage inherits VerticalLayout {
             text: node.name;
             supporting_text: node.address;
 
-            if node.peer: MaterialText {
-                text: "peer";
+            trailing: node.peer ? peer.preferred_width : 0;
+
+            peer := MaterialText {
+                x: parent.width - self.width - 16px;
+                width: self.preferred_width;
+                height: parent.height;
+                text: node.peer ? "peer" : "";
                 style: MaterialTypography.label_medium;
                 color: MaterialPalette.primary;
                 vertical_alignment: center;

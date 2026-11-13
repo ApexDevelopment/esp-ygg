@@ -3,47 +3,50 @@ import { EmptyNote, PageTitle, Row } from "page.slint";
 import { Node, Setting, Setup } from "state.slint";
 import { Button, ButtonKind, Scroller, Toggle } from "widgets.slint";
 
-/// A heading over a group of settings.
-component Section inherits HorizontalLayout {
+/// A heading over a group of settings. Parts here are placed by hand, as
+/// layouts cost memory in every row.
+component Section inherits Rectangle {
     in property <string> text;
 
-    padding_left: 16px;
-    padding_right: 16px;
-    padding_top: 16px;
-    padding_bottom: 4px;
+    height: 16px + heading.preferred_height + 4px;
 
-    MaterialText {
+    heading := Text {
+        x: 16px;
+        y: 16px;
+        width: root.width - 32px;
+        height: self.preferred_height;
         text: root.text;
-        style: MaterialTypography.title_small;
+        font_size: MaterialTypography.title_small.font_size;
+        font_weight: MaterialTypography.title_small.font_weight;
         color: MaterialPalette.primary;
     }
 }
 
 /// A setting that is on or off.
-component SwitchRow inherits HorizontalLayout {
+component SwitchRow inherits Rectangle {
     in property <string> text;
     in_out property <bool> checked;
 
-    padding_left: 16px;
-    padding_right: 16px;
-    spacing: 8px;
     height: 48px;
 
-    MaterialText {
+    Text {
+        x: 16px;
+        width: toggle.x - 8px - self.x;
+        height: root.height;
         text: root.text;
-        style: MaterialTypography.body_large;
+        font_size: MaterialTypography.body_large.font_size;
+        font_weight: MaterialTypography.body_large.font_weight;
+        color: MaterialPalette.on_background;
         vertical_alignment: center;
-        horizontal_stretch: 1;
         overflow: elide;
     }
 
-    VerticalLayout {
-        alignment: center;
-        horizontal_stretch: 0;
-
-        Toggle {
-            checked <=> root.checked;
-        }
+    toggle := Toggle {
+        x: root.width - self.width - 16px;
+        y: (root.height - self.height) / 2;
+        width: 52px;
+        height: 32px;
+        checked <=> root.checked;
     }
 }
 

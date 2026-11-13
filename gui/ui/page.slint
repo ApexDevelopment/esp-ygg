@@ -28,22 +28,26 @@ export component EmptyNote inherits HorizontalLayout {
     }
 }
 
-/// A row of a list, two lines tall, with room on the right for a mark.
-export component Row {
+/// A row of a list, two lines tall, with room on the right for a mark,
+/// which whoever uses the row places. Its parts are placed by hand, as
+/// layouts cost memory in every row.
+export component Row inherits Rectangle {
     in property <string> text;
     in property <string> supporting_text;
     /// Whether tapping it does something, and so lights up while held.
     in property <bool> clickable;
+    /// How much room to leave on the right for a mark.
+    in property <length> trailing;
 
     callback clicked();
 
-    height: 52px;
+    // The two lines, centred together
+    property <length> lines_height: title.preferred_height + (root.supporting_text == "" ? 0 : supporting.preferred_height);
 
+    height: 52px;
     // Material's pressed state, without its ripple, which costs a good deal
     // of memory for each row.
-    Rectangle {
-        background: touch.pressed ? MaterialPalette.on_surface.transparentize(0.9) : transparent;
-    }
+    background: touch.pressed ? MaterialPalette.on_surface.transparentize(0.9) : transparent;
 
     touch := TouchArea {
         enabled: root.clickable;
@@ -53,33 +57,32 @@ export component Row {
         }
     }
 
-    HorizontalLayout {
-        padding_left: 16px;
-        padding_right: 16px;
-        spacing: 8px;
-
-        VerticalLayout {
-            alignment: center;
-            horizontal_stretch: 1;
-
-            MaterialText {
-                text: root.text;
-                style: MaterialTypography.body_large;
-                overflow: elide;
-            }
-
-            // Kept when empty, at no height, as one less part to build.
-            MaterialText {
-                height: root.supporting_text == "" ? 0 : self.preferred_height;
-                text: root.supporting_text;
-                style: MaterialTypography.body_small;
-                color: MaterialPalette.on_surface_variant;
-                overflow: elide;
-            }
-        }
-
-        @children
+    title := Text {
+        x: 16px;
+        y: (root.height - root.lines_height) / 2;
+        width: root.width - 32px - (root.trailing > 0 ? root.trailing + 8px : 0);
+        height: self.preferred_height;
+        text: root.text;
+        font_size: MaterialTypography.body_large.font_size;
+        font_weight: MaterialTypography.body_large.font_weight;
+        color: MaterialPalette.on_background;
+        overflow: elide;
     }
+
+    // Kept when empty, at no height, as one less part to build.
+    supporting := Text {
+        x: 16px;
+        y: title.y + title.height;
+        width: title.width;
+        height: root.supporting_text == "" ? 0 : self.preferred_height;
+        text: root.supporting_text;
+        font_size: MaterialTypography.body_small.font_size;
+        font_weight: MaterialTypography.body_small.font_weight;
+        color: MaterialPalette.on_surface_variant;
+        overflow: elide;
+    }
+
+    @children
 }
 
 /// The bar along the top of an app, with a way back to the launcher and

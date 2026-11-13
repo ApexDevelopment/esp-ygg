@@ -34,12 +34,12 @@ export component NeighborsPage inherits VerticalLayout {
             supporting_text: (neighbor.has_signal ? "\{neighbor.signal} dBm" : "no signal")
                 + (neighbor.linking ? " · linking" : neighbor.loss >= 0 ? " · \{neighbor.loss}% lost" : "");
 
-            VerticalLayout {
-                alignment: center;
+            trailing: bars.width;
 
-                SignalBars {
-                    bars: neighbor.has_signal ? neighbor.bars : 0;
-                }
+            bars := SignalBars {
+                x: parent.width - self.width - 16px;
+                y: (parent.height - self.height) / 2;
+                bars: neighbor.has_signal ? neighbor.bars : 0;
             }
         }
     }

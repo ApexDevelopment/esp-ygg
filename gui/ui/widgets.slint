@@ -151,39 +151,29 @@ export component Toggle {
 export enum ButtonKind { filled, outlined, text }
 
 /// Material's filled, outlined and text buttons.
-export component Button {
+export component Button inherits Rectangle {
     in property <string> text;
     in property <ButtonKind> kind: ButtonKind.filled;
 
     callback clicked();
 
-    property <color> color: root.kind == ButtonKind.filled ? MaterialPalette.on_primary : MaterialPalette.primary;
+    property <color> ink: root.kind == ButtonKind.filled ? MaterialPalette.on_primary : MaterialPalette.primary;
+    property <color> face: root.kind == ButtonKind.filled ? MaterialPalette.primary : root.ink.transparentize(100%);
 
     min_width: max(40px, label.min_width + 48px);
     min_height: max(40px, label.min_height + 20px);
-
-    Rectangle {
-        border_radius: self.height / 2;
-        background: root.kind == ButtonKind.filled ? MaterialPalette.primary : transparent;
-        border_width: root.kind == ButtonKind.outlined ? 1px : 0;
-        border_color: MaterialPalette.outline;
-
-        Rectangle {
-            border_radius: parent.border_radius;
-            background: touch.pressed ? root.color.transparentize(1 - MaterialPalette.state_layer_opacity_press) : root.color.transparentize(100%);
-
-            animate background {
-                duration: MaterialAnimations.opacity_duration;
-                easing: MaterialAnimations.opacity_easing;
-            }
-        }
-    }
+    border_radius: self.height / 2;
+    // Pressed, the face takes on a tint of the label's color, as Material's
+    // state layer would, without a layer of its own.
+    background: touch.pressed ? root.face.mix(root.ink, 1 - MaterialPalette.state_layer_opacity_press) : root.face;
+    border_width: root.kind == ButtonKind.outlined ? 1px : 0;
+    border_color: MaterialPalette.outline;
 
     label := Text {
         text: root.text;
         font_size: MaterialTypography.label_large.font_size;
         font_weight: MaterialTypography.label_large.font_weight;
-        color: root.color;
+        color: root.ink;
         horizontal_alignment: center;
         vertical_alignment: center;
     }
