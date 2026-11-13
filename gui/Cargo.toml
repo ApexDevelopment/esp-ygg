@@ -12,12 +12,13 @@ yggdrasil-espnow = { path = "../node" }
 slint = { version = "1.18.1", default-features = false, features = ["compat-1-2", "unsafe-single-threaded", "libm", "renderer-software"] }
 
 [features]
-default = ["console", "irc", "gopher", "gemini"]
+default = ["console", "irc", "gopher", "gemini", "share"]
 # The apps beyond Ping, each with the app crate's feature of the same name
 console = ["esp-ygg-app/console"]
 irc = ["esp-ygg-app/irc"]
 gopher = ["esp-ygg-app/gopher", "dep:ttf-parser"]
 gemini = ["esp-ygg-app/gemini", "dep:ttf-parser"]
+share = ["esp-ygg-app/share"]
 
 [build-dependencies]
 slint-build = "1.18.1"

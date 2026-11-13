@@ -3,7 +3,7 @@
 //! the apps and on the settings page, and typed on the keyboard.
 
 use alloc::collections::VecDeque;
-#[cfg(any(feature = "console", feature = "irc"))]
+#[cfg(any(feature = "console", feature = "irc", feature = "share"))]
 use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
@@ -33,6 +33,8 @@ use crate::gopher::Gopher;
 #[cfg(feature = "irc")]
 use crate::irc::Irc;
 use crate::ping::Pinger;
+#[cfg(feature = "share")]
+use crate::share::ShareApp;
 use crate::{
 	App, Keyboard, Launcher, MainWindow, NeighborEntry, Node, NodeEntry, Notice, Ping, Setting,
 	Setup, WifiEntry,
@@ -43,6 +45,10 @@ use crate::{
 const SHOWN_TYPED: usize = 24;
 /// The longest an IPv6 address can be written.
 const ADDRESS_LEN: usize = 45;
+#[cfg(feature = "share")]
+const SHARE_USER_LEN: usize = 32;
+#[cfg(feature = "share")]
+const SHARE_PASSWORD_LEN: usize = 64;
 /// The longest an IPv6 address and port can be written.
 #[cfg(feature = "console")]
 const DESTINATION_LEN: usize = 53;
@@ -107,6 +113,12 @@ enum Action {
 	BackGemini,
 	#[cfg(feature = "gemini")]
 	StopGemini,
+	#[cfg(feature = "share")]
+	PickShareTarget(NodeEntry),
+	#[cfg(feature = "share")]
+	TypeShareAddress,
+	#[cfg(feature = "share")]
+	AdmitShare(bool),
 	PickNetwork(WifiEntry),
 	Save,
 	Export,
@@ -145,6 +157,14 @@ enum Field {
 	/// The answer to a Gemini server's question, and whether it is secret.
 	#[cfg(feature = "gemini")]
 	GeminiAnswer(bool),
+	/// An address to send a shared file to, then who to log in as there.
+	#[cfg(feature = "share")]
+	ShareAddress,
+	#[cfg(feature = "share")]
+	ShareUser,
+	/// The password a server asked for while sending.
+	#[cfg(feature = "share")]
+	SharePassword,
 }
 
 impl Field {
@@ -168,6 +188,12 @@ impl Field {
 			Field::GeminiAddress => GEMINI_ADDRESS_LEN,
 			#[cfg(feature = "gemini")]
 			Field::GeminiAnswer(_) => GEMINI_ANSWER_LEN,
+			#[cfg(feature = "share")]
+			Field::ShareAddress => ADDRESS_LEN,
+			#[cfg(feature = "share")]
+			Field::ShareUser => SHARE_USER_LEN,
+			#[cfg(feature = "share")]
+			Field::SharePassword => SHARE_PASSWORD_LEN,
 		}
 	}
 
@@ -176,6 +202,8 @@ impl Field {
 			Field::Setting(setting) => setting.is_secret(),
 			#[cfg(feature = "gemini")]
 			Field::GeminiAnswer(secret) => secret,
+			#[cfg(feature = "share")]
+			Field::SharePassword => true,
 			_ => false,
 		}
 	}
@@ -206,6 +234,14 @@ pub struct Gui {
 	gopher: Gopher,
 	#[cfg(feature = "gemini")]
 	gemini: Gemini,
+	#[cfg(feature = "share")]
+	share: ShareApp,
+	/// Where a typed address said to send, until a user is typed too.
+	#[cfg(feature = "share")]
+	share_to: Option<Ipv6Addr>,
+	/// Whether the Share app was open, to list the folder as it opens.
+	#[cfg(feature = "share")]
+	share_was_open: bool,
 	/// The settings in use.
 	saved: Settings,
 	/// The settings as edited, until saved.
@@ -246,7 +282,10 @@ impl Gui {
 				App::Gopher,
 				#[cfg(feature = "gemini")]
 				App::Gemini,
+				#[cfg(feature = "share")]
+				App::Share,
 			]))));
+		window.global::<Setup>().set_share(cfg!(feature = "share"));
 		let gui = Gui {
 			window: window.clone_strong(),
 			directory: Directory::new(),
@@ -263,6 +302,12 @@ impl Gui {
 			gopher: Gopher::new(&window),
 			#[cfg(feature = "gemini")]
 			gemini: Gemini::new(&window),
+			#[cfg(feature = "share")]
+			share: ShareApp::new(&window),
+			#[cfg(feature = "share")]
+			share_to: None,
+			#[cfg(feature = "share")]
+			share_was_open: false,
 			draft: settings.clone(),
 			saved: settings,
 			editing: None,
@@ -373,6 +418,8 @@ impl Gui {
 		if let Some((question, secret)) = self.gemini.refresh() {
 			self.open_keyboard(Field::GeminiAnswer(secret), question.into());
 		}
+		#[cfg(feature = "share")]
+		self.tick_share();
 		// The switches change the edits in the interface alone.
 		if self.window.get_page() == 3 {
 			self.take_switches();
@@ -384,6 +431,7 @@ impl Gui {
 		let choosing = match self.window.global::<Launcher>().get_open() {
 			App::Ping => self.window.global::<Ping>().get_choosing(),
 			App::Console => self.window.global::<crate::Console>().get_choosing(),
+			App::Share => self.window.global::<crate::Share>().get_sending() != "",
 			App::Irc | App::Gopher | App::Gemini | App::None => false,
 		};
 		let wanted: Vec<PublicKey> = match self.window.get_page() {
@@ -521,6 +569,21 @@ impl Gui {
 			Action::BackGemini => self.gemini.back(&mut self.commands),
 			#[cfg(feature = "gemini")]
 			Action::StopGemini => self.gemini.stop(&mut self.commands),
+			#[cfg(feature = "share")]
+			Action::PickShareTarget(node) => {
+				if let (Some(to), Some(name)) = (address_of(&node), self.share.sending()) {
+					self.commands.push_back(Command::ShareSend {
+						to,
+						user: self.share.user.clone(),
+						name: name.into(),
+					});
+				}
+				self.share.stop_choosing();
+			}
+			#[cfg(feature = "share")]
+			Action::TypeShareAddress => self.open_keyboard(Field::ShareAddress, "Address".into()),
+			#[cfg(feature = "share")]
+			Action::AdmitShare(admit) => self.commands.push_back(Command::ShareAdmit(admit)),
 			#[cfg(feature = "console")]
 			Action::WriteMessage => {
 				let label = self.window.global::<crate::Console>().get_target();
@@ -602,6 +665,10 @@ impl Gui {
 			Field::GeminiAddress => self.gemini.address(),
 			#[cfg(feature = "gemini")]
 			Field::GeminiAnswer(_) => String::new(),
+			#[cfg(feature = "share")]
+			Field::ShareUser => self.share.user.clone(),
+			#[cfg(feature = "share")]
+			Field::ShareAddress | Field::SharePassword => String::new(),
 		};
 		self.editing = Some(Edit { field, text });
 		let keyboard = self.window.global::<Keyboard>();
@@ -709,11 +776,46 @@ impl Gui {
 				self.gemini.answer(&answer, &mut self.commands);
 				Ok(())
 			}
+			#[cfg(feature = "share")]
+			Field::ShareAddress => match edit.text.trim().parse::<Ipv6Addr>() {
+				Ok(to) => {
+					self.share_to = Some(to);
+					Ok(())
+				}
+				Err(_) => Err("Not an IPv6 address"),
+			},
+			#[cfg(feature = "share")]
+			Field::ShareUser => {
+				self.share.user = edit.text.trim().into();
+				if let (Some(to), Some(name)) = (self.share_to.take(), self.share.sending()) {
+					self.commands.push_back(Command::ShareSend {
+						to,
+						user: self.share.user.clone(),
+						name: name.into(),
+					});
+				}
+				self.share.stop_choosing();
+				Ok(())
+			}
+			#[cfg(feature = "share")]
+			Field::SharePassword => {
+				let password = edit.text.clone();
+				self.commands
+					.push_back(Command::SharePassword(Some(password)));
+				self.share.password_answered();
+				Ok(())
+			}
 		};
+		#[cfg(feature = "share")]
+		let then_user = matches!(edit.field, Field::ShareAddress) && applied.is_ok();
 		match applied {
 			Ok(()) => {
 				self.close_keyboard();
 				self.show_settings();
+				#[cfg(feature = "share")]
+				if then_user {
+					self.open_keyboard(Field::ShareUser, "User".into());
+				}
 			}
 			Err(problem) => self.window.global::<Keyboard>().set_error(problem.into()),
 		}
@@ -735,6 +837,17 @@ impl Gui {
 		}) = self.editing
 		{
 			self.gemini.cancel_answer();
+		}
+		// Giving up on the password gives up on sending.
+		#[cfg(feature = "share")]
+		if let Some(Edit {
+			field: Field::SharePassword,
+			..
+		}) = self.editing
+			&& self.share.password_for().is_some()
+		{
+			self.commands.push_back(Command::SharePassword(None));
+			self.share.password_answered();
 		}
 		self.editing = None;
 		self.window.global::<Keyboard>().set_open(false);
@@ -790,6 +903,11 @@ impl Gui {
 			&draft.hotspot_password,
 		);
 		setup.set_hotspot_password(hotspot_password.into());
+		let share_password = shown_value(
+			Field::Setting(TextSetting::SharePassword),
+			&draft.share_password,
+		);
+		setup.set_share_password(share_password.into());
 		setup.set_status_pages(draft.status_page);
 		setup.set_bridge(draft.bridge);
 		setup.set_hotspot(draft.hotspot);
@@ -800,6 +918,55 @@ impl Gui {
 		match self.directory.name_of_address(&address) {
 			Some(name) => name.into(),
 			None => address.to_string(),
+		}
+	}
+
+	/// Shows what Share is doing, from the board's Share tasks.
+	#[cfg(feature = "share")]
+	pub fn set_share_status(&mut self, status: esp_ygg_app::share::Status) {
+		let directory = &self.directory;
+		let label = |address: &Ipv6Addr| match directory.name_of_address(address) {
+			Some(name) => name.into(),
+			None => address.to_string(),
+		};
+		if self.share.set_status(status, label) {
+			self.commands.push_back(Command::ShareList);
+		}
+	}
+
+	/// The shared folder's files, as asked for with [`Command::ShareList`].
+	#[cfg(feature = "share")]
+	pub fn set_share_files(&mut self, files: Vec<esp_ygg_app::share::Entry>) {
+		self.share.set_files(files);
+	}
+
+	/// Lists the folder as Share opens, and asks for a password while a
+	/// server wants one.
+	#[cfg(feature = "share")]
+	fn tick_share(&mut self) {
+		let open = self.window.global::<Launcher>().get_open() == App::Share;
+		if open && !self.share_was_open {
+			self.commands.push_back(Command::ShareList);
+		}
+		self.share_was_open = open;
+		let typing = matches!(
+			self.editing,
+			Some(Edit {
+				field: Field::SharePassword,
+				..
+			})
+		);
+		match self.share.password_for() {
+			Some(user) if !typing => {
+				let label = format!("Password for {user}");
+				self.open_keyboard(Field::SharePassword, label.into());
+			}
+			// The server gave up asking.
+			None if typing => {
+				self.editing = None;
+				self.window.global::<Keyboard>().set_open(false);
+			}
+			_ => {}
 		}
 	}
 
@@ -928,6 +1095,15 @@ fn connect(window: &MainWindow, actions: &Rc<RefCell<VecDeque<Action>>>) {
 		let opens = actions.clone();
 		gemini.on_open(move |link| opens.borrow_mut().push_back(Action::OpenGemini(link)));
 	}
+	#[cfg(feature = "share")]
+	{
+		let share = window.global::<crate::Share>();
+		share.on_type_address(queue(|| Action::TypeShareAddress));
+		let picks = actions.clone();
+		share.on_pick(move |node| picks.borrow_mut().push_back(Action::PickShareTarget(node)));
+		let admits = actions.clone();
+		share.on_admit(move |admit| admits.borrow_mut().push_back(Action::AdmitShare(admit)));
+	}
 	let keyboard = window.global::<Keyboard>();
 	let keys = actions.clone();
 	keyboard.on_key(move |text| keys.borrow_mut().push_back(Action::Key(text)));
@@ -966,6 +1142,7 @@ fn text_setting(setting: Setting) -> TextSetting {
 		Setting::Peer => TextSetting::Peer,
 		Setting::HotspotName => TextSetting::HotspotName,
 		Setting::HotspotPassword => TextSetting::HotspotPassword,
+		Setting::SharePassword => TextSetting::SharePassword,
 	}
 }
 

@@ -239,6 +239,19 @@ export component SettingsPage inherits VerticalLayout {
                 }
             }
 
+            if Setup.share: VerticalLayout {
+                Section {
+                    text: "Share";
+                }
+
+                TextRow {
+                    text: "Password";
+                    setting: Setting.share_password;
+                    value: Setup.share_password;
+                    empty: "Ask each time";
+                }
+            }
+
             VerticalLayout {
                 padding: 16px;
                 spacing: 8px;

@@ -1,0 +1,120 @@
+import { MaterialPalette, MaterialText, MaterialTypography } from "@material/material.slint";
+import { NodeChooser } from "chooser.slint";
+import { AppBar, EmptyNote, Row } from "page.slint";
+import { App, Launcher, Share } from "state.slint";
+import { Button, ButtonKind, ListView } from "widgets.slint";
+
+/// The shared folder's files, to send by tapping, and how sending and
+/// receiving are going.
+export component SharePage inherits VerticalLayout {
+    if Share.sending != "": NodeChooser {
+        pick(node) => {
+            Share.pick(node);
+        }
+
+        other => {
+            Share.type_address();
+        }
+
+        cancel => {
+            Share.sending = "";
+        }
+    }
+
+    if Share.sending == "": VerticalLayout {
+        AppBar {
+            text: "Share";
+
+            back => {
+                Launcher.open = App.none;
+            }
+        }
+
+        if Share.status != "": HorizontalLayout {
+            padding_left: 16px;
+            padding_right: 16px;
+            padding_bottom: 4px;
+
+            MaterialText {
+                text: Share.status;
+                style: MaterialTypography.body_small;
+                color: MaterialPalette.on_surface_variant;
+            }
+        }
+
+        if Share.files.length == 0: EmptyNote {
+            text: "No files yet";
+        }
+
+        ListView {
+            for file in Share.files: Row {
+                text: file.name;
+                supporting_text: file.size;
+                clickable: true;
+
+                clicked => {
+                    Share.sending = file.name;
+                }
+            }
+        }
+    }
+}
+
+/// Asks whether to let in someone who wants to share files, over whatever
+/// is showing.
+export component AdmitDialog inherits Rectangle {
+    background: MaterialPalette.scrim.transparentize(40%);
+
+    // Taps outside the dialog do nothing.
+    TouchArea { }
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: min(parent.width - 32px, 280px);
+        height: layout.preferred_height;
+        border_radius: 28px;
+        background: MaterialPalette.surface_container_high;
+
+        layout := VerticalLayout {
+            padding: 24px;
+            padding_bottom: 16px;
+            spacing: 16px;
+
+            MaterialText {
+                text: "Share files with";
+                style: MaterialTypography.title_medium;
+            }
+
+            MaterialText {
+                text: Share.asking;
+                style: MaterialTypography.body_medium;
+                color: MaterialPalette.on_surface_variant;
+                wrap: char_wrap;
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+
+                Button {
+                    text: "Decline";
+                    kind: ButtonKind.text;
+
+                    clicked => {
+                        Share.admit(false);
+                    }
+                }
+
+                Button {
+                    text: "Accept";
+                    kind: ButtonKind.text;
+
+                    clicked => {
+                        Share.admit(true);
+                    }
+                }
+            }
+        }
+    }
+}

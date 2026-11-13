@@ -37,6 +37,7 @@ export enum App {
     irc,
     gopher,
     gemini,
+    share,
 }
 
 /// The app open on the home page, if any, over the launcher.
@@ -210,6 +211,29 @@ export global Gemini {
     callback stop();
 }
 
+export struct ShareFile {
+    name: string,
+    /// Its size, written for people.
+    size: string,
+}
+
+/// Share, run from Rust.
+export global Share {
+    /// The files in the shared folder.
+    in property <[ShareFile]> files;
+    /// What is coming in or going out, or how the last ended.
+    in property <string> status;
+    /// Who wants to connect, until answered, or empty.
+    in property <string> asking;
+    /// The file chosen to send, while choosing where.
+    in_out property <string> sending;
+
+    callback pick(NodeEntry);
+    /// Opens the keyboard for an address to send to.
+    callback type_address();
+    callback admit(bool);
+}
+
 /// The settings typed in, one at a time, on the keyboard.
 export enum Setting {
     name,
@@ -220,6 +244,7 @@ export enum Setting {
     peer,
     hotspot_name,
     hotspot_password,
+    share_password,
 }
 
 /// The settings being edited. Rust fills in the text shown for each, and
@@ -233,9 +258,12 @@ export global Setup {
     in property <string> peer;
     in property <string> hotspot_name;
     in property <string> hotspot_password;
+    in property <string> share_password;
     in_out property <bool> status_pages;
     in_out property <bool> bridge;
     in_out property <bool> hotspot;
+    /// Whether the board was built with Share, which has a password.
+    in property <bool> share;
     /// Whether saving the edits restarts the board, which some need.
     in property <bool> restart;
 

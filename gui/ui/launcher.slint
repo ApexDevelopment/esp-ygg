@@ -83,12 +83,13 @@ export component LauncherPage inherits Scroller {
             : app == App.irc ? @image-url("../icons/tag.svg")
             : app == App.gopher ? @image-url("../icons/description.svg")
             : app == App.gemini ? @image-url("../icons/rocket_launch.svg")
+            : app == App.share ? @image-url("../icons/share.svg")
             : @image-url("../icons/network_ping.svg");
-        text: app == App.console ? "Console" : app == App.irc ? "IRC" : app == App.gopher ? "Gopher" : app == App.gemini ? "Gemini" : "Ping";
+        text: app == App.console ? "Console" : app == App.irc ? "IRC" : app == App.gopher ? "Gopher" : app == App.gemini ? "Gemini" : app == App.share ? "Share" : "Ping";
         // Containers and their ink from Material's dark tonal palettes:
-        // blue, green, amber, orange and purple.
-        tint: app == App.console ? #005234 : app == App.irc ? #5a4300 : app == App.gopher ? #723600 : app == App.gemini ? #4a3a8a : #00497d;
-        ink: app == App.console ? #a6f2c8 : app == App.irc ? #ffdf9e : app == App.gopher ? #ffdbc9 : app == App.gemini ? #e6deff : #d1e4ff;
+        // blue, green, amber, orange, purple and teal.
+        tint: app == App.share ? #004f4f : app == App.console ? #005234 : app == App.irc ? #5a4300 : app == App.gopher ? #723600 : app == App.gemini ? #4a3a8a : #00497d;
+        ink: app == App.share ? #6ff6f6 : app == App.console ? #a6f2c8 : app == App.irc ? #ffdf9e : app == App.gopher ? #ffdbc9 : app == App.gemini ? #e6deff : #d1e4ff;
         badge: app == App.console ? Launcher.console_unread : app == App.irc ? Launcher.irc_unread : 0;
 
         clicked => {
