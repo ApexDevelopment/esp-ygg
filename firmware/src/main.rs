@@ -89,7 +89,16 @@ const CHIP: &str = "esp32";
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
 	esp_println::logger::init_logger_from_env();
-	let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
+	#[allow(unused_mut)]
+	let mut peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
+	#[cfg(feature = "esp32s3")]
+	{
+		use esp_hal::system::{Cpu, CpuControl};
+		let mut control = CpuControl::new(peripherals.CPU_CTRL.reborrow());
+		// A launcher can leave the other core enabled across a software reset.
+		// SAFETY: startup runs on the first core, before we start the second.
+		unsafe { control.park_core(Cpu::AppCpu) };
+	}
 	esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
 	// The original ESP32 has less RAM to spare
 	#[cfg(not(any(feature = "esp32", all(feature = "cardputer", feature = "tui"))))]

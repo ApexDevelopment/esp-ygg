@@ -126,4 +126,6 @@ opt-level = "s"
 # rustls with a workaround for an Xtensa compiler bug (esp-rs/rust#282),
 # which it otherwise trips when optimized.
 [patch.crates-io]
+# Fix ESP32-S3 flash ID detection after a launcher reset.
+esp-storage = { path = "vendor/esp-storage" }
 rustls = { git = "https://github.com/ApexDevelopment/rustls", branch = "xtensa-0.23.46" }
