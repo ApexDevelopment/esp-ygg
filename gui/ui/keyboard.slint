@@ -76,12 +76,15 @@ component Characters inherits Rectangle {
 
     callback typed(string);
 
-    property <length> slot: self.width / root.characters.length;
+    /// Each key's share of the row, in whole pixels so that every key is
+    /// the same width, and the pixels left over, split either side.
+    property <length> slot: floor(self.width / root.characters.length / 1px) * 1px;
+    property <length> margin: (self.width - root.slot * root.characters.length) / 2;
     /// The key being held, or -1.
-    property <int> held: touch.pressed ? floor(touch.pressed_x / root.slot) : -1;
+    property <int> held: touch.pressed ? floor((touch.pressed_x - root.margin) / root.slot) : -1;
 
     for character[index] in root.characters: Rectangle {
-        x: index * root.slot + 2px;
+        x: root.margin + index * root.slot + 2px;
         width: root.slot - 4px;
         border_radius: 8px;
         background: MaterialPalette.surface_container_highest.mix(MaterialPalette.on_surface, index == root.held ? 0.7 : 1.0);
@@ -97,12 +100,110 @@ component Characters inherits Rectangle {
 
     touch := TouchArea {
         clicked => {
-            let index = floor(self.pressed_x / root.slot);
+            let index = floor((self.pressed_x - root.margin) / root.slot);
             if index >= 0 && index < root.characters.length {
                 let character = root.characters[index];
                 root.typed(root.upper ? character.to_uppercase() : character);
             }
         }
+    }
+}
+
+/// A number pad, four keys by four, all exactly the same size. The digits
+/// share one touch area, as rows of characters do.
+component NumberPad inherits Rectangle {
+    callback typed(string);
+    callback backspace();
+    callback enter();
+
+    property <length> gap: 4px;
+    /// One cell, in whole pixels, so every key is the same size, and the
+    /// grid centred in the pixels left over.
+    property <length> cell_width: floor((self.width - 3 * root.gap) / 4 / 1px) * 1px;
+    property <length> cell_height: floor((self.height - 3 * root.gap) / 4 / 1px) * 1px;
+    property <length> left: (self.width - 4 * root.cell_width - 3 * root.gap) / 2;
+    property <length> top: (self.height - 4 * root.cell_height - 3 * root.gap) / 2;
+    property <[string]> characters: ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", ":"];
+    /// The digit key being held, or -1.
+    property <int> held: touch.pressed ? root.cell_at(touch.pressed_x, touch.pressed_y) : -1;
+
+    /// The digit key at a point, or -1.
+    pure function cell_at(x: length, y: length) -> int {
+        let column = floor((x - root.left) / (root.cell_width + root.gap));
+        let row = floor((y - root.top) / (root.cell_height + root.gap));
+        if column < 0 || column > 2 || row < 0 || row > 3 {
+            return -1;
+        }
+        return row * 3 + column;
+    }
+
+    for character[index] in root.characters: Rectangle {
+        x: root.left + mod(index, 3) * (root.cell_width + root.gap);
+        y: root.top + floor(index / 3) * (root.cell_height + root.gap);
+        width: root.cell_width;
+        height: root.cell_height;
+        border_radius: 8px;
+        background: MaterialPalette.surface_container_highest.mix(MaterialPalette.on_surface, index == root.held ? 0.7 : 1.0);
+
+        Text {
+            text: character;
+            font_size: 16px;
+            color: MaterialPalette.on_surface;
+            horizontal_alignment: center;
+            vertical_alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        x: root.left;
+        width: 3 * (root.cell_width + root.gap);
+
+        clicked => {
+            let index = root.cell_at(self.x + self.pressed_x, self.pressed_y);
+            if index >= 0 {
+                root.typed(root.characters[index]);
+            }
+        }
+    }
+
+    Key {
+        x: root.left + 3 * (root.cell_width + root.gap);
+        y: root.top;
+        width: root.cell_width;
+        height: root.cell_height;
+        icon: @image-url("../icons/backspace.svg");
+        key_style: KeyStyle.function;
+        clicked => { root.backspace(); }
+    }
+
+    Key {
+        x: root.left + 3 * (root.cell_width + root.gap);
+        y: root.top + root.cell_height + root.gap;
+        width: root.cell_width;
+        height: root.cell_height;
+        text: "-";
+        key_style: KeyStyle.function;
+        clicked => { root.typed(self.text); }
+    }
+
+    Key {
+        x: root.left + 3 * (root.cell_width + root.gap);
+        y: root.top + 2 * (root.cell_height + root.gap);
+        width: root.cell_width;
+        height: root.cell_height;
+        text: "+";
+        key_style: KeyStyle.function;
+        clicked => { root.typed(self.text); }
+    }
+
+    Key {
+        x: root.left + 3 * (root.cell_width + root.gap);
+        y: root.top + 3 * (root.cell_height + root.gap);
+        width: root.cell_width;
+        height: root.cell_height;
+        icon: @image-url("../icons/keyboard_return.svg");
+        key_style: KeyStyle.action;
+        clicked => { root.enter(); }
     }
 }
 
@@ -113,6 +214,12 @@ export component OnScreenKeyboard inherits Rectangle {
     property <bool> shifted;
     /// 0 for letters, 1 for digits and symbols, 2 for more symbols.
     property <int> layer;
+    /// The width of a key of one character in the bottom row, and of the
+    /// wider ones beside the space bar and in the row above, in whole
+    /// pixels, so that keys of a size match exactly. The bottom row is ten
+    /// of these with five gaps.
+    property <length> unit: floor((self.width - 4px - 5 * 4px) / 10 / 1px) * 1px;
+    property <length> wide: round(root.unit * 1.5 / 1px) * 1px;
 
     function type(text: string) {
         Keyboard.key(text);
@@ -173,80 +280,11 @@ export component OnScreenKeyboard inherits Rectangle {
             }
         }
 
-        if Keyboard.numeric: VerticalLayout {
-            spacing: 4px;
-
-            HorizontalLayout {
-                vertical_stretch: 1;
-                spacing: 4px;
-
-                Characters {
-                    vertical_stretch: 1;
-                    horizontal_stretch: 3;
-                    characters: ["1", "2", "3"];
-                    typed(text) => { root.type(text); }
-                }
-
-                Key {
-                    icon: @image-url("../icons/backspace.svg");
-                    key_style: KeyStyle.function;
-                    clicked => { Keyboard.key(Key.Backspace); }
-                }
-            }
-
-            HorizontalLayout {
-                vertical_stretch: 1;
-                spacing: 4px;
-
-                Characters {
-                    vertical_stretch: 1;
-                    horizontal_stretch: 3;
-                    characters: ["4", "5", "6"];
-                    typed(text) => { root.type(text); }
-                }
-
-                Key {
-                    text: "-";
-                    key_style: KeyStyle.function;
-                    clicked => { root.type(self.text); }
-                }
-            }
-
-            HorizontalLayout {
-                vertical_stretch: 1;
-                spacing: 4px;
-
-                Characters {
-                    vertical_stretch: 1;
-                    horizontal_stretch: 3;
-                    characters: ["7", "8", "9"];
-                    typed(text) => { root.type(text); }
-                }
-
-                Key {
-                    text: "+";
-                    key_style: KeyStyle.function;
-                    clicked => { root.type(self.text); }
-                }
-            }
-
-            HorizontalLayout {
-                vertical_stretch: 1;
-                spacing: 4px;
-
-                Characters {
-                    vertical_stretch: 1;
-                    horizontal_stretch: 3;
-                    characters: [".", "0", ":"];
-                    typed(text) => { root.type(text); }
-                }
-
-                Key {
-                    icon: @image-url("../icons/keyboard_return.svg");
-                    key_style: KeyStyle.action;
-                    clicked => { root.enter(); }
-                }
-            }
+        if Keyboard.numeric: NumberPad {
+            vertical_stretch: 1;
+            typed(text) => { root.type(text); }
+            backspace => { Keyboard.key(Key.Backspace); }
+            enter => { root.enter(); }
         }
 
         if !Keyboard.numeric: VerticalLayout {
@@ -285,7 +323,7 @@ export component OnScreenKeyboard inherits Rectangle {
                 spacing: 4px;
 
                 Key {
-                    horizontal_stretch: 1.5;
+                    width: root.wide;
                     icon: root.shifted ? @image-url("../icons/shift_fill1.svg") : @image-url("../icons/shift.svg");
                     key_style: KeyStyle.function;
                     clicked => { root.shifted = !root.shifted; }
@@ -300,7 +338,7 @@ export component OnScreenKeyboard inherits Rectangle {
                 }
 
                 Key {
-                    horizontal_stretch: 1.5;
+                    width: root.wide;
                     icon: @image-url("../icons/backspace.svg");
                     key_style: KeyStyle.function;
                     clicked => { Keyboard.key(Key.Backspace); }
@@ -336,7 +374,7 @@ export component OnScreenKeyboard inherits Rectangle {
                 spacing: 4px;
 
                 Key {
-                    horizontal_stretch: 1.5;
+                    width: root.wide;
                     text: root.layer == 1 ? "=\\<" : "?123";
                     key_style: KeyStyle.function;
                     clicked => { root.layer = root.layer == 1 ? 2 : 1; }
@@ -350,7 +388,7 @@ export component OnScreenKeyboard inherits Rectangle {
                 }
 
                 Key {
-                    horizontal_stretch: 1.5;
+                    width: root.wide;
                     icon: @image-url("../icons/backspace.svg");
                     key_style: KeyStyle.function;
                     clicked => { Keyboard.key(Key.Backspace); }
@@ -362,13 +400,14 @@ export component OnScreenKeyboard inherits Rectangle {
                 spacing: 4px;
 
                 Key {
-                    horizontal_stretch: 1.5;
+                    width: root.wide;
                     text: root.layer == 0 ? "?123" : "abc";
                     key_style: KeyStyle.function;
                     clicked => { root.layer = root.layer == 0 ? 1 : 0; }
                 }
 
                 Key {
+                    width: root.unit;
                     text: root.layer == 0 ? "-" : ",";
                     clicked => { root.type(self.text); }
                 }
@@ -380,17 +419,19 @@ export component OnScreenKeyboard inherits Rectangle {
                 }
 
                 Key {
+                    width: root.unit;
                     text: ".";
                     clicked => { root.type(self.text); }
                 }
 
                 Key {
+                    width: root.unit;
                     text: ":";
                     clicked => { root.type(self.text); }
                 }
 
                 Key {
-                    horizontal_stretch: 1.5;
+                    width: root.wide;
                     icon: @image-url("../icons/keyboard_return.svg");
                     key_style: KeyStyle.action;
                     clicked => { root.enter(); }
