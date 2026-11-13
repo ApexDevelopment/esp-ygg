@@ -117,7 +117,13 @@ export component MainWindow inherits MaterialWindow {
     }
 
     // The keyboard covers the screen, so what is under it is let go while
-    // it is up, to leave memory for it.
+    // it is up, to leave memory for it. Coming first, it is let go itself
+    // before what was under it comes back, so the two are never both held.
+    if Keyboard.open: OnScreenKeyboard {
+        width: root.width;
+        height: root.height;
+    }
+
     if !Keyboard.open && !root.portrait: HorizontalLayout {
         if !root.in_app: CompactRail {
             horizontal_stretch: 0;
@@ -205,17 +211,12 @@ export component MainWindow inherits MaterialWindow {
         }
     }
 
-    if Notice.text != "": NoticeBar {
+    if Notice.text != "" && !Keyboard.open: NoticeBar {
         property <length> navigation: (root.in_app ? root.handle_size : 80px) + 8px;
 
         x: root.portrait ? 8px : self.navigation;
         width: root.width - self.x - 8px;
         y: root.height - self.height - (root.portrait ? self.navigation : 8px);
-    }
-
-    if Keyboard.open: OnScreenKeyboard {
-        width: root.width;
-        height: root.height;
     }
 
     // Over everything, while the board is locked.
