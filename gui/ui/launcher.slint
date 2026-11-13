@@ -1,16 +1,12 @@
 import { MaterialPalette, MaterialTypography } from "@material/material.slint";
 import { App, Launcher } from "state.slint";
 
-struct LauncherEntry {
-    app: App,
-    icon: image,
-    text: string,
-}
-
 /// An app's icon, with its name under it.
 component AppTile {
     in property <image> icon;
     in property <string> text;
+    /// A count of what is new in it, shown when more than none.
+    in property <int> badge;
 
     callback clicked();
 
@@ -37,6 +33,22 @@ component AppTile {
             source: root.icon;
             colorize: MaterialPalette.on_primary_container;
         }
+
+        if root.badge > 0: Rectangle {
+            x: parent.width - self.width + 4px;
+            y: -4px;
+            width: max(16px, count.preferred_width + 8px);
+            height: 16px;
+            border_radius: self.height / 2;
+            background: MaterialPalette.error;
+
+            count := Text {
+                text: root.badge;
+                font_size: MaterialTypography.label_small.font_size;
+                font_weight: MaterialTypography.label_small.font_weight;
+                color: MaterialPalette.on_error;
+            }
+        }
     }
 
     Text {
@@ -53,25 +65,19 @@ component AppTile {
 
 /// The apps, in rows as wide as the screen allows.
 export component LauncherPage {
-    property <[LauncherEntry]> apps: [
-        {
-            app: App.ping,
-            icon: @image-url("../icons/network_ping.svg"),
-            text: "Ping",
-        },
-    ];
     property <length> tile_width: 76px;
     property <length> tile_height: 88px;
     property <int> columns: max(1, floor((root.width - 16px) / root.tile_width));
 
-    for entry[index] in root.apps: AppTile {
+    for app[index] in Launcher.apps: AppTile {
         x: 8px + mod(index, root.columns) * root.tile_width;
         y: 8px + floor(index / root.columns) * root.tile_height;
-        icon: entry.icon;
-        text: entry.text;
+        icon: app == App.console ? @image-url("../icons/terminal.svg") : @image-url("../icons/network_ping.svg");
+        text: app == App.console ? "Console" : "Ping";
+        badge: app == App.console ? Launcher.console_unread : 0;
 
         clicked => {
-            Launcher.open = entry.app;
+            Launcher.open = app;
         }
     }
 }

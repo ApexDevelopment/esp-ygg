@@ -126,7 +126,7 @@ impl Console {
 }
 
 /// An address and port, or an address alone for the console port.
-fn parse_destination(text: &str) -> Option<SocketAddrV6> {
+pub fn parse_destination(text: &str) -> Option<SocketAddrV6> {
 	text.parse::<SocketAddrV6>().ok().or_else(|| {
 		let address: Ipv6Addr = text.parse().ok()?;
 		Some(SocketAddrV6::new(address, CONSOLE_PORT, 0, 0))

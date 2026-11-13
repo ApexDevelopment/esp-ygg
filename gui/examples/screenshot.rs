@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use esp_ygg_app::Event;
 use esp_ygg_app::ui::{Neighbor, Status, Uplink};
 use esp_ygg_app::{BoardInfo, Settings};
-use esp_ygg_gui::{App, Gui, Launcher, Ping, Setup};
+use esp_ygg_gui::{App, Console, Gui, Launcher, Ping, Setup};
 use slint::ComponentHandle;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel};
 use slint::platform::{Platform, WindowAdapter};
@@ -68,6 +68,37 @@ fn main() {
 	save_keyboards(&mut gui, &window, &folder);
 	save_settings_scrolled(&mut gui, &window, &folder);
 	save_ping(&mut gui, &window, &folder, &keys);
+	save_console(&mut gui, &window, &folder, &keys);
+}
+
+/// Saves the launcher with a message waiting, then the Console in both
+/// orientations: empty, then after a message and a reply.
+fn save_console(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str, keys: &[PublicKey]) {
+	gui.window().global::<Launcher>().set_open(App::Console);
+	gui.tick();
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		save_screen(window, folder, &format!("console-{orientation}-empty"));
+	}
+	gui.window().global::<Launcher>().set_open(App::None);
+	let from = std::net::Ipv6Addr::from(addr_for_key(&keys[1]).0);
+	gui.handle_event(Event::Datagram {
+		from: std::net::SocketAddrV6::new(from, 40000, 0, 0),
+		data: b"Anyone up for a walk later? The rain has finally stopped.\n".to_vec(),
+	});
+	save_screen(window, folder, "console-portrait-unread");
+	gui.window().global::<Launcher>().set_open(App::Console);
+	gui.window().global::<Console>().invoke_write();
+	gui.tick();
+	for character in "Sounds good".chars() {
+		gui.type_key(esp_ygg_app::ui::Key::Char(character));
+	}
+	gui.type_key(esp_ygg_app::ui::Key::Enter);
+	gui.tick();
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		save_screen(window, folder, &format!("console-{orientation}"));
+	}
 }
 
 /// Saves the Ping app in both orientations: choosing a node, then after a

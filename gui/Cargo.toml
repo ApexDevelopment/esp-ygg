@@ -11,6 +11,11 @@ esp-ygg-app = { path = "../app", default-features = false, features = ["ui"] }
 yggdrasil-espnow = { path = "../node" }
 slint = { version = "1.18.1", default-features = false, features = ["compat-1-2", "unsafe-single-threaded", "libm", "renderer-software"] }
 
+[features]
+default = ["console"]
+# The UDP console app
+console = ["esp-ygg-app/console"]
+
 [build-dependencies]
 slint-build = "1.18.1"
 

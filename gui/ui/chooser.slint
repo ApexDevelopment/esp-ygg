@@ -1,0 +1,53 @@
+import { ListView } from "@material/material.slint";
+import { EmptyNote, PageTitle, Row } from "page.slint";
+import { Node, NodeEntry } from "state.slint";
+import { Button, ButtonKind } from "widgets.slint";
+
+/// The nodes known, to pick one from, or a way to type an address.
+export component NodeChooser inherits VerticalLayout {
+    callback pick(NodeEntry);
+    /// Typing an address was chosen instead.
+    callback other();
+    callback cancel();
+
+    HorizontalLayout {
+        PageTitle {
+            horizontal_stretch: 1;
+            text: "Nodes";
+        }
+
+        Button {
+            text: "Cancel";
+            kind: ButtonKind.text;
+
+            clicked => {
+                root.cancel();
+            }
+        }
+    }
+
+    if Node.nodes.length == 0: EmptyNote {
+        text: "None known yet";
+    }
+
+    ListView {
+        for node in Node.nodes: Row {
+            text: node.name;
+            supporting_text: node.address;
+            clickable: true;
+
+            clicked => {
+                root.pick(node);
+            }
+        }
+    }
+
+    Row {
+        text: "Other address";
+        clickable: true;
+
+        clicked => {
+            root.other();
+        }
+    }
+}

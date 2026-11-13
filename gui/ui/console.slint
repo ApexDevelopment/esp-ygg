@@ -1,0 +1,133 @@
+import { MaterialPalette, MaterialText, MaterialTypography } from "@material/material.slint";
+import { NodeChooser } from "chooser.slint";
+import { AppBar, EmptyNote } from "page.slint";
+import { App, Console, ConsoleLine, Launcher } from "state.slint";
+import { Scroller } from "widgets.slint";
+
+/// A message, under who sent it.
+component Message inherits VerticalLayout {
+    in property <ConsoleLine> line;
+
+    padding_left: 16px;
+    padding_right: 16px;
+    padding_top: 4px;
+    padding_bottom: 4px;
+
+    MaterialText {
+        text: root.line.from;
+        style: MaterialTypography.label_small;
+        color: root.line.mine ? MaterialPalette.on_surface_variant : MaterialPalette.primary;
+        overflow: elide;
+    }
+
+    MaterialText {
+        text: root.line.text;
+        style: MaterialTypography.body_medium;
+        wrap: word_wrap;
+    }
+}
+
+/// Where a message is written, which opens the keyboard, and a way to
+/// change who it goes to.
+component ComposeBar inherits HorizontalLayout {
+    padding_left: 16px;
+    padding_right: 4px;
+    padding_bottom: 8px;
+    spacing: 4px;
+    height: 48px;
+
+    Rectangle {
+        horizontal_stretch: 1;
+        border_radius: self.height / 2;
+        background: write.pressed ? MaterialPalette.surface_container_highest.mix(MaterialPalette.on_surface, 0.9) : MaterialPalette.surface_container_highest;
+
+        write := TouchArea {
+            clicked => {
+                if Console.target == "" {
+                    Console.choosing = true;
+                } else {
+                    Console.write();
+                }
+            }
+        }
+
+        MaterialText {
+            x: 16px;
+            width: parent.width - 32px;
+            height: parent.height;
+            text: Console.target == "" ? "Choose who to message" : "Message \{Console.target}";
+            style: MaterialTypography.body_medium;
+            color: MaterialPalette.on_surface_variant;
+            vertical_alignment: center;
+            overflow: elide;
+        }
+    }
+
+    change := TouchArea {
+        width: 40px;
+
+        clicked => {
+            Console.choosing = true;
+        }
+
+        Rectangle {
+            width: 40px;
+            height: 40px;
+            border_radius: self.height / 2;
+            background: change.pressed ? MaterialPalette.on_surface.transparentize(0.9) : transparent;
+
+            Image {
+                width: 24px;
+                height: 24px;
+                source: @image-url("../icons/person_search.svg");
+                colorize: MaterialPalette.on_surface_variant;
+            }
+        }
+    }
+}
+
+/// Messages sent to and from the console's UDP port, newest first.
+export component ConsolePage inherits VerticalLayout {
+    if Console.choosing: NodeChooser {
+        pick(node) => {
+            Console.choosing = false;
+            Console.pick(node);
+        }
+
+        other => {
+            Console.choosing = false;
+            Console.type_address();
+        }
+
+        cancel => {
+            Console.choosing = false;
+        }
+    }
+
+    if !Console.choosing: VerticalLayout {
+        AppBar {
+            text: "Console";
+
+            back => {
+                Launcher.open = App.none;
+            }
+        }
+
+        ComposeBar { }
+
+        if Console.log.length == 0: EmptyNote {
+            text: "Listening on UDP port \{Console.port}";
+        }
+
+        // Not a list view, whose rows cannot grow to fit wrapped text.
+        Scroller {
+            VerticalLayout {
+                alignment: start;
+
+                for line in Console.log: Message {
+                    line: line;
+                }
+            }
+        }
+    }
+}

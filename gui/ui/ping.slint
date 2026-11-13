@@ -1,57 +1,26 @@
 import { ListView, MaterialPalette, MaterialText, MaterialTypography } from "@material/material.slint";
-import { AppBar, EmptyNote, PageTitle, Row } from "page.slint";
-import { App, Launcher, Node, Ping } from "state.slint";
+import { NodeChooser } from "chooser.slint";
+import { AppBar, Row } from "page.slint";
+import { App, Launcher, Ping } from "state.slint";
 import { Button, ButtonKind } from "widgets.slint";
-
-/// The nodes to ping, or a way to type an address.
-component TargetChooser inherits VerticalLayout {
-    HorizontalLayout {
-        PageTitle {
-            horizontal_stretch: 1;
-            text: "Nodes";
-        }
-
-        Button {
-            text: "Cancel";
-            kind: ButtonKind.text;
-
-            clicked => {
-                Ping.choosing = false;
-            }
-        }
-    }
-
-    if Node.nodes.length == 0: EmptyNote {
-        text: "None known yet";
-    }
-
-    ListView {
-        for node in Node.nodes: Row {
-            text: node.name;
-            supporting_text: node.address;
-            clickable: true;
-
-            clicked => {
-                Ping.choosing = false;
-                Ping.pick(node);
-            }
-        }
-    }
-
-    Row {
-        text: "Other address";
-        clickable: true;
-
-        clicked => {
-            Ping.choosing = false;
-            Ping.type_address();
-        }
-    }
-}
 
 /// A ping a second to one node, with each round trip, newest first.
 export component PingPage inherits VerticalLayout {
-    if Ping.choosing: TargetChooser { }
+    if Ping.choosing: NodeChooser {
+        pick(node) => {
+            Ping.choosing = false;
+            Ping.pick(node);
+        }
+
+        other => {
+            Ping.choosing = false;
+            Ping.type_address();
+        }
+
+        cancel => {
+            Ping.choosing = false;
+        }
+    }
 
     if !Ping.choosing: VerticalLayout {
         AppBar {

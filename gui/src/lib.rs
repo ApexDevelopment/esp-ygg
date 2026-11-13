@@ -5,6 +5,8 @@
 
 extern crate alloc;
 
+#[cfg(feature = "console")]
+mod console;
 mod front;
 mod ping;
 

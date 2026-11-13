@@ -6,7 +6,7 @@
 #[cfg(feature = "voice")]
 mod call;
 #[cfg(feature = "console")]
-mod console;
+pub mod console;
 pub mod directory;
 #[cfg(feature = "gemini")]
 mod gemini;

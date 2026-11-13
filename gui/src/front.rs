@@ -3,11 +3,15 @@
 //! the apps and on the settings page, and typed on the keyboard.
 
 use alloc::collections::VecDeque;
+#[cfg(feature = "console")]
+use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::net::Ipv6Addr;
+#[cfg(feature = "console")]
+use core::net::SocketAddrV6;
 
 use esp_ygg_app::settings::TextSetting;
 use esp_ygg_app::time::{DateTime, format_offset, short_uptime};
@@ -18,6 +22,8 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use yggdrasil_espnow::PublicKey;
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
+#[cfg(feature = "console")]
+use crate::console::Console;
 use crate::ping::Pinger;
 use crate::{
 	App, Keyboard, Launcher, MainWindow, NeighborEntry, Node, NodeEntry, Notice, Ping, Setting,
@@ -29,6 +35,12 @@ use crate::{
 const SHOWN_TYPED: usize = 24;
 /// The longest an IPv6 address can be written.
 const ADDRESS_LEN: usize = 45;
+/// The longest an IPv6 address and port can be written.
+#[cfg(feature = "console")]
+const DESTINATION_LEN: usize = 53;
+/// The longest message the console sends.
+#[cfg(feature = "console")]
+const MESSAGE_LEN: usize = 200;
 
 /// What the interface asked for, until the next tick.
 enum Action {
@@ -39,6 +51,12 @@ enum Action {
 	StopPing,
 	/// Time for the next ping.
 	SendPing,
+	#[cfg(feature = "console")]
+	PickConsoleTarget(NodeEntry),
+	#[cfg(feature = "console")]
+	TypeConsoleAddress,
+	#[cfg(feature = "console")]
+	WriteMessage,
 	PickNetwork(WifiEntry),
 	Save,
 	Export,
@@ -54,6 +72,11 @@ enum Action {
 enum Field {
 	Setting(TextSetting),
 	PingAddress,
+	/// An address, with or without a port.
+	#[cfg(feature = "console")]
+	ConsoleAddress,
+	#[cfg(feature = "console")]
+	Message,
 }
 
 impl Field {
@@ -61,6 +84,10 @@ impl Field {
 		match self {
 			Field::Setting(setting) => setting.max_len(),
 			Field::PingAddress => ADDRESS_LEN,
+			#[cfg(feature = "console")]
+			Field::ConsoleAddress => DESTINATION_LEN,
+			#[cfg(feature = "console")]
+			Field::Message => MESSAGE_LEN,
 		}
 	}
 
@@ -86,6 +113,8 @@ pub struct Gui {
 	neighbors: Rc<VecModel<NeighborEntry>>,
 	networks: Rc<VecModel<WifiEntry>>,
 	ping: Pinger,
+	#[cfg(feature = "console")]
+	console: Console,
 	/// The settings in use.
 	saved: Settings,
 	/// The settings as edited, until saved.
@@ -114,14 +143,23 @@ impl Gui {
 		let ping = Pinger::new(&window, move || {
 			pings.borrow_mut().push_back(Action::SendPing);
 		});
+		window
+			.global::<Launcher>()
+			.set_apps(ModelRc::new(VecModel::from(Vec::from([
+				App::Ping,
+				#[cfg(feature = "console")]
+				App::Console,
+			]))));
 		let gui = Gui {
-			window,
+			window: window.clone_strong(),
 			directory: Directory::new(),
 			status: None,
 			nodes,
 			neighbors,
 			networks,
 			ping,
+			#[cfg(feature = "console")]
+			console: Console::new(&window),
 			draft: settings.clone(),
 			saved: settings,
 			editing: None,
@@ -161,6 +199,18 @@ impl Gui {
 				round_trip,
 			} => self.ping.replied(from, sequence, round_trip),
 			Event::PingTimeout { target, sequence } => self.ping.timed_out(target, sequence),
+			#[cfg(feature = "console")]
+			Event::Datagram { from, data } => {
+				let label = self.label_of(*from.ip());
+				let viewing = self.viewing(App::Console);
+				if !viewing {
+					self.notify(format!(
+						"{label}: {}",
+						String::from_utf8_lossy(&data).trim_end()
+					));
+				}
+				self.console.received(from, label, &data, viewing);
+			}
 			// Other apps' events, in builds with them
 			#[allow(unreachable_patterns)]
 			_ => {}
@@ -177,8 +227,16 @@ impl Gui {
 		let Some(status) = &self.status else {
 			return;
 		};
-		let choosing = self.window.global::<Launcher>().get_open() == App::Ping
-			&& self.window.global::<Ping>().get_choosing();
+		#[cfg(feature = "console")]
+		// The notice of a new message would only cover it.
+		if self.viewing(App::Console) && self.console.mark_read() {
+			self.notify(String::new());
+		}
+		let choosing = match self.window.global::<Launcher>().get_open() {
+			App::Ping => self.window.global::<Ping>().get_choosing(),
+			App::Console => self.window.global::<crate::Console>().get_choosing(),
+			App::None => false,
+		};
 		let wanted: Vec<PublicKey> = match self.window.get_page() {
 			0 if choosing => status.nodes(),
 			1 => status.nodes(),
@@ -256,15 +314,24 @@ impl Gui {
 		match action {
 			Action::Edit(setting, label) => self.open_keyboard(Field::Setting(setting), label),
 			Action::PickPingTarget(node) => {
-				let address = if node.address.is_empty() {
-					&node.name
-				} else {
-					&node.address
-				};
-				if let Ok(address) = address.parse() {
+				if let Some(address) = address_of(&node) {
 					let command = self.ping.set_target(address, node.name.into());
 					self.commands.extend(command);
 				}
+			}
+			#[cfg(feature = "console")]
+			Action::PickConsoleTarget(node) => {
+				if let Some(address) = address_of(&node) {
+					let to = SocketAddrV6::new(address, esp_ygg_app::CONSOLE_PORT, 0, 0);
+					self.console.set_target(to, node.name.into());
+				}
+			}
+			#[cfg(feature = "console")]
+			Action::TypeConsoleAddress => self.open_keyboard(Field::ConsoleAddress, "Address".into()),
+			#[cfg(feature = "console")]
+			Action::WriteMessage => {
+				let label = self.window.global::<crate::Console>().get_target();
+				self.open_keyboard(Field::Message, format!("To {label}").into());
 			}
 			Action::TypePingAddress => self.open_keyboard(Field::PingAddress, "Address".into()),
 			Action::StartPing => {
@@ -320,6 +387,14 @@ impl Gui {
 				.target()
 				.map(|a| a.to_string())
 				.unwrap_or_default(),
+			#[cfg(feature = "console")]
+			Field::ConsoleAddress => self
+				.console
+				.target()
+				.map(|to| to.to_string())
+				.unwrap_or_default(),
+			#[cfg(feature = "console")]
+			Field::Message => String::new(),
 		};
 		self.editing = Some(Edit { field, text });
 		let keyboard = self.window.global::<Keyboard>();
@@ -359,16 +434,27 @@ impl Gui {
 			Field::Setting(setting) => self.draft.set_text(setting, &edit.text),
 			Field::PingAddress => match edit.text.parse::<Ipv6Addr>() {
 				Ok(address) => {
-					let label = match self.directory.name_of_address(&address) {
-						Some(name) => name.into(),
-						None => address.to_string(),
-					};
-					let command = self.ping.set_target(address, label);
+					let command = self.ping.set_target(address, self.label_of(address));
 					self.commands.extend(command);
 					Ok(())
 				}
 				Err(_) => Err("Not an IPv6 address"),
 			},
+			#[cfg(feature = "console")]
+			Field::ConsoleAddress => match esp_ygg_app::ui::console::parse_destination(&edit.text) {
+				Some(to) => {
+					let label = self.label_of(*to.ip());
+					self.console.set_target(to, label);
+					Ok(())
+				}
+				None => Err("Not an address, or [address]:port"),
+			},
+			#[cfg(feature = "console")]
+			Field::Message => {
+				let command = self.console.send(&edit.text);
+				self.commands.extend(command);
+				Ok(())
+			}
 		};
 		match applied {
 			Ok(()) => {
@@ -428,6 +514,20 @@ impl Gui {
 		setup.set_status_pages(draft.status_page);
 		setup.set_bridge(draft.bridge);
 		setup.set_hotspot(draft.hotspot);
+	}
+
+	/// A node's name if known, or its address.
+	fn label_of(&self, address: Ipv6Addr) -> String {
+		match self.directory.name_of_address(&address) {
+			Some(name) => name.into(),
+			None => address.to_string(),
+		}
+	}
+
+	/// Whether `app` is open and showing.
+	#[cfg(feature = "console")]
+	fn viewing(&self, app: App) -> bool {
+		self.window.get_page() == 0 && self.window.global::<Launcher>().get_open() == app
 	}
 
 	fn notify(&self, text: String) {
@@ -502,10 +602,32 @@ fn connect(window: &MainWindow, actions: &Rc<RefCell<VecDeque<Action>>>) {
 	ping.on_stop(queue(|| Action::StopPing));
 	let pings = actions.clone();
 	ping.on_pick(move |node| pings.borrow_mut().push_back(Action::PickPingTarget(node)));
+	#[cfg(feature = "console")]
+	{
+		let console = window.global::<crate::Console>();
+		console.on_type_address(queue(|| Action::TypeConsoleAddress));
+		console.on_write(queue(|| Action::WriteMessage));
+		let picks = actions.clone();
+		console.on_pick(move |node| {
+			picks
+				.borrow_mut()
+				.push_back(Action::PickConsoleTarget(node))
+		});
+	}
 	let keyboard = window.global::<Keyboard>();
 	let keys = actions.clone();
 	keyboard.on_key(move |text| keys.borrow_mut().push_back(Action::Key(text)));
 	keyboard.on_cancel(queue(|| Action::Cancel));
+}
+
+/// A node's address, from its row in a list.
+fn address_of(node: &NodeEntry) -> Option<Ipv6Addr> {
+	let address = if node.address.is_empty() {
+		&node.name
+	} else {
+		&node.address
+	};
+	address.parse().ok()
 }
 
 fn text_setting(setting: Setting) -> TextSetting {

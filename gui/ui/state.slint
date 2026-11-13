@@ -33,11 +33,16 @@ export global Node {
 export enum App {
     none,
     ping,
+    console,
 }
 
 /// The app open on the home page, if any, over the launcher.
 export global Launcher {
     in_out property <App> open;
+    /// The apps this build has, in order.
+    in property <[App]> apps: [App.ping];
+    /// Messages to the console since it was last open.
+    in property <int> console_unread;
 }
 
 /// The Ping app, run from Rust.
@@ -65,6 +70,33 @@ export struct WifiEntry {
     /// In dBm.
     signal: int,
     secured: bool,
+}
+
+export struct ConsoleLine {
+    /// Who sent it, or who it went to.
+    from: string,
+    text: string,
+    /// Sent from here.
+    mine: bool,
+}
+
+/// The UDP console, run from Rust.
+export global Console {
+    /// Who messages go to, by name or address, or empty before one is
+    /// chosen.
+    in property <string> target;
+    /// Where messages are listened for.
+    in property <int> port;
+    /// Messages sent and received, newest first.
+    in property <[ConsoleLine]> log;
+    /// Whether the nodes to choose from are showing.
+    in_out property <bool> choosing;
+
+    callback pick(NodeEntry);
+    /// Opens the keyboard for an address.
+    callback type_address();
+    /// Opens the keyboard for a message.
+    callback write();
 }
 
 /// The settings typed in, one at a time, on the keyboard.
