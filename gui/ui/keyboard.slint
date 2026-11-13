@@ -220,6 +220,9 @@ export component OnScreenKeyboard inherits Rectangle {
     /// of these with five gaps.
     property <length> unit: floor((self.width - 4px - 5 * 4px) / 10 / 1px) * 1px;
     property <length> wide: round(root.unit * 1.5 / 1px) * 1px;
+    /// The height of each row of keys but the last, which takes what is
+    /// left: the screen below the text being typed, in four rows.
+    property <length> row_height: floor((root.height - 2 * 2px - 44px - 4 * 4px) / 4 / 1px) * 1px;
 
     function type(text: string) {
         Keyboard.key(text);
@@ -291,14 +294,14 @@ export component OnScreenKeyboard inherits Rectangle {
             spacing: 4px;
 
             if root.layer == 0: Characters {
-                vertical_stretch: 1;
+                height: root.row_height;
                 characters: ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"];
                 upper: root.shifted;
                 typed(text) => { root.type(text); }
             }
 
             if root.layer == 0: HorizontalLayout {
-                vertical_stretch: 1;
+                height: root.row_height;
                 spacing: 4px;
 
                 Rectangle {
@@ -319,7 +322,7 @@ export component OnScreenKeyboard inherits Rectangle {
             }
 
             if root.layer == 0: HorizontalLayout {
-                vertical_stretch: 1;
+                height: root.row_height;
                 spacing: 4px;
 
                 Key {
@@ -346,31 +349,31 @@ export component OnScreenKeyboard inherits Rectangle {
             }
 
             if root.layer == 1: Characters {
-                vertical_stretch: 1;
+                height: root.row_height;
                 characters: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
                 typed(text) => { root.type(text); }
             }
 
             if root.layer == 1: Characters {
-                vertical_stretch: 1;
+                height: root.row_height;
                 characters: ["@", "#", "$", "_", "&", "-", "+", "(", ")", "/"];
                 typed(text) => { root.type(text); }
             }
 
             if root.layer == 2: Characters {
-                vertical_stretch: 1;
+                height: root.row_height;
                 characters: ["~", "`", "|", "\\", "<", ">", "{", "}", "[", "]"];
                 typed(text) => { root.type(text); }
             }
 
             if root.layer == 2: Characters {
-                vertical_stretch: 1;
+                height: root.row_height;
                 characters: ["%", "^", "=", "+", "-", "*", "/", "@", "#", "$"];
                 typed(text) => { root.type(text); }
             }
 
             if root.layer != 0: HorizontalLayout {
-                vertical_stretch: 1;
+                height: root.row_height;
                 spacing: 4px;
 
                 Key {
