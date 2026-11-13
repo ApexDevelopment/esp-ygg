@@ -1,5 +1,6 @@
 import { MaterialPalette, MaterialTypography } from "@material/material.slint";
 import { App, Launcher } from "state.slint";
+import { Scroller } from "widgets.slint";
 
 /// An app's icon, with its name under it.
 component AppTile {
@@ -10,7 +11,7 @@ component AppTile {
 
     callback clicked();
 
-    width: 76px;
+    width: 72px;
     height: 88px;
 
     touch := TouchArea {
@@ -64,10 +65,12 @@ component AppTile {
 }
 
 /// The apps, in rows as wide as the screen allows.
-export component LauncherPage {
-    property <length> tile_width: 76px;
+export component LauncherPage inherits Scroller {
+    property <length> tile_width: 72px;
     property <length> tile_height: 88px;
     property <int> columns: max(1, floor((root.width - 16px) / root.tile_width));
+
+    content_height: 16px + ceil(Launcher.apps.length / root.columns) * root.tile_height;
 
     for app[index] in Launcher.apps: AppTile {
         x: 8px + mod(index, root.columns) * root.tile_width;
@@ -75,8 +78,9 @@ export component LauncherPage {
         icon: app == App.console ? @image-url("../icons/terminal.svg")
             : app == App.irc ? @image-url("../icons/tag.svg")
             : app == App.gopher ? @image-url("../icons/description.svg")
+            : app == App.gemini ? @image-url("../icons/rocket_launch.svg")
             : @image-url("../icons/network_ping.svg");
-        text: app == App.console ? "Console" : app == App.irc ? "IRC" : app == App.gopher ? "Gopher" : "Ping";
+        text: app == App.console ? "Console" : app == App.irc ? "IRC" : app == App.gopher ? "Gopher" : app == App.gemini ? "Gemini" : "Ping";
         badge: app == App.console ? Launcher.console_unread : app == App.irc ? Launcher.irc_unread : 0;
 
         clicked => {
