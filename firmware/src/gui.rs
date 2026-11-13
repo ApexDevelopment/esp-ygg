@@ -7,9 +7,12 @@ use alloc::rc::Rc;
 use embassy_time::{Duration, Instant, Timer};
 use embedded_graphics_core::pixelcolor::Rgb565;
 use embedded_graphics_core::pixelcolor::raw::RawU16;
+use esp_ygg_app::Settings;
+use esp_ygg_app::ui::{Command, Key};
 use esp_ygg_gui::{Gui, slint};
 use log::info;
 use slint::ComponentHandle;
+use slint::SharedString;
 use slint::platform::software_renderer::{
 	LineBufferProvider, MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel,
 };
@@ -99,10 +102,11 @@ impl LineBufferProvider for &mut Lines<'_> {
 }
 
 #[embassy_executor::task]
-pub async fn run(board: Board) {
+pub async fn run(board: Board, settings: Settings) {
 	let Board {
 		mut display,
 		mut i2c,
+		mut slot,
 		..
 	} = board;
 	let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
@@ -112,7 +116,7 @@ pub async fn run(board: Board) {
 	.expect("setting Slint's platform");
 	window.set_size(slint::PhysicalSize::new(WIDTH.into(), HEIGHT.into()));
 	let free_before = esp_alloc::HEAP.free();
-	let mut gui = Gui::new().expect("creating the interface");
+	let mut gui = Gui::new(settings).expect("creating the interface");
 	gui.window().show().expect("showing the interface");
 	info!(
 		"The interface takes {} KB, leaving {} KB free",
@@ -128,6 +132,7 @@ pub async fn run(board: Board) {
 	// A serial tap, held until then as a finger would be.
 	let mut serial_tap: Option<(Instant, slint::LogicalPosition)> = None;
 	loop {
+		crate::ui::report_stack();
 		slint::platform::update_timers_and_animations();
 		let touch = touch_lcd::read_touch(&mut i2c).map(|(x, y)| {
 			slint::PhysicalPosition::new(x.into(), y.into()).to_logical(window.scale_factor())
@@ -157,15 +162,27 @@ pub async fn run(board: Board) {
 			match message {
 				ToUi::Status(status) => gui.set_status(status),
 				ToUi::NodeInfo(key, info) => gui.handle_nodeinfo(key, info.as_deref()),
-				ToUi::Event(_) | ToUi::Networks(_) => {}
+				ToUi::Networks(networks) => gui.set_networks(networks),
+				ToUi::Event(_) => {}
 			}
 		}
 		gui.tick();
 		while let Some(command) = gui.poll_command() {
-			FROM_UI.send(command).await;
+			match command {
+				// The card is on this side, and quick enough to wait for.
+				Command::ExportSettings(text) => {
+					let time = gui.local_time();
+					gui.settings_exported(slot.export_settings(&text, time));
+				}
+				Command::ImportSettings => gui.settings_imported(slot.import_settings()),
+				command => FROM_UI.send(command).await,
+			}
 		}
 		// Taps over the serial port, in pixels here, for testing.
 		while let Ok(input) = INPUT.try_receive() {
+			if let Input::Key(key) = input {
+				type_key(&window, key);
+			}
 			if let Input::Press { column, row } = input {
 				let position = slint::LogicalPosition::new(column.into(), row.into());
 				window.dispatch_event(WindowEvent::PointerPressed {
@@ -200,4 +217,22 @@ pub async fn run(board: Board) {
 			Timer::after(FRAME).await;
 		}
 	}
+}
+
+/// Types a key from the serial port into whatever has focus, for testing.
+fn type_key(window: &MinimalSoftwareWindow, key: Key) {
+	use slint::platform::Key as SlintKey;
+	let text: SharedString = match key {
+		Key::Char(character) => character.into(),
+		Key::Enter => SlintKey::Return.into(),
+		Key::Backspace => SlintKey::Backspace.into(),
+		Key::Tab => SlintKey::Tab.into(),
+		Key::Escape => SlintKey::Escape.into(),
+		Key::Up => SlintKey::UpArrow.into(),
+		Key::Down => SlintKey::DownArrow.into(),
+		Key::Left => SlintKey::LeftArrow.into(),
+		Key::Right => SlintKey::RightArrow.into(),
+	};
+	window.dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+	window.dispatch_event(WindowEvent::KeyReleased { text });
 }

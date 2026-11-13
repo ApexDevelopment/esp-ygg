@@ -1,9 +1,12 @@
-import { MaterialWindow, NavigationBar, NavigationItem, NavigationRail } from "@material";
+import { MaterialPalette, MaterialText, MaterialTypography, MaterialWindow, NavigationItem } from "@material/material.slint";
 import { Palette } from "std-widgets.slint";
 import { HomePage } from "home.slint";
 import { NeighborsPage } from "neighbors.slint";
 import { NodesPage } from "nodes.slint";
-export { Node, NodeEntry, NeighborEntry } from "state.slint";
+import { CompactBar, CompactRail } from "rail.slint";
+import { SettingsPage } from "settings.slint";
+import { Notice } from "state.slint";
+export { Node, NodeEntry, NeighborEntry, Notice, Setup, WifiEntry } from "state.slint";
 import "../fonts/Roboto-Regular.ttf";
 import "../fonts/Roboto-Medium.ttf";
 
@@ -14,6 +17,35 @@ component Pages inherits VerticalLayout {
     if root.page == 0: HomePage { }
     if root.page == 1: NodesPage { }
     if root.page == 2: NeighborsPage { }
+    if root.page == 3: SettingsPage { }
+}
+
+/// A short message along the bottom, in the style of Material's snackbar,
+/// which goes after a few seconds.
+component NoticeBar inherits Rectangle {
+    height: 40px;
+    border_radius: 4px;
+    background: MaterialPalette.inverse_surface;
+
+    MaterialText {
+        x: 16px;
+        width: parent.width - 32px;
+        height: parent.height;
+        text: Notice.text;
+        style: MaterialTypography.body_medium;
+        color: MaterialPalette.inverse_on_surface;
+        vertical_alignment: center;
+        overflow: elide;
+    }
+
+    Timer {
+        interval: 4s;
+        running: Notice.text != "";
+
+        triggered => {
+            Notice.text = "";
+        }
+    }
 }
 
 /// The navigation runs down the side on a wide screen and along the
@@ -21,7 +53,7 @@ component Pages inherits VerticalLayout {
 /// keeps its own size, and the page takes the rest, so the navigation
 /// stays put whatever the page holds.
 export component MainWindow inherits MaterialWindow {
-    /// Home, Nodes or Neighbors, in that order.
+    /// Home, Nodes, Neighbors or Settings, in that order.
     in_out property <int> page;
 
     property <bool> portrait: self.height > self.width;
@@ -41,6 +73,11 @@ export component MainWindow inherits MaterialWindow {
             selected_icon: @image-url("../icons/cell_tower_fill1.svg"),
             text: "Radio",
         },
+        {
+            icon: @image-url("../icons/settings.svg"),
+            selected_icon: @image-url("../icons/settings_fill1.svg"),
+            text: "Settings",
+        },
     ];
 
     preferred_width: 320px;
@@ -52,7 +89,7 @@ export component MainWindow inherits MaterialWindow {
     }
 
     if !root.portrait: HorizontalLayout {
-        NavigationRail {
+        CompactRail {
             horizontal_stretch: 0;
             items: root.destinations;
             current_index <=> root.page;
@@ -70,10 +107,16 @@ export component MainWindow inherits MaterialWindow {
             page: root.page;
         }
 
-        NavigationBar {
+        CompactBar {
             vertical_stretch: 0;
             items: root.destinations;
             current_index <=> root.page;
         }
+    }
+
+    if Notice.text != "": NoticeBar {
+        x: root.portrait ? 8px : 88px;
+        width: root.width - self.x - 8px;
+        y: root.height - self.height - (root.portrait ? 88px : 8px);
     }
 }

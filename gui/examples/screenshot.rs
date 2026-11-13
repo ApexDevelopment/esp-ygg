@@ -11,16 +11,16 @@ use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use esp_ygg_app::BoardInfo;
 use esp_ygg_app::ui::{Neighbor, Status, Uplink};
-use esp_ygg_gui::Gui;
+use esp_ygg_app::{BoardInfo, Settings};
+use esp_ygg_gui::{Gui, Setup};
 use slint::ComponentHandle;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel};
 use slint::platform::{Platform, WindowAdapter};
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 use yggdrasil_espnow::{PrivateKey, PublicKey};
 
-const PAGES: [&str; 3] = ["home", "nodes", "neighbors"];
+const PAGES: [&str; 4] = ["home", "nodes", "neighbors", "settings"];
 const SIZES: [(&str, u32, u32); 2] = [("landscape", 320, 240), ("portrait", 240, 320)];
 
 struct Desktop {
@@ -47,7 +47,9 @@ fn main() {
 		started: Instant::now(),
 	}))
 	.expect("setting the platform");
-	let mut gui = Gui::new().expect("creating the interface");
+	let mut settings = Settings::new();
+	settings.name = "esp-ygg".into();
+	let mut gui = Gui::new(settings).expect("creating the interface");
 	gui.window().show().expect("showing the window");
 	save_pages(&gui, &window, &folder, "starting");
 	let keys: Vec<PublicKey> = (2..6)
@@ -62,6 +64,68 @@ fn main() {
 		gui.handle_nodeinfo(*key, Some(info.as_bytes()));
 	}
 	save_pages(&gui, &window, &folder, "mesh");
+	save_settings_scrolled(&mut gui, &window, &folder);
+}
+
+/// Saves the settings page with the bridge and the hotspot on, after
+/// saving with a peer that has no port and a password too short, as it
+/// looks dragged down a screen at a time, wide.
+fn save_settings_scrolled(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str) {
+	let (_, width, height) = SIZES[0];
+	window.set_size(slint::PhysicalSize::new(width, height));
+	gui.window().set_page(3);
+	let setup = gui.window().global::<Setup>();
+	setup.set_bridge(true);
+	setup.set_ssid("PHOTON".into());
+	setup.set_peer("192.168.1.10".into());
+	setup.set_hotspot(true);
+	setup.set_hotspot_password("short".into());
+	setup.invoke_save();
+	gui.tick();
+	for screen in 1..=5 {
+		drag(window, (200.0, 220.0), (200.0, 40.0));
+		let mut pixels = vec![Rgb565Pixel(0); (width * height) as usize];
+		window.request_redraw();
+		window.draw_if_needed(|renderer| {
+			renderer.render(&mut pixels, width as usize);
+		});
+		let path = Path::new(folder).join(format!("mesh-landscape-settings-{screen}.png"));
+		save(&pixels, width, height, &path);
+		println!("{}", path.display());
+	}
+}
+
+/// Drags a finger across the screen in small steps, as a touch panel
+/// reports it.
+fn drag(window: &MinimalSoftwareWindow, from: (f32, f32), to: (f32, f32)) {
+	use slint::platform::{PointerEventButton, WindowEvent};
+	const STEPS: usize = 20;
+	let at = |step: usize| {
+		let progress = step as f32 / STEPS as f32;
+		slint::LogicalPosition::new(
+			from.0 + (to.0 - from.0) * progress,
+			from.1 + (to.1 - from.1) * progress,
+		)
+	};
+	let button = PointerEventButton::Left;
+	window.dispatch_event(WindowEvent::PointerPressed {
+		position: at(0),
+		button,
+	});
+	for step in 1..=STEPS {
+		std::thread::sleep(Duration::from_millis(10));
+		slint::platform::update_timers_and_animations();
+		window.dispatch_event(WindowEvent::PointerMoved { position: at(step) });
+	}
+	window.dispatch_event(WindowEvent::PointerReleased {
+		position: at(STEPS),
+		button,
+	});
+	// Lets any fling come to rest.
+	for _ in 0..100 {
+		std::thread::sleep(Duration::from_millis(10));
+		slint::platform::update_timers_and_animations();
+	}
 }
 
 /// Saves every page in both orientations, named after `state`.

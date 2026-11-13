@@ -6,7 +6,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -30,7 +30,7 @@ pub use text::{Screen, spawn};
 const MAX_COMMAND: usize = 512;
 
 /// What the network side tells the UI. The graphical interface does not
-/// take events, network scans or keys yet.
+/// take events yet.
 #[cfg_attr(feature = "gui", allow(dead_code))]
 pub enum ToUi {
 	Status(Status),
@@ -107,6 +107,68 @@ pub(crate) async fn serial(usb: USB_DEVICE<'static>) {
 	}
 }
 
+/// Fills the UI's stack at first, to tell later how deep it has been used.
+const UNUSED: u8 = 0xa5;
+/// The marked part of the UI's stack: where it starts, and how long it is.
+static STACK_BOTTOM: AtomicUsize = AtomicUsize::new(0);
+static STACK_LEN: AtomicUsize = AtomicUsize::new(0);
+static STACK_REPORTED: AtomicUsize = AtomicUsize::new(0);
+
+/// Marks `len` bytes of the UI's stack, from `bottom` up, as unused.
+///
+/// # Safety
+///
+/// The bytes must be the UI's stack and not yet in use.
+unsafe fn mark_stack(bottom: *mut u8, len: usize) {
+	// SAFETY: the caller hands over unused stack.
+	unsafe { bottom.write_bytes(UNUSED, len) };
+	STACK_BOTTOM.store(bottom as usize, Ordering::Relaxed);
+	STACK_LEN.store(len, Ordering::Relaxed);
+}
+
+/// Marks `len` bytes of the calling thread's stack below this call as
+/// unused, for a thread whose stack was allocated where it cannot be seen.
+#[cfg(feature = "c6-touch-lcd")]
+#[inline(never)]
+fn mark_stack_below_here(len: usize) {
+	let here = 0u8;
+	// Leaves room for this call's own frame and the one it makes.
+	let top = core::ptr::addr_of!(here) as usize - 512;
+	// SAFETY: the thread has just started, so its stack below here is not
+	// in use, and it is bigger than `len`.
+	unsafe { mark_stack((top - len) as *mut u8, len) };
+}
+
+/// Logs each further kilobyte of the UI's stack that has been used.
+pub fn report_stack() {
+	let len = STACK_LEN.load(Ordering::Relaxed);
+	let used = stack_used(len);
+	if used >= STACK_REPORTED.load(Ordering::Relaxed) + 1024 {
+		log::info!(
+			"The UI has used {} of {} KB of its stack",
+			used / 1024,
+			len / 1024
+		);
+		STACK_REPORTED.store(used, Ordering::Relaxed);
+	}
+}
+
+/// The most of the marked stack used so far. The stack grows down, so this
+/// counts from the bottom up to the first byte that is no longer marked.
+fn stack_used(len: usize) -> usize {
+	let bottom = STACK_BOTTOM.load(Ordering::Relaxed) as *const u8;
+	if bottom.is_null() {
+		return 0;
+	}
+	// The bottom of a stack holds esp-rtos's guard, which is not marked.
+	const GUARD: usize = 256;
+	let unused = (GUARD..len)
+		// SAFETY: reads within the stack, which lives forever.
+		.take_while(|&offset| unsafe { bottom.add(offset).read_volatile() } == UNUSED)
+		.count();
+	len - GUARD - unused
+}
+
 /// The text interface, drawn with Ratatui.
 #[cfg(feature = "tui")]
 mod text {
@@ -147,8 +209,7 @@ mod text {
 	async fn run(mut screen: Screen, mut slot: Slot, settings: Settings) {
 		let mut app = App::new(settings, now());
 		loop {
-			#[cfg(feature = "cardputer")]
-			super::second_core::report_stack();
+			super::report_stack();
 			match select3(INPUT.receive(), TO_UI.receive(), Timer::after(TICK)).await {
 				Either3::First(Input::Key(key)) => app.handle_key(key),
 				Either3::First(Input::Tap { column, row }) => app.handle_tap(column, row),
@@ -198,15 +259,12 @@ mod text {
 /// Starting the UI on the second core, with a stack of its own.
 #[cfg(all(feature = "cardputer", feature = "tui"))]
 pub mod second_core {
-	use core::sync::atomic::{AtomicUsize, Ordering};
-
 	#[cfg(feature = "voice")]
 	use esp_hal::peripherals::FROM_CPU_INTR2;
 	use esp_hal::peripherals::{CPU_CTRL, FROM_CPU_INTR1, FROM_CPU_INTR3, USB_DEVICE};
 	use esp_hal::system::Stack;
 	use esp_rtos::embassy::Executor;
 	use esp_ygg_app::Settings;
-	use log::info;
 	use static_cell::StaticCell;
 
 	#[cfg(feature = "voice")]
@@ -216,10 +274,6 @@ pub mod second_core {
 	/// TLS for Gemini goes deepest, at 14 KB in a handshake with an elliptic
 	/// curve certificate. RSA certificates need more.
 	const STACK_SIZE: usize = 24 * 1024;
-	/// Fills the UI's stack at first, to tell later how deep it has been used.
-	const UNUSED: u8 = 0xa5;
-	static STACK_BOTTOM: AtomicUsize = AtomicUsize::new(0);
-	static STACK_REPORTED: AtomicUsize = AtomicUsize::new(0);
 
 	/// Starts the screen, the keyboard and the UI on the second core.
 	pub fn start(
@@ -234,14 +288,7 @@ pub mod second_core {
 		static STACK: StaticCell<Stack<STACK_SIZE>> = StaticCell::new();
 		let stack = STACK.init(Stack::new());
 		// SAFETY: the stack is not in use until the core starts below.
-		unsafe {
-			stack
-				.mem
-				.as_mut_ptr()
-				.cast::<u8>()
-				.write_bytes(UNUSED, STACK_SIZE);
-		}
-		STACK_BOTTOM.store(stack.mem.as_ptr() as usize, Ordering::Relaxed);
+		unsafe { super::mark_stack(stack.mem.as_mut_ptr().cast(), STACK_SIZE) };
 		esp_rtos::start_second_core(cpu_control, interrupt, stack, move || {
 			static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 			crate::park::arm(park);
@@ -266,32 +313,6 @@ pub mod second_core {
 			.start(esp_hal::interrupt::Priority::Priority1);
 		spawner.spawn(crate::audio::run(pins, model).expect("spawning the audio task"));
 	}
-
-	/// Logs each further kilobyte of the UI's stack that has been used.
-	pub fn report_stack() {
-		let used = stack_used();
-		if used >= STACK_REPORTED.load(Ordering::Relaxed) + 1024 {
-			info!(
-				"The UI has used {} of {} KB of its stack",
-				used / 1024,
-				STACK_SIZE / 1024
-			);
-			STACK_REPORTED.store(used, Ordering::Relaxed);
-		}
-	}
-
-	/// The most of the UI's stack used so far. The stack grows down, so this
-	/// counts from the bottom up to the first byte that is no longer marked.
-	fn stack_used() -> usize {
-		let bottom = STACK_BOTTOM.load(Ordering::Relaxed) as *const u8;
-		// The bottom holds esp-rtos's guard, which is not marked.
-		const GUARD: usize = 256;
-		let unused = (GUARD..STACK_SIZE)
-			// SAFETY: reads within the stack, which lives forever.
-			.take_while(|&offset| unsafe { bottom.add(offset).read_volatile() } == UNUSED)
-			.count();
-		STACK_SIZE - GUARD - unused
-	}
 }
 
 /// Starting the UI in a thread of its own on single-core boards, below the
@@ -309,9 +330,10 @@ pub mod own_thread {
 
 	use crate::touch_lcd::{self, Pins};
 
-	/// TLS for Gemini goes deepest, at 14 KB in a handshake with an elliptic
-	/// curve certificate. RSA certificates need more.
-	const STACK_SIZE: usize = 24 * 1024;
+	/// Laying out the graphical interface's settings page takes 29 KB, and
+	/// TLS for Gemini 14 KB in a handshake with an elliptic curve
+	/// certificate. esp-rtos adds 6 KB to this.
+	const STACK_SIZE: usize = 48 * 1024;
 	/// WiFi's own threads run above both of these.
 	const NETWORK_PRIORITY: usize = 1;
 	const UI_PRIORITY: u32 = 0;
@@ -349,6 +371,7 @@ pub mod own_thread {
 		// SAFETY: `start` came from `Box::into_raw` in `start`, and is only
 		// taken back here.
 		let start = unsafe { Box::from_raw(start.cast::<Start>()) };
+		super::mark_stack_below_here(STACK_SIZE);
 		static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 		EXECUTOR.init(Executor::new()).run(move |spawner| {
 			let Start {
@@ -363,9 +386,9 @@ pub mod own_thread {
 			}
 			#[cfg(feature = "gui")]
 			{
-				let _ = settings;
 				let board = touch_lcd::set_up(pins);
-				spawner.spawn(crate::gui::run(board).expect("spawning the interface task"));
+				spawner
+					.spawn(crate::gui::run(board, settings).expect("spawning the interface task"));
 				spawner.spawn(super::serial(usb).expect("spawning the serial task"));
 			}
 		});

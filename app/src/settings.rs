@@ -142,7 +142,7 @@ impl Settings {
 			TextSetting::HotspotPassword if Settings::is_hotspot_password(text) => {
 				self.hotspot_password = text.into()
 			}
-			TextSetting::HotspotPassword => return Err("Use 8 or more characters, or none"),
+			TextSetting::HotspotPassword => return Err("8 or more characters, or none"),
 		}
 		Ok(())
 	}

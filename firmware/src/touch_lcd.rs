@@ -120,7 +120,7 @@ mod screen {
 	}
 
 	/// The board's parts, ready for an interface to use. The graphical
-	/// interface does not use the button or the card yet.
+	/// interface does not use the button yet.
 	#[cfg_attr(feature = "gui", allow(dead_code))]
 	pub struct Board {
 		/// Cleared to black, with the backlight on.

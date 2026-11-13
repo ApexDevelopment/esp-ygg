@@ -35,3 +35,52 @@ export global Node {
     in property <[NodeEntry]> nodes;
     in property <[NeighborEntry]> neighbors;
 }
+
+export struct WifiEntry {
+    ssid: string,
+    /// In dBm.
+    signal: int,
+    secured: bool,
+}
+
+/// The settings being edited, as typed. Rust fills them in, and checks
+/// them when they are saved or exported.
+export global Setup {
+    in_out property <string> name;
+    in_out property <string> channel;
+    in_out property <string> time_zone;
+    in_out property <bool> status_pages;
+    in_out property <bool> bridge;
+    in_out property <string> ssid;
+    in_out property <string> wifi_password;
+    in_out property <string> peer;
+    in_out property <bool> hotspot;
+    in_out property <string> hotspot_name;
+    in_out property <string> hotspot_password;
+
+    /// Why each text will not do, or empty.
+    in property <string> name_error;
+    in property <string> channel_error;
+    in property <string> time_zone_error;
+    in property <string> ssid_error;
+    in property <string> wifi_password_error;
+    in property <string> peer_error;
+    in property <string> hotspot_name_error;
+    in property <string> hotspot_password_error;
+
+    /// Whether the list of WiFi networks is showing in place of the
+    /// settings, the networks a scan found, and whether it is still going.
+    in_out property <bool> choosing_network;
+    in property <[WifiEntry]> networks;
+    in property <bool> scanning;
+
+    callback save();
+    callback export();
+    callback import();
+    callback scan();
+}
+
+/// A short message about the last action, shown for a few seconds.
+export global Notice {
+    in_out property <string> text;
+}

@@ -10,7 +10,9 @@ fn main() {
 	// SAFETY: nothing else runs in the build script yet to read the
 	// environment while it changes.
 	unsafe { std::env::set_var("SLINT_FONT_SIZES", FONT_SIZES) };
-	let material = Path::new(env!("CARGO_MANIFEST_DIR")).join("material-1.1.0/material.slint");
+	// The folder rather than its main file, so the interface can also use
+	// parts Material does not export, such as its navigation items.
+	let material = Path::new(env!("CARGO_MANIFEST_DIR")).join("material-1.1.0");
 	// Microcontrollers have no font files or image decoders, so glyphs and
 	// images are drawn ahead of time and built in.
 	let config = slint_build::CompilerConfiguration::new()

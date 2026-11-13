@@ -1,0 +1,56 @@
+import { MaterialPalette } from "@material/material.slint";
+import { BaseNavigation } from "@material/ui/components/base_navigation.slint";
+import { NavigationItemTemplate } from "@material/ui/components/navigation_bar.slint";
+
+/// Material's navigation rail without the room it leaves above and below
+/// its items for a menu button, so four fit on a screen 240 pixels tall.
+export component CompactRail inherits BaseNavigation {
+    min_width: 80px;
+
+    Rectangle {
+        background: MaterialPalette.surface;
+
+        VerticalLayout {
+            alignment: center;
+
+            for item[index] in root.items: NavigationItemTemplate {
+                icon: item.icon;
+                selected_icon: item.selected_icon;
+                text: item.text;
+                index: index;
+                selected: index == root.current_index;
+                navitem_padding_top: 0;
+                navitem_padding_bottom: 4px;
+
+                clicked => {
+                    root.select(index);
+                }
+            }
+        }
+    }
+}
+
+/// Material's navigation bar without the room it leaves around its items,
+/// so four fit on a screen 240 pixels wide. They share the width equally.
+export component CompactBar inherits BaseNavigation {
+    min_height: 80px;
+
+    Rectangle {
+        background: MaterialPalette.surface_container;
+
+        HorizontalLayout {
+            for item[index] in root.items: NavigationItemTemplate {
+                horizontal_stretch: 1;
+                icon: item.icon;
+                selected_icon: item.selected_icon;
+                text: item.text;
+                index: index;
+                selected: index == root.current_index;
+
+                clicked => {
+                    root.select(index);
+                }
+            }
+        }
+    }
+}

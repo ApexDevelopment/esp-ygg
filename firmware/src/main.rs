@@ -27,9 +27,7 @@ mod ntp;
 mod park;
 mod platform;
 mod radio;
-// The graphical interface does not use the card yet.
 #[cfg(feature = "ui")]
-#[cfg_attr(feature = "gui", allow(dead_code))]
 mod sdcard;
 #[cfg(feature = "voice")]
 mod speaker;

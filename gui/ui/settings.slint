@@ -1,0 +1,252 @@
+import { FilledButton, ListView, MaterialPalette, MaterialText, MaterialTypography, OutlineButton, ScrollView, Switch, TextButton, TextField } from "@material/material.slint";
+import { EmptyNote, PageTitle, Row } from "page.slint";
+import { Setup } from "state.slint";
+
+/// A heading over a group of settings.
+component Section inherits HorizontalLayout {
+    in property <string> text;
+
+    padding_left: 16px;
+    padding_right: 16px;
+    padding_top: 16px;
+    padding_bottom: 4px;
+
+    MaterialText {
+        text: root.text;
+        style: MaterialTypography.title_small;
+        color: MaterialPalette.primary;
+    }
+}
+
+/// A setting that is on or off.
+component SwitchRow inherits HorizontalLayout {
+    in property <string> text;
+    in_out property <bool> checked;
+
+    padding_left: 16px;
+    padding_right: 16px;
+    spacing: 8px;
+    height: 48px;
+
+    MaterialText {
+        text: root.text;
+        style: MaterialTypography.body_large;
+        vertical_alignment: center;
+        horizontal_stretch: 1;
+        overflow: elide;
+    }
+
+    VerticalLayout {
+        alignment: center;
+        horizontal_stretch: 0;
+
+        Switch {
+            checked <=> root.checked;
+        }
+    }
+}
+
+/// A setting typed in, with a hint under it, or why it will not do.
+component Field inherits HorizontalLayout {
+    in property <string> label;
+    in_out property <string> text;
+    in property <string> hint;
+    in property <string> error;
+    in property <InputType> input_type: InputType.text;
+
+    padding_left: 16px;
+    padding_right: 16px;
+    padding_top: 4px;
+    padding_bottom: 4px;
+
+    TextField {
+        horizontal_stretch: 1;
+        label: root.label;
+        text <=> root.text;
+        input_type: root.input_type;
+        has_error: root.error != "";
+        supporting_text: root.error != "" ? root.error : root.hint;
+    }
+}
+
+/// The WiFi networks in range, to pick the bridge's from.
+component NetworkChooser inherits VerticalLayout {
+    HorizontalLayout {
+        PageTitle {
+            horizontal_stretch: 1;
+            text: "WiFi networks";
+        }
+
+        TextButton {
+            text: "Cancel";
+
+            clicked => {
+                Setup.choosing_network = false;
+            }
+        }
+    }
+
+    if Setup.scanning: EmptyNote {
+        text: "Scanning…";
+    }
+
+    if !Setup.scanning && Setup.networks.length == 0: EmptyNote {
+        text: "No networks found";
+    }
+
+    ListView {
+        for network in Setup.networks: Row {
+            text: network.ssid;
+            supporting_text: "\{network.signal} dBm" + (network.secured ? "" : " · open");
+            clickable: true;
+
+            clicked => {
+                Setup.ssid = network.ssid;
+                if !network.secured {
+                    Setup.wifi_password = "";
+                }
+                Setup.choosing_network = false;
+            }
+        }
+    }
+}
+
+export component SettingsPage inherits VerticalLayout {
+    if Setup.choosing_network: NetworkChooser { }
+
+    if !Setup.choosing_network: ScrollView {
+        VerticalLayout {
+            PageTitle {
+                text: "Settings";
+            }
+
+            Section {
+                text: "This node";
+            }
+
+            Field {
+                label: "Name";
+                text <=> Setup.name;
+                error: Setup.name_error;
+            }
+
+            Field {
+                label: "Channel";
+                text <=> Setup.channel;
+                hint: "1 to 13";
+                error: Setup.channel_error;
+            }
+
+            Field {
+                label: "Time zone";
+                text <=> Setup.time_zone;
+                hint: "An offset from UTC, like -05:00";
+                error: Setup.time_zone_error;
+            }
+
+            SwitchRow {
+                text: "Status pages";
+                checked <=> Setup.status_pages;
+            }
+
+            Section {
+                text: "Bridge";
+            }
+
+            SwitchRow {
+                text: "Join a WiFi network";
+                checked <=> Setup.bridge;
+            }
+
+            if Setup.bridge: VerticalLayout {
+                Field {
+                    label: "Network";
+                    text <=> Setup.ssid;
+                    error: Setup.ssid_error;
+                }
+
+                HorizontalLayout {
+                    padding_left: 8px;
+                    alignment: start;
+
+                    TextButton {
+                        text: "Find networks";
+
+                        clicked => {
+                            Setup.choosing_network = true;
+                            Setup.scan();
+                        }
+                    }
+                }
+
+                Field {
+                    label: "Password";
+                    text <=> Setup.wifi_password;
+                    input_type: InputType.password;
+                    error: Setup.wifi_password_error;
+                }
+
+                Field {
+                    label: "Peer";
+                    text <=> Setup.peer;
+                    hint: "An IPv4 address and port";
+                    error: Setup.peer_error;
+                }
+            }
+
+            Section {
+                text: "Hotspot";
+            }
+
+            SwitchRow {
+                text: "Run a hotspot";
+                checked <=> Setup.hotspot;
+            }
+
+            if Setup.hotspot: VerticalLayout {
+                Field {
+                    label: "Network name";
+                    text <=> Setup.hotspot_name;
+                    error: Setup.hotspot_name_error;
+                }
+
+                Field {
+                    label: "Password";
+                    text <=> Setup.hotspot_password;
+                    input_type: InputType.password;
+                    hint: "8 or more characters, or none";
+                    error: Setup.hotspot_password_error;
+                }
+            }
+
+            VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+
+                FilledButton {
+                    text: "Save and restart";
+
+                    clicked => {
+                        Setup.save();
+                    }
+                }
+
+                OutlineButton {
+                    text: "Export to SD card";
+
+                    clicked => {
+                        Setup.export();
+                    }
+                }
+
+                OutlineButton {
+                    text: "Import from SD card";
+
+                    clicked => {
+                        Setup.import();
+                    }
+                }
+            }
+        }
+    }
+}
