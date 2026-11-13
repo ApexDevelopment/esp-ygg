@@ -2,7 +2,12 @@
 //! runs on it. Each service lives in a module of its own, and is left out
 //! entirely when its feature is.
 
-#[cfg(any(feature = "gopher", feature = "irc", feature = "gemini"))]
+#[cfg(any(
+	feature = "gopher",
+	feature = "irc",
+	feature = "gemini",
+	feature = "share"
+))]
 mod clients;
 mod clock;
 #[cfg(feature = "console")]
@@ -20,12 +25,17 @@ use core::net::Ipv6Addr;
 use core::net::SocketAddrV6;
 use core::time::Duration;
 
-#[cfg(any(feature = "gopher", feature = "irc", feature = "gemini"))]
+#[cfg(any(
+	feature = "gopher",
+	feature = "irc",
+	feature = "gemini",
+	feature = "share"
+))]
 use smoltcp::iface::SocketHandle;
 use smoltcp::iface::{Interface, SocketSet};
 use yggdrasil_espnow::{Instant, Node, Platform};
 
-#[cfg(any(feature = "irc", feature = "gemini"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 pub use clients::Stream;
 #[cfg(feature = "console")]
 pub use console::CONSOLE_PORT;
@@ -65,16 +75,22 @@ pub enum Event {
 	#[cfg(feature = "gopher")]
 	FetchFailed,
 	/// The connection from [`Overlay::open_stream`] is ready for data.
-	#[cfg(any(feature = "irc", feature = "gemini"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 	StreamOpened(Stream),
-	#[cfg(any(feature = "irc", feature = "gemini"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 	StreamData {
 		stream: Stream,
 		data: Vec<u8>,
 	},
 	/// The stream ended, or could not be opened.
-	#[cfg(any(feature = "irc", feature = "gemini"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 	StreamClosed(Stream),
+	/// A peer connected to a stream the board listens on.
+	#[cfg(feature = "share")]
+	StreamAccepted {
+		stream: Stream,
+		from: Ipv6Addr,
+	},
 	#[cfg(feature = "voice")]
 	Call(CallEvent),
 }
@@ -105,13 +121,23 @@ pub struct Overlay {
 	#[cfg(feature = "console")]
 	console: smoltcp::iface::SocketHandle,
 	/// Connections this board closed, kept until they finish closing.
-	#[cfg(any(feature = "gopher", feature = "irc", feature = "gemini"))]
+	#[cfg(any(
+		feature = "gopher",
+		feature = "irc",
+		feature = "gemini",
+		feature = "share"
+	))]
 	closing: Vec<SocketHandle>,
-	#[cfg(any(feature = "gopher", feature = "irc", feature = "gemini"))]
+	#[cfg(any(
+		feature = "gopher",
+		feature = "irc",
+		feature = "gemini",
+		feature = "share"
+	))]
 	next_local_port: u16,
 	#[cfg(feature = "gopher")]
 	fetch: Option<clients::Fetch>,
-	#[cfg(any(feature = "irc", feature = "gemini"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 	streams: Vec<clients::StreamSlot>,
 	#[cfg(feature = "voice")]
 	phone: phone::PhoneSlot,
@@ -121,6 +147,18 @@ impl Overlay {
 	/// `random_seed` should differ between boots, for TCP sequence numbers.
 	/// Without `status_pages`, the HTTP and Gopher ports are closed.
 	pub fn new<P: Platform>(node: &Node<P>, random_seed: u64, status_pages: bool) -> Self {
+		#[cfg_attr(not(feature = "share"), allow(unused_mut))]
+		let mut overlay = Overlay::without_listeners(node, random_seed, status_pages);
+		#[cfg(feature = "share")]
+		overlay.listen_for_share();
+		overlay
+	}
+
+	fn without_listeners<P: Platform>(
+		node: &Node<P>,
+		random_seed: u64,
+		status_pages: bool,
+	) -> Self {
 		let mut device = Queues::default();
 		let now = to_smoltcp(node.now());
 		let interface = interface(&node.address(), &mut device, random_seed, now);
@@ -145,13 +183,23 @@ impl Overlay {
 			},
 			#[cfg(feature = "console")]
 			console: console::socket(&mut sockets),
-			#[cfg(any(feature = "gopher", feature = "irc", feature = "gemini"))]
+			#[cfg(any(
+				feature = "gopher",
+				feature = "irc",
+				feature = "gemini",
+				feature = "share"
+			))]
 			closing: Vec::new(),
-			#[cfg(any(feature = "gopher", feature = "irc", feature = "gemini"))]
+			#[cfg(any(
+				feature = "gopher",
+				feature = "irc",
+				feature = "gemini",
+				feature = "share"
+			))]
 			next_local_port: clients::EPHEMERAL_PORTS.start + (random_seed as u16 % 1000),
 			#[cfg(feature = "gopher")]
 			fetch: None,
-			#[cfg(any(feature = "irc", feature = "gemini"))]
+			#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 			streams: clients::stream_slots(),
 			#[cfg(feature = "voice")]
 			phone: None,
@@ -223,9 +271,14 @@ impl Overlay {
 		self.serve(node, board);
 		#[cfg(feature = "gopher")]
 		self.progress_fetch(now);
-		#[cfg(any(feature = "irc", feature = "gemini"))]
+		#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 		self.progress_streams();
-		#[cfg(any(feature = "gopher", feature = "irc", feature = "gemini"))]
+		#[cfg(any(
+			feature = "gopher",
+			feature = "irc",
+			feature = "gemini",
+			feature = "share"
+		))]
 		self.free_closed_sockets();
 		#[cfg(feature = "console")]
 		self.receive_datagrams();

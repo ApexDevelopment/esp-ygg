@@ -36,7 +36,7 @@ pub use http::BoardInfo;
 pub use overlay::CONSOLE_PORT;
 #[cfg(any(feature = "http", feature = "gopher"))]
 pub use overlay::HTTP_PORT;
-#[cfg(any(feature = "irc", feature = "gemini"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 pub use overlay::Stream;
 pub use overlay::{Event, Overlay, PING_TIMEOUT, SendError};
 pub use settings::Settings;

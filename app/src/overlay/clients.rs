@@ -23,46 +23,68 @@ pub(super) const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 #[cfg(feature = "gopher")]
 const MAX_FETCH: usize = 32 * 1024;
 /// How long a stream may go without an answer before it is given up.
-#[cfg(any(feature = "irc", feature = "gemini"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 const STREAM_TIMEOUT_SECS: u64 = 300;
 /// How long a stream may take to connect.
-#[cfg(any(feature = "irc", feature = "gemini"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 const CONNECT_TIMEOUT_SECS: u64 = 20;
 /// How much may wait to be sent on a stream.
-#[cfg(any(feature = "irc", feature = "gemini"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 const MAX_STREAM_BACKLOG: usize = 4096;
 
 /// The lasting connections the board can hold, one for each client that
 /// needs one, so they can stay open side by side.
-#[cfg(any(feature = "irc", feature = "gemini"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stream {
 	#[cfg(feature = "irc")]
 	Irc,
 	#[cfg(feature = "gemini")]
 	Gemini,
+	/// Sending a file to another node.
+	#[cfg(feature = "share")]
+	Share,
+	/// A peer connected to the board's own Share server, which listens
+	/// again once it closes.
+	#[cfg(feature = "share")]
+	ShareIncoming,
 }
 
-#[cfg(any(feature = "irc", feature = "gemini"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 impl Stream {
+	/// Whether the host reads the stream itself, with
+	/// [`Overlay::stream_receive`], rather than taking events of its data.
+	#[cfg(feature = "share")]
+	fn is_pulled(self) -> bool {
+		matches!(self, Stream::Share | Stream::ShareIncoming)
+	}
+
 	/// Each stream, with its receive buffer size.
 	const ALL: &[(Stream, usize)] = &[
 		#[cfg(feature = "irc")]
 		(Stream::Irc, 2048),
 		#[cfg(feature = "gemini")]
 		(Stream::Gemini, 4096),
+		// Room for an SSH packet
+		#[cfg(feature = "share")]
+		(Stream::Share, 2048),
+		#[cfg(feature = "share")]
+		(Stream::ShareIncoming, 2048),
 	];
 }
 
-#[cfg(any(feature = "irc", feature = "gemini"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StreamState {
 	Closed,
+	/// Waiting for a peer to connect.
+	#[cfg(feature = "share")]
+	Listening,
 	Connecting,
 	Open,
 }
 
-#[cfg(any(feature = "irc", feature = "gemini"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 pub(super) struct StreamSlot {
 	stream: Stream,
 	receive_buffer: usize,
@@ -72,7 +94,7 @@ pub(super) struct StreamSlot {
 	outgoing: Vec<u8>,
 }
 
-#[cfg(any(feature = "irc", feature = "gemini"))]
+#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 pub(super) fn stream_slots() -> Vec<StreamSlot> {
 	Stream::ALL
 		.iter()
@@ -126,7 +148,7 @@ impl Overlay {
 
 	/// Opens a lasting TCP connection, replacing the one `stream` had open.
 	/// Its progress arrives as [`Event`]s.
-	#[cfg(any(feature = "irc", feature = "gemini"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 	pub fn open_stream(&mut self, stream: Stream, to: SocketAddrV6) -> Result<(), SendError> {
 		let slot = self.slot(stream);
 		let receive_buffer = slot.receive_buffer;
@@ -148,7 +170,7 @@ impl Overlay {
 	}
 
 	/// Queues data for an open stream.
-	#[cfg(any(feature = "irc", feature = "gemini"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 	pub fn stream_send(&mut self, stream: Stream, data: &[u8]) -> Result<(), SendError> {
 		let slot = self.slot(stream);
 		if slot.state == StreamState::Closed {
@@ -161,15 +183,41 @@ impl Overlay {
 		Ok(())
 	}
 
+	/// Takes up to `max` bytes that came on a stream the host reads itself,
+	/// if any did.
+	#[cfg(feature = "share")]
+	pub fn stream_receive(&mut self, stream: Stream, max: usize) -> Option<Vec<u8>> {
+		let handle = self.slot(stream).socket?;
+		let socket = self.sockets.get_mut::<tcp::Socket>(handle);
+		let mut data = Vec::new();
+		let _ = socket.recv(|bytes| {
+			let taken = bytes.len().min(max);
+			data.extend_from_slice(&bytes[..taken]);
+			(taken, ())
+		});
+		(!data.is_empty()).then_some(data)
+	}
+
+	/// How much is waiting to be sent on a stream.
+	#[cfg(feature = "share")]
+	pub fn stream_backlog(&mut self, stream: Stream) -> usize {
+		let slot = self.slot(stream);
+		let (queued, socket) = (slot.outgoing.len(), slot.socket);
+		let in_socket = socket.map_or(0, |handle| {
+			self.sockets.get::<tcp::Socket>(handle).send_queue()
+		});
+		queued + in_socket
+	}
+
 	/// Closes a stream once what is queued has been sent.
-	#[cfg(any(feature = "irc", feature = "gemini"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 	pub fn close_stream(&mut self, stream: Stream) {
 		if let Some(socket) = self.slot(stream).socket {
 			self.sockets.get_mut::<tcp::Socket>(socket).close();
 		}
 	}
 
-	#[cfg(any(feature = "irc", feature = "gemini"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 	fn slot(&mut self, stream: Stream) -> &mut StreamSlot {
 		self.streams
 			.iter_mut()
@@ -222,14 +270,32 @@ impl Overlay {
 		});
 	}
 
-	#[cfg(any(feature = "irc", feature = "gemini"))]
+	#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 	pub(super) fn progress_streams(&mut self) {
+		#[cfg(feature = "share")]
+		let mut listen_again = false;
 		for slot in &mut self.streams {
 			let Some(handle) = slot.socket else {
 				continue;
 			};
 			let stream = slot.stream;
 			let socket = self.sockets.get_mut::<tcp::Socket>(handle);
+			#[cfg(feature = "share")]
+			if slot.state == StreamState::Listening {
+				if !socket.may_send() {
+					continue;
+				}
+				slot.state = StreamState::Open;
+				socket.set_timeout(Some(smoltcp::time::Duration::from_secs(
+					STREAM_TIMEOUT_SECS,
+				)));
+				if let Some(peer) = socket.remote_endpoint()
+					&& let IpAddress::Ipv6(from) = peer.addr
+				{
+					self.events
+						.push_back(Event::StreamAccepted { stream, from });
+				}
+			}
 			if slot.state == StreamState::Connecting && socket.may_send() {
 				slot.state = StreamState::Open;
 				socket.set_timeout(Some(smoltcp::time::Duration::from_secs(
@@ -243,7 +309,13 @@ impl Overlay {
 			{
 				slot.outgoing.drain(..sent);
 			}
-			while socket.can_recv() {
+			// The host reads Share's streams itself, as fast as it can take
+			// them, so the sender slows to match.
+			#[cfg(feature = "share")]
+			let pulled = stream.is_pulled();
+			#[cfg(not(feature = "share"))]
+			let pulled = false;
+			while !pulled && socket.can_recv() {
 				let mut data = Vec::new();
 				let _ = socket.recv(|bytes| {
 					data.extend_from_slice(bytes);
@@ -255,14 +327,40 @@ impl Overlay {
 			if slot.state == StreamState::Open && !socket.may_recv() && socket.may_send() {
 				socket.close();
 			}
-			if !socket.is_open() {
+			if !socket.is_open() && !(pulled && socket.recv_queue() > 0) {
 				slot.state = StreamState::Closed;
 				slot.socket = None;
 				slot.outgoing = Vec::new();
 				self.sockets.remove(handle);
 				self.events.push_back(Event::StreamClosed(stream));
+				#[cfg(feature = "share")]
+				if stream == Stream::ShareIncoming {
+					listen_again = true;
+				}
 			}
 		}
+		#[cfg(feature = "share")]
+		if listen_again {
+			self.listen_for_share();
+		}
+	}
+
+	/// Waits for a peer to connect to the board's Share server.
+	#[cfg(feature = "share")]
+	pub(super) fn listen_for_share(&mut self) {
+		let slot = self.slot(Stream::ShareIncoming);
+		let receive_buffer = slot.receive_buffer;
+		let mut socket = tcp::Socket::new(
+			tcp::SocketBuffer::new(vec![0; receive_buffer]),
+			tcp::SocketBuffer::new(vec![0; 1024]),
+		);
+		if socket.listen(crate::share::PORT).is_err() {
+			return;
+		}
+		let handle = self.sockets.add(socket);
+		let slot = self.slot(Stream::ShareIncoming);
+		slot.socket = Some(handle);
+		slot.state = StreamState::Listening;
 	}
 
 	#[cfg(feature = "gopher")]

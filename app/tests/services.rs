@@ -361,6 +361,28 @@ fn streams_carry_data_both_ways() {
 }
 
 #[test]
+fn boards_take_share_connections_and_say_from_whom() {
+	let (mut radio, mut overlays) = mesh(2, &[0, 1]);
+	let server = SocketAddrV6::new(address(&radio, 0), esp_ygg_app::share::PORT, 0, 0);
+	let from = address(&radio, 1);
+	overlays[1].1.open_stream(Stream::Share, server).unwrap();
+	let accepted = wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(30),
+		|_, overlays| {
+			while let Some(event) = overlays[0].1.poll_event() {
+				if let Event::StreamAccepted { stream, from } = event {
+					return Some((stream, from));
+				}
+			}
+			None
+		},
+	);
+	assert_eq!(accepted, Some((Stream::ShareIncoming, from)));
+}
+
+#[test]
 fn streams_to_nobody_give_up() {
 	let (mut radio, mut overlays) = mesh(2, &[0]);
 	let nobody = SocketAddrV6::new("200:1234::1".parse().unwrap(), 6667, 0, 0);
