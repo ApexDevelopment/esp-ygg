@@ -20,15 +20,6 @@ rustflags = ["-C", "link-arg=-nostartfiles", "--cfg", 'getrandom_backend="custom
 [target.'cfg(target_arch = "riscv32")']
 rustflags = ["-C", "force-frame-pointers", "--cfg", 'getrandom_backend="custom"']
 
-[alias]
-s3 = "run --release"
-cardputer = "run --release --features cardputer,tui"
-c3 = "run --release --no-default-features --features esp32c3,standard --target riscv32imc-unknown-none-elf"
-c6 = "run --release --no-default-features --features esp32c6,standard --target riscv32imac-unknown-none-elf"
-c6-touch = "run --release --no-default-features --features c6-touch-lcd,tui,standard --target riscv32imac-unknown-none-elf"
-c6-gui = "run --release --no-default-features --features c6-touch-lcd,gui,standard --target riscv32imac-unknown-none-elf"
-esp32 = "run --release --no-default-features --features esp32,standard --target xtensa-esp32-none-elf"
-
 [env]
 ESP_LOG = "info"
 
