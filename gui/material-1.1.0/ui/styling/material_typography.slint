@@ -7,8 +7,10 @@ export struct TextStyle {
 }
 
 export global MaterialTypography {
-    out property <int> regular: 300;
-    out property <int> medium: 600;
+    // Material 3's weights. Slint's are 300 and 600, but it always builds in
+    // 400 as well, so they would cost a third set of glyphs.
+    out property <int> regular: 400;
+    out property <int> medium: 500;
     out property <int> semibold: 900;
 
     out property <TextStyle> display_large: {

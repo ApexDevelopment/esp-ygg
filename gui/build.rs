@@ -29,19 +29,22 @@ fn main() {
 /// screen in Rust.
 #[cfg(any(feature = "gopher", feature = "gemini"))]
 fn write_advances() {
-	let code = advances("ADVANCES", "fonts/Roboto-Regular.ttf")
-		+ &advances("MEDIUM_ADVANCES", "fonts/Roboto-Medium.ttf");
+	const FONT: &str = "fonts/Roboto.ttf";
+	println!("cargo::rerun-if-changed={FONT}");
+	let data = std::fs::read(FONT).expect("reading the font");
+	let code = advances("ADVANCES", &data, 400.0) + &advances("MEDIUM_ADVANCES", &data, 500.0);
 	let out = Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("advances.rs");
 	std::fs::write(out, code).expect("writing the advances");
 }
 
+/// The advances at a weight of the variable font in `data`.
 #[cfg(any(feature = "gopher", feature = "gemini"))]
-fn advances(name: &str, font: &str) -> String {
+fn advances(name: &str, data: &[u8], weight: f32) -> String {
 	/// Material's body_medium text.
 	const SIZE: f32 = 14.0;
-	println!("cargo::rerun-if-changed={font}");
-	let data = std::fs::read(font).expect("reading the font");
-	let face = ttf_parser::Face::parse(&data, 0).expect("parsing the font");
+	let mut face = ttf_parser::Face::parse(data, 0).expect("parsing the font");
+	face.set_variation(ttf_parser::Tag::from_bytes(b"wght"), weight)
+		.expect("a font with weights");
 	let scale = SIZE * 64.0 / f32::from(face.units_per_em());
 	let advances: Vec<String> = (' '..='~')
 		.map(|character| {
@@ -51,7 +54,7 @@ fn advances(name: &str, font: &str) -> String {
 		})
 		.collect();
 	format!(
-		"/// Advances of ' ' to '~' in {font} at body size, in 64ths of a pixel.\npub const {name}: [u32; 95] = [{}];\n",
+		"/// Advances of ' ' to '~' in Roboto at weight {weight}, at body size, in 64ths of a pixel.\npub const {name}: [u32; 95] = [{}];\n",
 		advances.join(", ")
 	)
 }
