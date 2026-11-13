@@ -855,12 +855,12 @@ impl App {
 			}
 			Field::Save => {
 				if self.draft.bridge && !self.draft.can_bridge() {
-					self.notice = Some("Bridging needs a network and peer".into());
+					self.notice = Some("Bridge needs network and peer".into());
 					return;
 				}
 				self.saved = self.draft.clone();
 				self.commands.push_back(Command::Save(self.draft.clone()));
-				self.notice = Some("Saved, restarting".into());
+				self.notice = Some("Restarting".into());
 			}
 			Field::Export => {
 				let text = self.draft.to_text();
@@ -885,7 +885,7 @@ impl App {
 	/// How writing settings to the SD card went.
 	pub fn settings_exported(&mut self, result: Result<(), String>) {
 		self.notice = Some(match result {
-			Ok(()) => format!("Exported to {SETTINGS_FILE}"),
+			Ok(()) => "Exported".into(),
 			Err(problem) => problem,
 		});
 	}
@@ -897,7 +897,7 @@ impl App {
 		self.notice = Some(match imported {
 			Ok(settings) => {
 				self.draft = settings;
-				"Imported, save to apply".into()
+				"Imported, not saved".into()
 			}
 			Err(problem) => problem,
 		});

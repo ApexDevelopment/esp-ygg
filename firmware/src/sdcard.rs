@@ -1,7 +1,6 @@
 //! The microSD slot, which settings are exported to and imported from. The
 //! board only touches its own folder on the card.
 
-use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::RefCell;
@@ -88,10 +87,10 @@ impl Slot {
 			})();
 			match read {
 				Ok(contents) if contents.len() > MAX_FILE_LEN => {
-					Err("The settings file is too big".into())
+					Err("Settings file too big".into())
 				}
 				Ok(contents) => Ok(String::from_utf8_lossy(&contents).into_owned()),
-				Err(Error::NotFound) => Err(format!("No {SETTINGS_FILE} found")),
+				Err(Error::NotFound) => Err("No settings file".into()),
 				Err(error) => Err(problem(error)),
 			}
 		})
@@ -147,10 +146,10 @@ fn settings_path() -> (&'static str, &'static str) {
 fn problem(error: Error<SdCardError>) -> String {
 	warn!("The SD card failed: {error}");
 	match error {
-		Error::DeviceError(_) => "The SD card stopped answering".into(),
-		Error::FormatError(_) | Error::NoSuchVolume => "Use an SD card formatted FAT32".into(),
-		Error::NotEnoughSpace => "The SD card is full".into(),
-		_ => "Reading the SD card failed".into(),
+		Error::DeviceError(_) => "SD card stopped answering".into(),
+		Error::FormatError(_) | Error::NoSuchVolume => "SD card isn't FAT32".into(),
+		Error::NotEnoughSpace => "SD card full".into(),
+		_ => "SD card failed".into(),
 	}
 }
 

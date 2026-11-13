@@ -67,7 +67,7 @@ component NetworkChooser inherits VerticalLayout {
     HorizontalLayout {
         PageTitle {
             horizontal_stretch: 1;
-            text: "WiFi networks";
+            text: "Networks";
         }
 
         TextButton {
@@ -97,7 +97,6 @@ component NetworkChooser inherits VerticalLayout {
 
     Row {
         text: "Other network";
-        supporting_text: "Type its name";
         clickable: true;
 
         clicked => {
@@ -119,7 +118,7 @@ export component SettingsPage inherits VerticalLayout {
             }
 
             Section {
-                text: "This node";
+                text: "Node";
             }
 
             TextRow {
@@ -150,14 +149,14 @@ export component SettingsPage inherits VerticalLayout {
             }
 
             SwitchRow {
-                text: "Join a WiFi network";
+                text: "Join WiFi";
                 checked <=> Setup.bridge;
             }
 
             if Setup.bridge: VerticalLayout {
                 Row {
                     text: "Network";
-                    supporting_text: Setup.ssid == "" ? "Pick one" : Setup.ssid;
+                    supporting_text: Setup.ssid == "" ? "None" : Setup.ssid;
                     clickable: true;
 
                     clicked => {
@@ -176,7 +175,6 @@ export component SettingsPage inherits VerticalLayout {
                     text: "Peer";
                     setting: Setting.peer;
                     value: Setup.peer;
-                    empty: "An IPv4 address and port";
                 }
             }
 
@@ -185,13 +183,13 @@ export component SettingsPage inherits VerticalLayout {
             }
 
             SwitchRow {
-                text: "Run a hotspot";
+                text: "Run hotspot";
                 checked <=> Setup.hotspot;
             }
 
             if Setup.hotspot: VerticalLayout {
                 TextRow {
-                    text: "Network name";
+                    text: "Name";
                     setting: Setting.hotspot_name;
                     value: Setup.hotspot_name;
                 }
@@ -200,7 +198,6 @@ export component SettingsPage inherits VerticalLayout {
                     text: "Password";
                     setting: Setting.hotspot_password;
                     value: Setup.hotspot_password;
-                    empty: "None, open";
                 }
             }
 
@@ -209,7 +206,7 @@ export component SettingsPage inherits VerticalLayout {
                 spacing: 8px;
 
                 FilledButton {
-                    text: "Save and restart";
+                    text: "Save & restart";
 
                     clicked => {
                         Setup.save();
@@ -217,7 +214,7 @@ export component SettingsPage inherits VerticalLayout {
                 }
 
                 OutlineButton {
-                    text: "Export to SD card";
+                    text: "Export to SD";
 
                     clicked => {
                         Setup.export();
@@ -225,7 +222,7 @@ export component SettingsPage inherits VerticalLayout {
                 }
 
                 OutlineButton {
-                    text: "Import from SD card";
+                    text: "Import from SD";
 
                     clicked => {
                         Setup.import();

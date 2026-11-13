@@ -242,7 +242,7 @@ fn edits_and_saves_settings() {
 	press(&mut app, &[Key::Down; 3]);
 	press(&mut app, &[Key::Enter]);
 	assert!(commands(&mut app).is_empty());
-	assert!(screen(&app).join("\n").contains("needs a network and peer"));
+	assert!(screen(&app).join("\n").contains("needs network and peer"));
 	// Peer
 	press(&mut app, &[Key::Up; 3]);
 	press(&mut app, &[Key::Enter]);
@@ -341,7 +341,7 @@ fn exports_and_imports_settings_through_the_sd_card() {
 	press(&mut app, &[Key::Down, Key::Enter]);
 	assert_eq!(commands(&mut app), [Command::ImportSettings]);
 	app.settings_imported(Ok("channel = 6".into()));
-	assert!(screen(&app).join("\n").contains("save to apply"));
+	assert!(screen(&app).join("\n").contains("not saved"));
 	assert_eq!((app.draft.name.as_str(), app.draft.channel), ("kitchen", 6));
 	app.settings_imported(Ok("channel = 60".into()));
 	assert!(screen(&app).join("\n").contains("Line 1: Channels go"));

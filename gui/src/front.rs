@@ -3,7 +3,6 @@
 //! the settings page and typed on the keyboard.
 
 use alloc::collections::VecDeque;
-use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -14,7 +13,7 @@ use esp_ygg_app::Settings;
 use esp_ygg_app::settings::TextSetting;
 use esp_ygg_app::time::{DateTime, format_offset, short_uptime};
 use esp_ygg_app::ui::directory::Directory;
-use esp_ygg_app::ui::{Command, Key, SETTINGS_FILE, Status, WifiNetwork};
+use esp_ygg_app::ui::{Command, Key, Status, WifiNetwork};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use yggdrasil_espnow::PublicKey;
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
@@ -176,7 +175,7 @@ impl Gui {
 	/// How writing settings to the SD card went.
 	pub fn settings_exported(&mut self, result: Result<(), String>) {
 		self.notify(match result {
-			Ok(()) => format!("Exported to {SETTINGS_FILE}"),
+			Ok(()) => "Exported".into(),
 			Err(problem) => problem,
 		});
 	}
@@ -189,7 +188,7 @@ impl Gui {
 			Ok(settings) => {
 				self.draft = settings;
 				self.show_settings();
-				self.notify("Imported, save to apply".into());
+				self.notify("Imported, not saved".into());
 			}
 			Err(problem) => self.notify(problem),
 		}
@@ -218,12 +217,12 @@ impl Gui {
 			Action::Save => {
 				self.take_switches();
 				if self.draft.bridge && !self.draft.can_bridge() {
-					self.notify("Bridging needs a network and peer".into());
+					self.notify("Bridge needs network and peer".into());
 					return;
 				}
 				self.saved = self.draft.clone();
 				self.commands.push_back(Command::Save(self.draft.clone()));
-				self.notify("Saved, restarting".into());
+				self.notify("Restarting".into());
 			}
 			Action::Export => {
 				self.take_switches();

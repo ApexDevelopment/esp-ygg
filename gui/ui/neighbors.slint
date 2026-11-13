@@ -21,11 +21,11 @@ component SignalBars {
 
 export component NeighborsPage inherits VerticalLayout {
     PageTitle {
-        text: "ESP-NOW Neighbors";
+        text: "Radio";
     }
 
     if Node.neighbors.length == 0: EmptyNote {
-        text: "No boards in radio range";
+        text: "None in range";
     }
 
     ListView {
