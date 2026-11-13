@@ -174,20 +174,40 @@ impl Overlay {
 		{
 			hotspot.handle_timeout(now);
 		}
-		self.interface
-			.poll(to_smoltcp(now), &mut self.device, &mut self.sockets);
-		self.run_services(node, board, now);
-		// Send whatever the services just queued.
-		self.interface
-			.poll(to_smoltcp(now), &mut self.device, &mut self.sockets);
+		// Packets to this node come straight back, and their answers may
+		// too, so a ping to itself goes round a few times.
+		for _ in 0..LOOPBACK_ROUNDS {
+			self.interface
+				.poll(to_smoltcp(now), &mut self.device, &mut self.sockets);
+			self.run_services(node, board, now);
+			// Send whatever the services just queued.
+			self.interface
+				.poll(to_smoltcp(now), &mut self.device, &mut self.sockets);
+			if !self.send_outgoing(node) {
+				break;
+			}
+		}
+	}
+
+	/// Sends what the stack queued. Returns whether any of it was to this
+	/// node, which the mesh cannot deliver, and so was kept to receive.
+	fn send_outgoing<P: Platform>(&mut self, node: &mut Node<P>) -> bool {
+		let own = self.address.octets();
+		let mut looped = false;
 		while let Some(packet) = self.device.outgoing.pop_front() {
+			let to = destination(&packet);
 			match &mut self.hotspot {
-				Some(hotspot) if hotspot.in_subnet(&destination(&packet)) => hotspot.send(packet),
+				_ if to == own => {
+					self.device.received.push_back(packet);
+					looped = true;
+				}
+				Some(hotspot) if hotspot.in_subnet(&to) => hotspot.send(packet),
 				_ => {
 					let _ = node.send_ipv6(&packet);
 				}
 			}
 		}
+		looped
 	}
 
 	#[cfg_attr(
@@ -279,6 +299,10 @@ impl Overlay {
 }
 
 /// An IPv6 packet's destination address, or `::` if it is too short to have one.
+/// How many times a packet to this node, then its answer, can go round in
+/// one poll.
+const LOOPBACK_ROUNDS: usize = 4;
+
 fn destination(packet: &[u8]) -> [u8; 16] {
 	packet
 		.get(24..40)

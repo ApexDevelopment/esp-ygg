@@ -205,6 +205,28 @@ fn answers_unknown_paths_with_not_found() {
 }
 
 #[test]
+fn a_board_reaches_itself_at_once() {
+	let (mut radio, mut overlays) = mesh(2, &[0]);
+	let own = address(&radio, 0);
+	let overlay = &mut overlays[0].1;
+	overlay.ping(own, radio.nodes[0].now()).unwrap();
+	let console = SocketAddrV6::new(own, CONSOLE_PORT, 0, 0);
+	overlay.send_datagram(console, b"hello").unwrap();
+	tick(&mut radio, &mut overlays);
+	let events: Vec<Event> = std::iter::from_fn(|| overlays[0].1.poll_event()).collect();
+	assert!(
+		events
+			.iter()
+			.any(|event| matches!(event, Event::PingReply { from, .. } if *from == own))
+	);
+	assert!(
+		events
+			.iter()
+			.any(|event| matches!(event, Event::Datagram { data, .. } if data == b"hello"))
+	);
+}
+
+#[test]
 fn pings_to_nobody_time_out() {
 	let (mut radio, mut overlays) = mesh(2, &[0]);
 	let nobody: Ipv6Addr = "200:1234::1".parse().unwrap();
