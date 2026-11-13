@@ -117,13 +117,13 @@ impl Client {
 
 	fn connect(&mut self, commands: &mut Commands) {
 		let Some(server) = parse_server(&self.form[0].text) else {
-			self.error = Some("Enter the server as an address or [address]:port".into());
+			self.error = Some("Server is not an address".into());
 			self.field = 0;
 			return;
 		};
 		let nick = self.form[1].text.trim();
 		if nick.is_empty() || nick.contains(' ') {
-			self.error = Some("Choose a nick without spaces".into());
+			self.error = Some("Nick has spaces".into());
 			self.field = 1;
 			return;
 		}
