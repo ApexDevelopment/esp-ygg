@@ -1,0 +1,108 @@
+import { MaterialPalette, MaterialText, MaterialTypography } from "@material/material.slint";
+
+/// What someone said, under their name, or what happened, without one.
+export component ChatLine inherits VerticalLayout {
+    in property <string> from;
+    in property <string> text;
+    /// Said from here.
+    in property <bool> mine;
+
+    padding_left: 16px;
+    padding_right: 16px;
+    padding_top: 4px;
+    padding_bottom: 4px;
+
+    MaterialText {
+        height: root.from == "" ? 0 : self.preferred_height;
+        text: root.from;
+        style: MaterialTypography.label_small;
+        color: root.mine ? MaterialPalette.on_surface_variant : MaterialPalette.primary;
+        overflow: elide;
+    }
+
+    MaterialText {
+        text: root.text;
+        style: MaterialTypography.body_medium;
+        color: root.from == "" ? MaterialPalette.on_surface_variant : MaterialPalette.on_surface;
+        wrap: word_wrap;
+    }
+}
+
+/// Where a message is written, which opens the keyboard, beside a button
+/// for something else, such as changing who it goes to.
+export component ComposeBar inherits HorizontalLayout {
+    in property <string> placeholder;
+    in property <image> icon;
+    /// Shown on the button when more than none.
+    in property <int> badge;
+
+    callback write();
+    callback button();
+
+    padding_left: 16px;
+    padding_right: 4px;
+    padding_bottom: 8px;
+    spacing: 4px;
+    height: 48px;
+
+    Rectangle {
+        horizontal_stretch: 1;
+        border_radius: self.height / 2;
+        background: write.pressed ? MaterialPalette.surface_container_highest.mix(MaterialPalette.on_surface, 0.9) : MaterialPalette.surface_container_highest;
+
+        write := TouchArea {
+            clicked => {
+                root.write();
+            }
+        }
+
+        MaterialText {
+            x: 16px;
+            width: parent.width - 32px;
+            height: parent.height;
+            text: root.placeholder;
+            style: MaterialTypography.body_medium;
+            color: MaterialPalette.on_surface_variant;
+            vertical_alignment: center;
+            overflow: elide;
+        }
+    }
+
+    button := TouchArea {
+        width: 40px;
+
+        clicked => {
+            root.button();
+        }
+
+        Rectangle {
+            width: 40px;
+            height: 40px;
+            border_radius: self.height / 2;
+            background: button.pressed ? MaterialPalette.on_surface.transparentize(0.9) : transparent;
+
+            Image {
+                width: 24px;
+                height: 24px;
+                source: root.icon;
+                colorize: MaterialPalette.on_surface_variant;
+            }
+
+            if root.badge > 0: Rectangle {
+                x: parent.width - self.width;
+                y: 0;
+                width: max(16px, count.preferred_width + 8px);
+                height: 16px;
+                border_radius: self.height / 2;
+                background: MaterialPalette.error;
+
+                count := Text {
+                    text: root.badge;
+                    font_size: MaterialTypography.label_small.font_size;
+                    font_weight: MaterialTypography.label_small.font_weight;
+                    color: MaterialPalette.on_error;
+                }
+            }
+        }
+    }
+}

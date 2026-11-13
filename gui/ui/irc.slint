@@ -1,0 +1,179 @@
+import { MaterialPalette, MaterialText, MaterialTypography } from "@material/material.slint";
+import { ChatLine, ComposeBar } from "chat.slint";
+import { AppBar, EmptyNote, PageTitle, Row } from "page.slint";
+import { App, Irc, IrcField, Launcher } from "state.slint";
+import { Button, ButtonKind, Scroller } from "widgets.slint";
+
+/// A field of the form, which opens the keyboard.
+component FormRow inherits Row {
+    in property <IrcField> field;
+    in property <string> value;
+
+    supporting_text: root.value == "" ? "None" : root.value;
+    clickable: true;
+
+    clicked => {
+        Irc.edit(root.field);
+    }
+}
+
+/// Where to connect, and as whom.
+component Setup inherits VerticalLayout {
+    AppBar {
+        text: "IRC";
+
+        back => {
+            Launcher.open = App.none;
+        }
+
+        VerticalLayout {
+            alignment: center;
+
+            Button {
+                text: "Connect";
+                kind: ButtonKind.text;
+
+                clicked => {
+                    Irc.connect();
+                }
+            }
+        }
+    }
+
+    FormRow {
+        text: "Server";
+        field: IrcField.server;
+        value: Irc.server;
+    }
+
+    FormRow {
+        text: "Nick";
+        field: IrcField.nick;
+        value: Irc.nick;
+    }
+
+    FormRow {
+        text: "Channel";
+        field: IrcField.channel;
+        value: Irc.channel;
+    }
+
+    if Irc.error != "": HorizontalLayout {
+        padding_left: 16px;
+        padding_right: 16px;
+        padding_top: 4px;
+
+        MaterialText {
+            text: Irc.error;
+            style: MaterialTypography.body_medium;
+            color: MaterialPalette.error;
+            wrap: word_wrap;
+        }
+    }
+}
+
+/// The conversations, to switch between, and ways to start another or
+/// leave.
+component Buffers inherits VerticalLayout {
+    HorizontalLayout {
+        PageTitle {
+            horizontal_stretch: 1;
+            text: "Chats";
+        }
+
+        Button {
+            text: "Cancel";
+            kind: ButtonKind.text;
+
+            clicked => {
+                Irc.choosing = false;
+            }
+        }
+    }
+
+    // One list, so the rows after the conversations scroll with them.
+    Scroller {
+        VerticalLayout {
+            alignment: start;
+
+            for buffer in Irc.buffers: Row {
+                text: buffer.name;
+                supporting_text: buffer.unread > 0 ? "\{buffer.unread} new" : "";
+                clickable: true;
+
+                clicked => {
+                    Irc.choosing = false;
+                    Irc.switch_to(buffer.name);
+                }
+            }
+
+            Row {
+                text: "Join a channel";
+                clickable: true;
+
+                clicked => {
+                    Irc.choosing = false;
+                    Irc.join();
+                }
+            }
+
+            Row {
+                text: "Disconnect";
+                clickable: true;
+
+                clicked => {
+                    Irc.choosing = false;
+                    Irc.disconnect();
+                }
+            }
+        }
+    }
+}
+
+/// One conversation, newest first.
+component Chat inherits VerticalLayout {
+    AppBar {
+        text: Irc.buffer;
+
+        back => {
+            Launcher.open = App.none;
+        }
+    }
+
+    ComposeBar {
+        placeholder: Irc.buffer == "server" ? "Command" : "Message \{Irc.buffer}";
+        icon: @image-url("../icons/forum.svg");
+        badge: Irc.others_unread;
+
+        write => {
+            Irc.write();
+        }
+
+        button => {
+            Irc.choosing = true;
+        }
+    }
+
+    if Irc.connecting && Irc.lines.length <= 1: EmptyNote {
+        text: "Connecting…";
+    }
+
+    // Not a list view, whose rows cannot grow to fit wrapped text.
+    Scroller {
+        VerticalLayout {
+            alignment: start;
+
+            for line in Irc.lines: ChatLine {
+                from: line.from;
+                text: line.text;
+                mine: line.mine;
+            }
+        }
+    }
+}
+
+export component IrcPage inherits VerticalLayout {
+    if !Irc.connected: Setup { }
+    if Irc.connected && Irc.choosing: Buffers { }
+    if Irc.connected && !Irc.choosing: Chat { }
+}

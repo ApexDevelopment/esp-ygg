@@ -12,9 +12,10 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use esp_ygg_app::Event;
+use esp_ygg_app::Stream;
 use esp_ygg_app::ui::{Neighbor, Status, Uplink};
 use esp_ygg_app::{BoardInfo, Settings};
-use esp_ygg_gui::{App, Console, Gui, Launcher, Ping, Setup};
+use esp_ygg_gui::{App, Console, Gui, Irc, IrcField, Launcher, Ping, Setup};
 use slint::ComponentHandle;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel};
 use slint::platform::{Platform, WindowAdapter};
@@ -69,6 +70,59 @@ fn main() {
 	save_settings_scrolled(&mut gui, &window, &folder);
 	save_ping(&mut gui, &window, &folder, &keys);
 	save_console(&mut gui, &window, &folder, &keys);
+	save_irc(&mut gui, &window, &folder);
+}
+
+/// Saves IRC in both orientations: the form, then a channel after some
+/// talk, then the list of conversations.
+fn save_irc(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str) {
+	use esp_ygg_app::ui::Key;
+	gui.window().global::<Launcher>().set_open(App::Irc);
+	gui.window().global::<Irc>().invoke_edit(IrcField::Server);
+	gui.tick();
+	for character in "200::5".chars() {
+		gui.type_key(Key::Char(character));
+	}
+	gui.type_key(Key::Enter);
+	gui.tick();
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		save_screen(window, folder, &format!("irc-{orientation}-form"));
+	}
+	gui.window().global::<Irc>().invoke_connect();
+	gui.tick();
+	gui.handle_event(Event::StreamOpened(Stream::Irc));
+	let lines = [
+		":irc.test 001 esp-ygg :Welcome to the mesh",
+		":esp-ygg!u@200::1 JOIN #esp-ygg",
+		":ada!a@200::2 PRIVMSG #esp-ygg :hello from the desktop",
+		":ada!a@200::2 PRIVMSG #esp-ygg :\u{1}ACTION waves\u{1}",
+		":bob!b@200::3 PRIVMSG esp-ygg :psst, over here",
+	];
+	for line in lines {
+		gui.handle_event(Event::StreamData {
+			stream: Stream::Irc,
+			data: format!("{line}\r\n").into_bytes(),
+		});
+	}
+	gui.tick();
+	gui.window().global::<Irc>().invoke_write();
+	gui.tick();
+	for character in "hi ada, it works on the touch board too".chars() {
+		gui.type_key(Key::Char(character));
+	}
+	gui.type_key(Key::Enter);
+	gui.tick();
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		save_screen(window, folder, &format!("irc-{orientation}"));
+	}
+	gui.window().global::<Irc>().set_choosing(true);
+	gui.tick();
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		save_screen(window, folder, &format!("irc-{orientation}-chats"));
+	}
 }
 
 /// Saves the launcher with a message waiting, then the Console in both

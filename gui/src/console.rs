@@ -10,7 +10,7 @@ use esp_ygg_app::CONSOLE_PORT;
 use esp_ygg_app::ui::Command;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-use crate::{ConsoleLine, Launcher, MainWindow};
+use crate::{ChatEntry, Launcher, MainWindow};
 
 /// The most messages kept. Each is laid out whether showing or not.
 const LOG_LINES: usize = 30;
@@ -18,7 +18,7 @@ const LOG_LINES: usize = 30;
 pub struct Console {
 	window: MainWindow,
 	target: Option<SocketAddrV6>,
-	log: Rc<VecModel<ConsoleLine>>,
+	log: Rc<VecModel<ChatEntry>>,
 	unread: i32,
 }
 
@@ -53,7 +53,7 @@ impl Console {
 			return None;
 		}
 		let label = self.global().get_target();
-		self.add_line(ConsoleLine {
+		self.add_line(ChatEntry {
 			from: format!("To {label}").into(),
 			text: text.into(),
 			mine: true,
@@ -72,7 +72,7 @@ impl Console {
 			self.set_target(reply_to, label.clone());
 		}
 		let text = String::from_utf8_lossy(data);
-		self.add_line(ConsoleLine {
+		self.add_line(ChatEntry {
 			from: label.into(),
 			text: text.trim_end().into(),
 			mine: false,
@@ -95,7 +95,7 @@ impl Console {
 		true
 	}
 
-	fn add_line(&self, line: ConsoleLine) {
+	fn add_line(&self, line: ChatEntry) {
 		self.log.insert(0, line);
 		if self.log.row_count() > LOG_LINES {
 			self.log.remove(LOG_LINES);

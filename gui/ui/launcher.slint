@@ -72,9 +72,11 @@ export component LauncherPage {
     for app[index] in Launcher.apps: AppTile {
         x: 8px + mod(index, root.columns) * root.tile_width;
         y: 8px + floor(index / root.columns) * root.tile_height;
-        icon: app == App.console ? @image-url("../icons/terminal.svg") : @image-url("../icons/network_ping.svg");
-        text: app == App.console ? "Console" : "Ping";
-        badge: app == App.console ? Launcher.console_unread : 0;
+        icon: app == App.console ? @image-url("../icons/terminal.svg")
+            : app == App.irc ? @image-url("../icons/tag.svg")
+            : @image-url("../icons/network_ping.svg");
+        text: app == App.console ? "Console" : app == App.irc ? "IRC" : "Ping";
+        badge: app == App.console ? Launcher.console_unread : app == App.irc ? Launcher.irc_unread : 0;
 
         clicked => {
             Launcher.open = app;

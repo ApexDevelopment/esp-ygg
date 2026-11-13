@@ -3,7 +3,7 @@
 //! the apps and on the settings page, and typed on the keyboard.
 
 use alloc::collections::VecDeque;
-#[cfg(feature = "console")]
+#[cfg(any(feature = "console", feature = "irc"))]
 use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
@@ -13,6 +13,8 @@ use core::net::Ipv6Addr;
 #[cfg(feature = "console")]
 use core::net::SocketAddrV6;
 
+#[cfg(feature = "irc")]
+use esp_ygg_app::Stream;
 use esp_ygg_app::settings::TextSetting;
 use esp_ygg_app::time::{DateTime, format_offset, short_uptime};
 use esp_ygg_app::ui::directory::Directory;
@@ -24,6 +26,8 @@ use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
 #[cfg(feature = "console")]
 use crate::console::Console;
+#[cfg(feature = "irc")]
+use crate::irc::Irc;
 use crate::ping::Pinger;
 use crate::{
 	App, Keyboard, Launcher, MainWindow, NeighborEntry, Node, NodeEntry, Notice, Ping, Setting,
@@ -41,6 +45,14 @@ const DESTINATION_LEN: usize = 53;
 /// The longest message the console sends.
 #[cfg(feature = "console")]
 const MESSAGE_LEN: usize = 200;
+#[cfg(feature = "irc")]
+const IRC_NICK_LEN: usize = 30;
+/// The longest server or channel name.
+#[cfg(feature = "irc")]
+const IRC_NAME_LEN: usize = 52;
+/// The longest IRC message, leaving room on the line for its command.
+#[cfg(feature = "irc")]
+const IRC_LINE_LEN: usize = esp_ygg_app::irc::MAX_LINE - 100;
 
 /// What the interface asked for, until the next tick.
 enum Action {
@@ -57,6 +69,18 @@ enum Action {
 	TypeConsoleAddress,
 	#[cfg(feature = "console")]
 	WriteMessage,
+	#[cfg(feature = "irc")]
+	EditIrc(crate::IrcField),
+	#[cfg(feature = "irc")]
+	ConnectIrc,
+	#[cfg(feature = "irc")]
+	WriteIrc,
+	#[cfg(feature = "irc")]
+	SwitchIrc(SharedString),
+	#[cfg(feature = "irc")]
+	JoinIrc,
+	#[cfg(feature = "irc")]
+	DisconnectIrc,
 	PickNetwork(WifiEntry),
 	Save,
 	Export,
@@ -77,6 +101,14 @@ enum Field {
 	ConsoleAddress,
 	#[cfg(feature = "console")]
 	Message,
+	#[cfg(feature = "irc")]
+	IrcForm(crate::IrcField),
+	/// A message or command to the IRC conversation showing.
+	#[cfg(feature = "irc")]
+	IrcLine,
+	/// A channel to join.
+	#[cfg(feature = "irc")]
+	IrcJoin,
 }
 
 impl Field {
@@ -88,6 +120,12 @@ impl Field {
 			Field::ConsoleAddress => DESTINATION_LEN,
 			#[cfg(feature = "console")]
 			Field::Message => MESSAGE_LEN,
+			#[cfg(feature = "irc")]
+			Field::IrcForm(crate::IrcField::Nick) => IRC_NICK_LEN,
+			#[cfg(feature = "irc")]
+			Field::IrcForm(_) | Field::IrcJoin => IRC_NAME_LEN,
+			#[cfg(feature = "irc")]
+			Field::IrcLine => IRC_LINE_LEN,
 		}
 	}
 
@@ -115,6 +153,8 @@ pub struct Gui {
 	ping: Pinger,
 	#[cfg(feature = "console")]
 	console: Console,
+	#[cfg(feature = "irc")]
+	irc: Irc,
 	/// The settings in use.
 	saved: Settings,
 	/// The settings as edited, until saved.
@@ -149,6 +189,8 @@ impl Gui {
 				App::Ping,
 				#[cfg(feature = "console")]
 				App::Console,
+				#[cfg(feature = "irc")]
+				App::Irc,
 			]))));
 		let gui = Gui {
 			window: window.clone_strong(),
@@ -160,6 +202,8 @@ impl Gui {
 			ping,
 			#[cfg(feature = "console")]
 			console: Console::new(&window),
+			#[cfg(feature = "irc")]
+			irc: Irc::new(&window, &settings.name),
 			draft: settings.clone(),
 			saved: settings,
 			editing: None,
@@ -211,6 +255,18 @@ impl Gui {
 				}
 				self.console.received(from, label, &data, viewing);
 			}
+			#[cfg(feature = "irc")]
+			Event::StreamOpened(Stream::Irc) => self.irc.opened(&mut self.commands),
+			#[cfg(feature = "irc")]
+			Event::StreamData {
+				stream: Stream::Irc,
+				data,
+			} => {
+				self.irc.refresh(self.viewing_irc());
+				self.irc.received(&data, &mut self.commands);
+			}
+			#[cfg(feature = "irc")]
+			Event::StreamClosed(Stream::Irc) => self.irc.closed(),
 			// Other apps' events, in builds with them
 			#[allow(unreachable_patterns)]
 			_ => {}
@@ -232,10 +288,12 @@ impl Gui {
 		if self.viewing(App::Console) && self.console.mark_read() {
 			self.notify(String::new());
 		}
+		#[cfg(feature = "irc")]
+		self.irc.refresh(self.viewing_irc());
 		let choosing = match self.window.global::<Launcher>().get_open() {
 			App::Ping => self.window.global::<Ping>().get_choosing(),
 			App::Console => self.window.global::<crate::Console>().get_choosing(),
-			App::None => false,
+			App::Irc | App::None => false,
 		};
 		let wanted: Vec<PublicKey> = match self.window.get_page() {
 			0 if choosing => status.nodes(),
@@ -328,6 +386,28 @@ impl Gui {
 			}
 			#[cfg(feature = "console")]
 			Action::TypeConsoleAddress => self.open_keyboard(Field::ConsoleAddress, "Address".into()),
+			#[cfg(feature = "irc")]
+			Action::EditIrc(field) => {
+				let label = match field {
+					crate::IrcField::Server => "Server",
+					crate::IrcField::Nick => "Nick",
+					crate::IrcField::Channel => "Channel",
+				};
+				self.open_keyboard(Field::IrcForm(field), label.into());
+			}
+			#[cfg(feature = "irc")]
+			Action::ConnectIrc => self.irc.connect(&mut self.commands),
+			#[cfg(feature = "irc")]
+			Action::WriteIrc => {
+				let label = self.irc.current().into();
+				self.open_keyboard(Field::IrcLine, label);
+			}
+			#[cfg(feature = "irc")]
+			Action::SwitchIrc(name) => self.irc.switch_to(&name),
+			#[cfg(feature = "irc")]
+			Action::JoinIrc => self.open_keyboard(Field::IrcJoin, "Channel".into()),
+			#[cfg(feature = "irc")]
+			Action::DisconnectIrc => self.irc.submit("/quit", &mut self.commands),
 			#[cfg(feature = "console")]
 			Action::WriteMessage => {
 				let label = self.window.global::<crate::Console>().get_target();
@@ -395,6 +475,10 @@ impl Gui {
 				.unwrap_or_default(),
 			#[cfg(feature = "console")]
 			Field::Message => String::new(),
+			#[cfg(feature = "irc")]
+			Field::IrcForm(field) => self.irc.form(field),
+			#[cfg(feature = "irc")]
+			Field::IrcLine | Field::IrcJoin => String::new(),
 		};
 		self.editing = Some(Edit { field, text });
 		let keyboard = self.window.global::<Keyboard>();
@@ -453,6 +537,29 @@ impl Gui {
 			Field::Message => {
 				let command = self.console.send(&edit.text);
 				self.commands.extend(command);
+				Ok(())
+			}
+			#[cfg(feature = "irc")]
+			Field::IrcForm(field) => {
+				self.irc.set_form(field, &edit.text);
+				Ok(())
+			}
+			#[cfg(feature = "irc")]
+			Field::IrcLine => {
+				let text = edit.text.clone();
+				self.irc.submit(&text, &mut self.commands);
+				Ok(())
+			}
+			#[cfg(feature = "irc")]
+			Field::IrcJoin => {
+				let channel = edit.text.trim();
+				let channel = if channel.starts_with(['#', '&']) {
+					String::from(channel)
+				} else {
+					format!("#{channel}")
+				};
+				self.irc
+					.submit(&format!("/join {channel}"), &mut self.commands);
 				Ok(())
 			}
 		};
@@ -524,8 +631,14 @@ impl Gui {
 		}
 	}
 
+	/// Whether a conversation in IRC is showing.
+	#[cfg(feature = "irc")]
+	fn viewing_irc(&self) -> bool {
+		self.viewing(App::Irc) && !self.window.global::<crate::Irc>().get_choosing()
+	}
+
 	/// Whether `app` is open and showing.
-	#[cfg(feature = "console")]
+	#[cfg(any(feature = "console", feature = "irc"))]
 	fn viewing(&self, app: App) -> bool {
 		self.window.get_page() == 0 && self.window.global::<Launcher>().get_open() == app
 	}
@@ -614,6 +727,18 @@ fn connect(window: &MainWindow, actions: &Rc<RefCell<VecDeque<Action>>>) {
 				.push_back(Action::PickConsoleTarget(node))
 		});
 	}
+	#[cfg(feature = "irc")]
+	{
+		let irc = window.global::<crate::Irc>();
+		irc.on_connect(queue(|| Action::ConnectIrc));
+		irc.on_write(queue(|| Action::WriteIrc));
+		irc.on_join(queue(|| Action::JoinIrc));
+		irc.on_disconnect(queue(|| Action::DisconnectIrc));
+		let edits = actions.clone();
+		irc.on_edit(move |field| edits.borrow_mut().push_back(Action::EditIrc(field)));
+		let switches = actions.clone();
+		irc.on_switch_to(move |name| switches.borrow_mut().push_back(Action::SwitchIrc(name)));
+	}
 	let keyboard = window.global::<Keyboard>();
 	let keys = actions.clone();
 	keyboard.on_key(move |text| keys.borrow_mut().push_back(Action::Key(text)));
@@ -654,7 +779,7 @@ fn shown_value(field: Field, text: &str) -> String {
 
 /// Changes `model` to hold `rows`, touching only rows that differ, so the
 /// lists keep their place and only what changed is drawn again.
-fn sync<T: Clone + PartialEq + 'static>(model: &VecModel<T>, rows: Vec<T>) {
+pub(crate) fn sync<T: Clone + PartialEq + 'static>(model: &VecModel<T>, rows: Vec<T>) {
 	for (index, row) in rows.iter().enumerate() {
 		if index >= model.row_count() {
 			model.push(row.clone());

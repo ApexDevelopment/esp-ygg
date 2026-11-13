@@ -34,6 +34,7 @@ export enum App {
     none,
     ping,
     console,
+    irc,
 }
 
 /// The app open on the home page, if any, over the launcher.
@@ -43,6 +44,8 @@ export global Launcher {
     in property <[App]> apps: [App.ping];
     /// Messages to the console since it was last open.
     in property <int> console_unread;
+    /// Lines in IRC conversations not yet looked at.
+    in property <int> irc_unread;
 }
 
 /// The Ping app, run from Rust.
@@ -72,8 +75,9 @@ export struct WifiEntry {
     secured: bool,
 }
 
-export struct ConsoleLine {
-    /// Who sent it, or who it went to.
+/// A line of a conversation.
+export struct ChatEntry {
+    /// Who sent it, or who it went to, or empty for what happened.
     from: string,
     text: string,
     /// Sent from here.
@@ -88,7 +92,7 @@ export global Console {
     /// Where messages are listened for.
     in property <int> port;
     /// Messages sent and received, newest first.
-    in property <[ConsoleLine]> log;
+    in property <[ChatEntry]> log;
     /// Whether the nodes to choose from are showing.
     in_out property <bool> choosing;
 
@@ -97,6 +101,47 @@ export global Console {
     callback type_address();
     /// Opens the keyboard for a message.
     callback write();
+}
+
+export enum IrcField {
+    server,
+    nick,
+    channel,
+}
+
+export struct IrcBuffer {
+    /// A channel, a nick, or the server's own.
+    name: string,
+    unread: int,
+}
+
+/// The IRC client, run from Rust.
+export global Irc {
+    /// Whether connected, or connecting, rather than setting up.
+    in property <bool> connected;
+    in property <bool> connecting;
+    /// The form to connect with.
+    in property <string> server;
+    in property <string> nick;
+    in property <string> channel;
+    in property <string> error;
+    /// The conversation showing, its lines newest first, and the others.
+    in property <string> buffer;
+    in property <[ChatEntry]> lines;
+    in property <[IrcBuffer]> buffers;
+    in property <int> others_unread;
+    /// Whether the conversations to switch between are showing.
+    in_out property <bool> choosing;
+
+    /// Opens the keyboard on a field of the form.
+    callback edit(IrcField);
+    callback connect();
+    /// Opens the keyboard for a message, or a command such as /join.
+    callback write();
+    callback switch_to(string);
+    /// Opens the keyboard for a channel to join.
+    callback join();
+    callback disconnect();
 }
 
 /// The settings typed in, one at a time, on the keyboard.

@@ -8,6 +8,8 @@ extern crate alloc;
 #[cfg(feature = "console")]
 mod console;
 mod front;
+#[cfg(feature = "irc")]
+mod irc;
 mod ping;
 
 pub use front::Gui;

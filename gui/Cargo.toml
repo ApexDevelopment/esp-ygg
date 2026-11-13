@@ -12,9 +12,10 @@ yggdrasil-espnow = { path = "../node" }
 slint = { version = "1.18.1", default-features = false, features = ["compat-1-2", "unsafe-single-threaded", "libm", "renderer-software"] }
 
 [features]
-default = ["console"]
-# The UDP console app
+default = ["console", "irc"]
+# The apps beyond Ping, each with the app crate's feature of the same name
 console = ["esp-ygg-app/console"]
+irc = ["esp-ygg-app/irc"]
 
 [build-dependencies]
 slint-build = "1.18.1"
