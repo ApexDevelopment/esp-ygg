@@ -132,16 +132,19 @@ unsafe fn mark_stack(bottom: *mut u8, len: usize) {
 	STACK_LEN.store(len, Ordering::Relaxed);
 }
 
-/// Marks `len` bytes of the calling thread's stack below this call as
-/// unused, for a thread whose stack was allocated where it cannot be seen.
+/// Marks the calling thread's stack below this call as unused, for a thread
+/// whose stack of `size` bytes was allocated where it cannot be seen.
 #[cfg(feature = "c6-touch-lcd")]
 #[inline(never)]
-fn mark_stack_below_here(len: usize) {
+fn mark_stack_below_here(size: usize) {
 	let here = 0u8;
 	// Leaves room for this call's own frame and the one it makes.
 	let top = core::ptr::addr_of!(here) as usize - 512;
+	// Leaves room for the frames above this one, too, as marking past the
+	// bottom would scribble on the heap.
+	let len = size - 2048;
 	// SAFETY: the thread has just started, so its stack below here is not
-	// in use, and it is bigger than `len`.
+	// in use, and reaches further down than `len`.
 	unsafe { mark_stack((top - len) as *mut u8, len) };
 }
 
@@ -338,7 +341,7 @@ pub mod own_thread {
 
 	/// Laying out the graphical interface's settings page takes 26 KB, and
 	/// TLS for Gemini 14 KB in a handshake with an elliptic curve
-	/// certificate. esp-rtos adds 6 KB to this.
+	/// certificate.
 	const STACK_SIZE: usize = 40 * 1024;
 	/// WiFi's own threads run above both of these.
 	const NETWORK_PRIORITY: usize = 1;
