@@ -1,14 +1,14 @@
 import { MaterialPalette, MaterialText, MaterialTypography, MaterialWindow, NavigationItem } from "@material/material.slint";
 import { Palette } from "std-widgets.slint";
-import { HomePage } from "home.slint";
+import { LauncherPage } from "launcher.slint";
 import { NeighborsPage } from "neighbors.slint";
 import { OnScreenKeyboard } from "keyboard.slint";
 import { NodesPage } from "nodes.slint";
+import { PingPage } from "ping.slint";
 import { CompactBar, CompactRail } from "rail.slint";
 import { SettingsPage } from "settings.slint";
-import { Notice } from "state.slint";
-import { Keyboard } from "state.slint";
-export { Keyboard, Node, NodeEntry, NeighborEntry, Notice, Setting, Setup, WifiEntry } from "state.slint";
+import { App, Keyboard, Launcher, Notice } from "state.slint";
+export { App, Keyboard, Launcher, Node, NodeEntry, NeighborEntry, Notice, Ping, Setting, Setup, WifiEntry } from "state.slint";
 import "../fonts/Roboto-Regular.ttf";
 import "../fonts/Roboto-Medium.ttf";
 
@@ -16,7 +16,8 @@ import "../fonts/Roboto-Medium.ttf";
 component Pages inherits VerticalLayout {
     in property <int> page;
 
-    if root.page == 0: HomePage { }
+    if root.page == 0 && Launcher.open == App.none: LauncherPage { }
+    if root.page == 0 && Launcher.open == App.ping: PingPage { }
     if root.page == 1: NodesPage { }
     if root.page == 2: NeighborsPage { }
     if root.page == 3: SettingsPage { }

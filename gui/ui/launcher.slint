@@ -1,0 +1,77 @@
+import { MaterialPalette, MaterialTypography } from "@material/material.slint";
+import { App, Launcher } from "state.slint";
+
+struct LauncherEntry {
+    app: App,
+    icon: image,
+    text: string,
+}
+
+/// An app's icon, with its name under it.
+component AppTile {
+    in property <image> icon;
+    in property <string> text;
+
+    callback clicked();
+
+    width: 76px;
+    height: 88px;
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: 8px;
+        width: 56px;
+        height: 56px;
+        border_radius: 16px;
+        background: touch.pressed ? MaterialPalette.primary_container.mix(MaterialPalette.on_primary_container, 0.85) : MaterialPalette.primary_container;
+
+        Image {
+            width: 28px;
+            height: 28px;
+            source: root.icon;
+            colorize: MaterialPalette.on_primary_container;
+        }
+    }
+
+    Text {
+        y: 70px;
+        height: 16px;
+        text: root.text;
+        font_size: MaterialTypography.label_medium.font_size;
+        font_weight: MaterialTypography.label_medium.font_weight;
+        color: MaterialPalette.on_surface;
+        horizontal_alignment: center;
+        overflow: elide;
+    }
+}
+
+/// The apps, in rows as wide as the screen allows.
+export component LauncherPage {
+    property <[LauncherEntry]> apps: [
+        {
+            app: App.ping,
+            icon: @image-url("../icons/network_ping.svg"),
+            text: "Ping",
+        },
+    ];
+    property <length> tile_width: 76px;
+    property <length> tile_height: 88px;
+    property <int> columns: max(1, floor((root.width - 16px) / root.tile_width));
+
+    for entry[index] in root.apps: AppTile {
+        x: 8px + mod(index, root.columns) * root.tile_width;
+        y: 8px + floor(index / root.columns) * root.tile_height;
+        icon: entry.icon;
+        text: entry.text;
+
+        clicked => {
+            Launcher.open = entry.app;
+        }
+    }
+}

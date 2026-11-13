@@ -1,6 +1,6 @@
 import { ListView, MaterialPalette, MaterialText, MaterialTypography } from "@material/material.slint";
 import { EmptyNote, PageTitle, Row } from "page.slint";
-import { Setting, Setup } from "state.slint";
+import { Node, Setting, Setup } from "state.slint";
 import { Button, ButtonKind, Scroller, Toggle } from "widgets.slint";
 
 /// A heading over a group of settings.
@@ -44,6 +44,29 @@ component SwitchRow inherits HorizontalLayout {
         Toggle {
             checked <=> root.checked;
         }
+    }
+}
+
+/// Something about the node that cannot be changed here, in full.
+component InfoRow inherits VerticalLayout {
+    in property <string> text;
+    in property <string> value;
+
+    padding_left: 16px;
+    padding_right: 16px;
+    padding_top: 8px;
+    padding_bottom: 8px;
+
+    MaterialText {
+        text: root.text;
+        style: MaterialTypography.body_large;
+    }
+
+    MaterialText {
+        text: root.value;
+        style: MaterialTypography.body_small;
+        color: MaterialPalette.on_surface_variant;
+        wrap: char_wrap;
     }
 }
 
@@ -121,6 +144,16 @@ export component SettingsPage inherits VerticalLayout {
 
             Section {
                 text: "Node";
+            }
+
+            InfoRow {
+                text: "Address";
+                value: Node.address == "" ? "Starting…" : Node.address;
+            }
+
+            InfoRow {
+                text: "Uptime";
+                value: Node.uptime;
             }
 
             TextRow {

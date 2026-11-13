@@ -81,3 +81,46 @@ export component Row {
         @children
     }
 }
+
+/// The bar along the top of an app, with a way back to the launcher and
+/// room on the right for actions.
+export component AppBar inherits HorizontalLayout {
+    in property <string> text;
+
+    callback back();
+
+    height: 48px;
+    padding_right: 4px;
+
+    TouchArea {
+        width: 48px;
+
+        clicked => {
+            root.back();
+        }
+
+        Rectangle {
+            width: 40px;
+            height: 40px;
+            border_radius: self.height / 2;
+            background: parent.pressed ? MaterialPalette.on_surface.transparentize(0.9) : transparent;
+
+            Image {
+                width: 24px;
+                height: 24px;
+                source: @image-url("../icons/arrow_back.svg");
+                colorize: MaterialPalette.on_surface;
+            }
+        }
+    }
+
+    MaterialText {
+        horizontal_stretch: 1;
+        text: root.text;
+        style: MaterialTypography.title_medium;
+        vertical_alignment: center;
+        overflow: elide;
+    }
+
+    @children
+}

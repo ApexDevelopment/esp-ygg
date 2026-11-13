@@ -23,17 +23,41 @@ export struct NeighborEntry {
 
 /// What the node reports, set from Rust.
 export global Node {
-    in property <string> name: "esp-ygg";
     /// Empty until the node has started.
     in property <string> address;
-    in property <int> neighbor_count;
-    in property <int> peer_count;
-    in property <int> known_count;
     in property <string> uptime;
-    /// In kilobytes.
-    in property <int> free_memory;
     in property <[NodeEntry]> nodes;
     in property <[NeighborEntry]> neighbors;
+}
+
+export enum App {
+    none,
+    ping,
+}
+
+/// The app open on the home page, if any, over the launcher.
+export global Launcher {
+    in_out property <App> open;
+}
+
+/// The Ping app, run from Rust.
+export global Ping {
+    /// The node being pinged, by name or address, or empty before one is
+    /// chosen.
+    in property <string> target;
+    in property <bool> running;
+    /// How many pings were sent, answered, and how quickly.
+    in property <string> summary;
+    /// What became of each ping, newest first.
+    in property <[string]> log;
+    /// Whether the nodes to choose from are showing.
+    in_out property <bool> choosing;
+
+    callback pick(NodeEntry);
+    /// Opens the keyboard for an address.
+    callback type_address();
+    callback start();
+    callback stop();
 }
 
 export struct WifiEntry {

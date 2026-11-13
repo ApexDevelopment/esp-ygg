@@ -11,9 +11,10 @@ use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use esp_ygg_app::Event;
 use esp_ygg_app::ui::{Neighbor, Status, Uplink};
 use esp_ygg_app::{BoardInfo, Settings};
-use esp_ygg_gui::{Gui, Setup};
+use esp_ygg_gui::{App, Gui, Launcher, Ping, Setup};
 use slint::ComponentHandle;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel};
 use slint::platform::{Platform, WindowAdapter};
@@ -66,6 +67,44 @@ fn main() {
 	save_pages(&gui, &window, &folder, "mesh");
 	save_keyboards(&mut gui, &window, &folder);
 	save_settings_scrolled(&mut gui, &window, &folder);
+	save_ping(&mut gui, &window, &folder, &keys);
+}
+
+/// Saves the Ping app in both orientations: choosing a node, then after a
+/// few round trips to it.
+fn save_ping(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str, keys: &[PublicKey]) {
+	gui.window().set_page(0);
+	gui.window().global::<Launcher>().set_open(App::Ping);
+	gui.window().global::<Ping>().set_choosing(true);
+	gui.tick();
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		save_screen(window, folder, &format!("ping-{orientation}-choosing"));
+	}
+	gui.window().global::<Ping>().set_choosing(false);
+	let target = std::net::Ipv6Addr::from(addr_for_key(&keys[0]).0);
+	gui.window().global::<Ping>().invoke_type_address();
+	gui.tick();
+	for character in target.to_string().chars() {
+		gui.type_key(esp_ygg_app::ui::Key::Char(character));
+	}
+	gui.type_key(esp_ygg_app::ui::Key::Enter);
+	for sequence in 1..=4 {
+		let event = if sequence == 3 {
+			Event::PingTimeout { target, sequence }
+		} else {
+			Event::PingReply {
+				from: target,
+				sequence,
+				round_trip: Duration::from_millis(20 + 7 * u64::from(sequence)),
+			}
+		};
+		gui.handle_event(event);
+	}
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		save_screen(window, folder, &format!("ping-{orientation}"));
+	}
 }
 
 /// Saves the keyboard in both orientations: for the name, with letters,

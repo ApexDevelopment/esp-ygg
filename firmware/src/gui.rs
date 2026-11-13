@@ -219,7 +219,7 @@ pub async fn run(board: Board, settings: Settings) {
 				ToUi::Status(status) => gui.set_status(status),
 				ToUi::NodeInfo(key, info) => gui.handle_nodeinfo(key, info.as_deref()),
 				ToUi::Networks(networks) => gui.set_networks(networks),
-				ToUi::Event(_) => {}
+				ToUi::Event(event) => gui.handle_event(event),
 			}
 		}
 		gui.tick();

@@ -1,6 +1,6 @@
 //! Keeps the interface showing what the node reports, asks for the names of
-//! the nodes on the page being looked at, and carries out what is asked on
-//! the settings page and typed on the keyboard.
+//! the nodes on the page being looked at, and carries out what is asked in
+//! the apps and on the settings page, and typed on the keyboard.
 
 use alloc::collections::VecDeque;
 use alloc::rc::Rc;
@@ -9,26 +9,36 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::net::Ipv6Addr;
 
-use esp_ygg_app::Settings;
 use esp_ygg_app::settings::TextSetting;
 use esp_ygg_app::time::{DateTime, format_offset, short_uptime};
 use esp_ygg_app::ui::directory::Directory;
 use esp_ygg_app::ui::{Command, Key, Status, WifiNetwork};
+use esp_ygg_app::{Event, Settings};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use yggdrasil_espnow::PublicKey;
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
+use crate::ping::Pinger;
 use crate::{
-	Keyboard, MainWindow, NeighborEntry, Node, NodeEntry, Notice, Setting, Setup, WifiEntry,
+	App, Keyboard, Launcher, MainWindow, NeighborEntry, Node, NodeEntry, Notice, Ping, Setting,
+	Setup, WifiEntry,
 };
 
 /// The most characters of the text being typed that the keyboard shows,
 /// from the end, as fits its width.
 const SHOWN_TYPED: usize = 24;
+/// The longest an IPv6 address can be written.
+const ADDRESS_LEN: usize = 45;
 
 /// What the interface asked for, until the next tick.
 enum Action {
 	Edit(TextSetting, SharedString),
+	PickPingTarget(NodeEntry),
+	TypePingAddress,
+	StartPing,
+	StopPing,
+	/// Time for the next ping.
+	SendPing,
 	PickNetwork(WifiEntry),
 	Save,
 	Export,
@@ -39,9 +49,32 @@ enum Action {
 	Cancel,
 }
 
-/// A setting being typed on the keyboard.
+/// What is being typed on the keyboard.
+#[derive(Clone, Copy)]
+enum Field {
+	Setting(TextSetting),
+	PingAddress,
+}
+
+impl Field {
+	fn max_len(self) -> usize {
+		match self {
+			Field::Setting(setting) => setting.max_len(),
+			Field::PingAddress => ADDRESS_LEN,
+		}
+	}
+
+	fn is_secret(self) -> bool {
+		matches!(self, Field::Setting(setting) if setting.is_secret())
+	}
+
+	fn is_numeric(self) -> bool {
+		matches!(self, Field::Setting(setting) if setting.is_numeric())
+	}
+}
+
 struct Edit {
-	setting: TextSetting,
+	field: Field,
 	text: String,
 }
 
@@ -52,6 +85,7 @@ pub struct Gui {
 	nodes: Rc<VecModel<NodeEntry>>,
 	neighbors: Rc<VecModel<NeighborEntry>>,
 	networks: Rc<VecModel<WifiEntry>>,
+	ping: Pinger,
 	/// The settings in use.
 	saved: Settings,
 	/// The settings as edited, until saved.
@@ -76,6 +110,10 @@ impl Gui {
 		window
 			.global::<Setup>()
 			.set_networks(ModelRc::from(networks.clone()));
+		let pings = actions.clone();
+		let ping = Pinger::new(&window, move || {
+			pings.borrow_mut().push_back(Action::SendPing);
+		});
 		let gui = Gui {
 			window,
 			directory: Directory::new(),
@@ -83,6 +121,7 @@ impl Gui {
 			nodes,
 			neighbors,
 			networks,
+			ping,
 			draft: settings.clone(),
 			saved: settings,
 			editing: None,
@@ -99,16 +138,8 @@ impl Gui {
 
 	pub fn set_status(&mut self, status: Status) {
 		let node = self.window.global::<Node>();
-		if !status.board.name.is_empty() {
-			node.set_name(status.board.name.as_str().into());
-		}
 		node.set_address(status.address.to_string().into());
-		node.set_neighbor_count(status.connected_neighbors() as i32);
-		node.set_peer_count(status.peers.len() as i32);
-		node.set_known_count(status.known.len() as i32);
 		node.set_uptime(short_uptime(status.board.uptime.as_secs()).into());
-		let free = status.board.free_heap.unwrap_or_default() / 1024;
-		node.set_free_memory(free as i32);
 		self.status = Some(status);
 		self.refresh_lists();
 	}
@@ -121,6 +152,21 @@ impl Gui {
 		self.refresh_lists();
 	}
 
+	/// Takes what became of what the apps asked the network for.
+	pub fn handle_event(&mut self, event: Event) {
+		match event {
+			Event::PingReply {
+				from,
+				sequence,
+				round_trip,
+			} => self.ping.replied(from, sequence, round_trip),
+			Event::PingTimeout { target, sequence } => self.ping.timed_out(target, sequence),
+			// Other apps' events, in builds with them
+			#[allow(unreachable_patterns)]
+			_ => {}
+		}
+	}
+
 	/// Carries out what the interface asked for, and looks up the names of
 	/// nodes on the page showing.
 	pub fn tick(&mut self) {
@@ -131,7 +177,10 @@ impl Gui {
 		let Some(status) = &self.status else {
 			return;
 		};
+		let choosing = self.window.global::<Launcher>().get_open() == App::Ping
+			&& self.window.global::<Ping>().get_choosing();
 		let wanted: Vec<PublicKey> = match self.window.get_page() {
+			0 if choosing => status.nodes(),
 			1 => status.nodes(),
 			2 => status.neighbors.iter().filter_map(|n| n.key).collect(),
 			_ => Vec::new(),
@@ -205,7 +254,28 @@ impl Gui {
 
 	fn carry_out(&mut self, action: Action) {
 		match action {
-			Action::Edit(setting, label) => self.open_keyboard(setting, label),
+			Action::Edit(setting, label) => self.open_keyboard(Field::Setting(setting), label),
+			Action::PickPingTarget(node) => {
+				let address = if node.address.is_empty() {
+					&node.name
+				} else {
+					&node.address
+				};
+				if let Ok(address) = address.parse() {
+					let command = self.ping.set_target(address, node.name.into());
+					self.commands.extend(command);
+				}
+			}
+			Action::TypePingAddress => self.open_keyboard(Field::PingAddress, "Address".into()),
+			Action::StartPing => {
+				let command = self.ping.start();
+				self.commands.extend(command);
+			}
+			Action::StopPing => self.ping.stop(),
+			Action::SendPing => {
+				let command = self.ping.send();
+				self.commands.extend(command);
+			}
 			Action::PickNetwork(network) => {
 				self.draft.ssid = network.ssid.into();
 				if !network.secured {
@@ -242,15 +312,20 @@ impl Gui {
 		}
 	}
 
-	fn open_keyboard(&mut self, setting: TextSetting, label: SharedString) {
-		self.editing = Some(Edit {
-			setting,
-			text: self.draft.text(setting),
-		});
+	fn open_keyboard(&mut self, field: Field, label: SharedString) {
+		let text = match field {
+			Field::Setting(setting) => self.draft.text(setting),
+			Field::PingAddress => self
+				.ping
+				.target()
+				.map(|a| a.to_string())
+				.unwrap_or_default(),
+		};
+		self.editing = Some(Edit { field, text });
 		let keyboard = self.window.global::<Keyboard>();
 		keyboard.set_label(label);
 		keyboard.set_error(SharedString::new());
-		keyboard.set_numeric(setting.is_numeric());
+		keyboard.set_numeric(field.is_numeric());
 		keyboard.set_open(true);
 		self.show_typed();
 	}
@@ -260,7 +335,7 @@ impl Gui {
 			return;
 		};
 		for character in text.chars() {
-			if edit.text.chars().count() < edit.setting.max_len() {
+			if edit.text.chars().count() < edit.field.max_len() {
 				edit.text.push(character);
 			}
 		}
@@ -280,7 +355,22 @@ impl Gui {
 		let Some(edit) = &self.editing else {
 			return;
 		};
-		match self.draft.set_text(edit.setting, &edit.text) {
+		let applied = match edit.field {
+			Field::Setting(setting) => self.draft.set_text(setting, &edit.text),
+			Field::PingAddress => match edit.text.parse::<Ipv6Addr>() {
+				Ok(address) => {
+					let label = match self.directory.name_of_address(&address) {
+						Some(name) => name.into(),
+						None => address.to_string(),
+					};
+					let command = self.ping.set_target(address, label);
+					self.commands.extend(command);
+					Ok(())
+				}
+				Err(_) => Err("Not an IPv6 address"),
+			},
+		};
+		match applied {
 			Ok(()) => {
 				self.close_keyboard();
 				self.show_settings();
@@ -299,7 +389,7 @@ impl Gui {
 		let Some(edit) = &self.editing else {
 			return;
 		};
-		let shown = shown_value(edit.setting, &edit.text);
+		let shown = shown_value(edit.field, &edit.text);
 		let count = shown.chars().count();
 		let end: String = shown
 			.chars()
@@ -326,11 +416,14 @@ impl Gui {
 		setup.set_channel(draft.channel.to_string().into());
 		setup.set_time_zone(format_offset(draft.utc_offset).into());
 		setup.set_ssid(draft.ssid.as_str().into());
-		let wifi_password = shown_value(TextSetting::WifiPassword, &draft.password);
+		let wifi_password = shown_value(Field::Setting(TextSetting::WifiPassword), &draft.password);
 		setup.set_wifi_password(wifi_password.into());
 		setup.set_peer(draft.peer.as_str().into());
 		setup.set_hotspot_name(draft.hotspot_name.as_str().into());
-		let hotspot_password = shown_value(TextSetting::HotspotPassword, &draft.hotspot_password);
+		let hotspot_password = shown_value(
+			Field::Setting(TextSetting::HotspotPassword),
+			&draft.hotspot_password,
+		);
 		setup.set_hotspot_password(hotspot_password.into());
 		setup.set_status_pages(draft.status_page);
 		setup.set_bridge(draft.bridge);
@@ -403,6 +496,12 @@ fn connect(window: &MainWindow, actions: &Rc<RefCell<VecDeque<Action>>>) {
 	let picks = actions.clone();
 	setup
 		.on_pick_network(move |network| picks.borrow_mut().push_back(Action::PickNetwork(network)));
+	let ping = window.global::<Ping>();
+	ping.on_type_address(queue(|| Action::TypePingAddress));
+	ping.on_start(queue(|| Action::StartPing));
+	ping.on_stop(queue(|| Action::StopPing));
+	let pings = actions.clone();
+	ping.on_pick(move |node| pings.borrow_mut().push_back(Action::PickPingTarget(node)));
 	let keyboard = window.global::<Keyboard>();
 	let keys = actions.clone();
 	keyboard.on_key(move |text| keys.borrow_mut().push_back(Action::Key(text)));
@@ -422,9 +521,9 @@ fn text_setting(setting: Setting) -> TextSetting {
 	}
 }
 
-/// A setting's value as shown, with dots for a password.
-fn shown_value(setting: TextSetting, text: &str) -> String {
-	if setting.is_secret() {
+/// What is typed as shown, with dots for a password.
+fn shown_value(field: Field, text: &str) -> String {
+	if field.is_secret() {
 		"●".repeat(text.chars().count())
 	} else {
 		text.into()

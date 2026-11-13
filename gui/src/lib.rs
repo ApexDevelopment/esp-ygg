@@ -6,6 +6,7 @@
 extern crate alloc;
 
 mod front;
+mod ping;
 
 pub use front::Gui;
 pub use slint;
