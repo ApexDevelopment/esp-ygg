@@ -8,7 +8,7 @@ import { NeighborsPage } from "neighbors.slint";
 import { OnScreenKeyboard } from "keyboard.slint";
 import { NodesPage } from "nodes.slint";
 import { PingPage } from "ping.slint";
-import { CompactBar, CompactRail } from "rail.slint";
+import { CompactBar, CompactRail, NavigationHandle } from "rail.slint";
 import { SettingsPage } from "settings.slint";
 import { App, Keyboard, Launcher, Notice } from "state.slint";
 export { App, ChatEntry, Console, Gopher, Irc, IrcBuffer, IrcField, Keyboard, Launcher, Node, NodeEntry, NeighborEntry, Notice, PageLine, Ping, Setting, Setup, WifiEntry } from "state.slint";
@@ -66,6 +66,11 @@ export component MainWindow inherits MaterialWindow {
     in_out property <int> page;
 
     property <bool> portrait: self.height > self.width;
+    /// An app has the screen, with the navigation folded away to a handle.
+    property <bool> in_app: root.page == 0 && Launcher.open != App.none;
+    /// The navigation, brought back over the app.
+    property <bool> navigation_shown;
+    property <length> handle_size: 20px;
     property <[NavigationItem]> destinations: [
         {
             icon: @image-url("../icons/home.svg"),
@@ -97,13 +102,24 @@ export component MainWindow inherits MaterialWindow {
         Palette.color_scheme = ColorScheme.dark;
     }
 
+    changed in_app => {
+        root.navigation_shown = false;
+    }
+
     // The keyboard covers the screen, so what is under it is let go while
     // it is up, to leave memory for it.
     if !Keyboard.open && !root.portrait: HorizontalLayout {
-        CompactRail {
+        if !root.in_app: CompactRail {
             horizontal_stretch: 0;
             items: root.destinations;
             current_index <=> root.page;
+        }
+
+        if root.in_app: NavigationHandle {
+            width: root.handle_size;
+            vertical: true;
+            background: MaterialPalette.surface;
+            clicked => { root.navigation_shown = true; }
         }
 
         Pages {
@@ -118,17 +134,73 @@ export component MainWindow inherits MaterialWindow {
             page: root.page;
         }
 
-        CompactBar {
+        if !root.in_app: CompactBar {
             vertical_stretch: 0;
             items: root.destinations;
             current_index <=> root.page;
         }
+
+        if root.in_app: NavigationHandle {
+            height: root.handle_size;
+            background: MaterialPalette.surface_container;
+            clicked => { root.navigation_shown = true; }
+        }
+    }
+
+    // Over an app, the navigation comes back on top, and a tap anywhere
+    // else puts it away. Home goes back to the launcher.
+    if !Keyboard.open && root.navigation_shown: TouchArea {
+        clicked => { root.navigation_shown = false; }
+
+        Rectangle {
+            background: MaterialPalette.scrim.transparentize(68%);
+        }
+    }
+
+    if !Keyboard.open && root.in_app && !root.portrait: CompactRail {
+        x: root.navigation_shown ? 0 : -self.width;
+        width: 80px;
+        height: root.height;
+        items: root.destinations;
+        current_index <=> root.page;
+
+        animate x {
+            duration: 150ms;
+            easing: ease_out;
+        }
+
+        index_changed(index) => {
+            if index == 0 {
+                Launcher.open = App.none;
+            }
+        }
+    }
+
+    if !Keyboard.open && root.in_app && root.portrait: CompactBar {
+        y: root.navigation_shown ? root.height - self.height : root.height;
+        width: root.width;
+        height: 80px;
+        items: root.destinations;
+        current_index <=> root.page;
+
+        animate y {
+            duration: 150ms;
+            easing: ease_out;
+        }
+
+        index_changed(index) => {
+            if index == 0 {
+                Launcher.open = App.none;
+            }
+        }
     }
 
     if Notice.text != "": NoticeBar {
-        x: root.portrait ? 8px : 88px;
+        property <length> navigation: (root.in_app ? root.handle_size : 80px) + 8px;
+
+        x: root.portrait ? 8px : self.navigation;
         width: root.width - self.x - 8px;
-        y: root.height - self.height - (root.portrait ? 88px : 8px);
+        y: root.height - self.height - (root.portrait ? self.navigation : 8px);
     }
 
     if Keyboard.open: OnScreenKeyboard {

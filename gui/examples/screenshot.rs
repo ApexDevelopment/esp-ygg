@@ -72,6 +72,24 @@ fn main() {
 	save_console(&mut gui, &window, &folder, &keys);
 	save_irc(&mut gui, &window, &folder);
 	save_gopher(&mut gui, &window, &folder);
+	save_navigation_over_app(&mut gui, &window, &folder);
+}
+
+/// Saves the navigation brought back over an open app by its handle, in
+/// both orientations.
+fn save_navigation_over_app(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str) {
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		let handle = if width > height {
+			(10.0, height as f32 / 2.0)
+		} else {
+			(width as f32 / 2.0, height as f32 - 10.0)
+		};
+		tap(gui, window, handle);
+		save_screen(window, folder, &format!("navigation-{orientation}-over-app"));
+		// A tap on the app puts it away again.
+		tap(gui, window, (width as f32 - 20.0, 20.0));
+	}
 }
 
 const GOPHER_MENU: &str =
