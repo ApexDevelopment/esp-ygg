@@ -31,6 +31,10 @@ mod platform;
 mod radio;
 #[cfg(feature = "ui")]
 mod sdcard;
+#[cfg(all(feature = "share", feature = "ui"))]
+mod share;
+#[cfg(all(feature = "share", not(feature = "ui")))]
+compile_error!("Share keeps its files on the SD card, so needs a board with an interface");
 #[cfg(feature = "voice")]
 mod speaker;
 mod storage;
@@ -105,9 +109,10 @@ async fn main(spawner: Spawner) -> ! {
 	// The original ESP32 has less RAM to spare
 	#[cfg(not(any(feature = "esp32", all(feature = "cardputer", feature = "tui"))))]
 	esp_alloc::heap_allocator!(size: 200 * 1024);
-	// The UI's core has a stack of its own, so leave room for it.
+	// The UI's core has a stack of its own, so leave room for it, and for
+	// the larger one Share needs.
 	#[cfg(all(feature = "cardputer", feature = "tui"))]
-	esp_alloc::heap_allocator!(size: 176 * 1024);
+	esp_alloc::heap_allocator!(size: if cfg!(feature = "share") { 168 * 1024 } else { 176 * 1024 });
 	#[cfg(feature = "esp32")]
 	esp_alloc::heap_allocator!(size: 120 * 1024);
 	let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -160,6 +165,8 @@ async fn main(spawner: Spawner) -> ! {
 		WifiController::new(peripherals.WIFI, controller_config).expect("starting WiFi");
 	let rng = Rng::new();
 	let (mut store, unix_base) = settings_store.open(&rng);
+	#[cfg(feature = "share")]
+	share::set_up(store.seed(), &settings.share_password);
 
 	let esp_now = controller.esp_now();
 	info!("ESP-NOW version {}", esp_now.version().unwrap_or(0));
@@ -298,6 +305,8 @@ async fn main(spawner: Spawner) -> ! {
 	let mut frame = alloc::vec![0u8; FRAME_LEN];
 	let mut stream: Option<StreamId> = None;
 	let mut next_save = Instant::now() + Duration::from_secs(SAVE_INTERVAL_SECS);
+	#[cfg(feature = "share")]
+	let mut share_pump = share::Pump::default();
 	loop {
 		let started = Instant::now();
 		send_frames(&mut node, &manager, &mut frame);
@@ -360,6 +369,9 @@ async fn main(spawner: Spawner) -> ! {
 				}
 				show_networks(networks);
 			}
+			// The pump below hands it more.
+			#[cfg(feature = "share")]
+			Wake::Ui(UiInput::ShareRoom) => {}
 		}
 		// Whatever woke the loop, run expired timers, or a steady stream of
 		// frames would starve them.
@@ -391,12 +403,18 @@ async fn main(spawner: Spawner) -> ! {
 			// If the UI falls behind, it misses some updates rather than
 			// holding up the network.
 			while let Some(event) = overlay.poll_event() {
+				#[cfg(feature = "share")]
+				let Some(event) = share_pump.route(event) else {
+					continue;
+				};
 				#[cfg(feature = "voice")]
 				if let esp_ygg_app::Event::Call(event) = &event {
 					call.handle_event(event);
 				}
 				let _ = ui::TO_UI.try_send(ui::ToUi::Event(event));
 			}
+			#[cfg(feature = "share")]
+			share_pump.pump(&mut overlay);
 			#[cfg(feature = "voice")]
 			call.deliver(&mut overlay);
 			while let Some((key, info)) = node.poll_nodeinfo() {
@@ -492,6 +510,9 @@ enum UiInput {
 	/// A frame from the microphone, for the call
 	#[cfg(feature = "voice")]
 	Voice(Vec<u8>),
+	/// Share took what it was given, and has room for more.
+	#[cfg(feature = "share")]
+	ShareRoom,
 }
 
 /// A command from the UI, the results of a scan it asked for, or voice.
@@ -503,6 +524,13 @@ async fn next_ui_input() -> UiInput {
 	let voice = async { UiInput::Voice(audio::VOICE_OUT.receive().await) };
 	#[cfg(not(feature = "voice"))]
 	let voice = core::future::pending::<UiInput>();
+	#[cfg(feature = "share")]
+	let voice = async {
+		match embassy_futures::select::select(voice, share::ROOM.wait()).await {
+			embassy_futures::select::Either::First(input) => input,
+			embassy_futures::select::Either::Second(()) => UiInput::ShareRoom,
+		}
+	};
 	match select3(command, networks, voice).await {
 		Either3::First(input) | Either3::Second(input) | Either3::Third(input) => input,
 	}
@@ -573,11 +601,7 @@ fn uplink_state(bridge: bool, node: &Node<EspPlatform>, stream: Option<StreamId>
 }
 
 #[cfg(feature = "ui")]
-fn carry_out(
-	command: Command,
-	node: &mut Node<EspPlatform>,
-	overlay: &mut Overlay,
-) {
+fn carry_out(command: Command, node: &mut Node<EspPlatform>, overlay: &mut Overlay) {
 	match command {
 		Command::Ping(target) => {
 			let _ = overlay.ping(target, node.now());
@@ -595,19 +619,19 @@ fn carry_out(
 				warn!("Fetching from {to} failed: {error:?}");
 			}
 		}
-		#[cfg(any(feature = "irc", feature = "gemini"))]
+		#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 		Command::OpenStream(stream, to) => {
 			if let Err(error) = overlay.open_stream(stream, to) {
 				warn!("Connecting to {to} failed: {error:?}");
 			}
 		}
-		#[cfg(any(feature = "irc", feature = "gemini"))]
+		#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 		Command::StreamSend(stream, data) => {
 			if let Err(error) = overlay.stream_send(stream, &data) {
 				warn!("Sending on a stream failed: {error:?}");
 			}
 		}
-		#[cfg(any(feature = "irc", feature = "gemini"))]
+		#[cfg(any(feature = "irc", feature = "gemini", feature = "share"))]
 		Command::CloseStream(stream) => overlay.close_stream(stream),
 		#[cfg(feature = "voice")]
 		Command::Call(to) => {
@@ -636,6 +660,12 @@ fn carry_out(
 		Command::Save(_) => {}
 		// The UI's core reads and writes the SD card itself.
 		Command::ExportSettings(_) | Command::ImportSettings => {}
+		// The UI's side runs Share's sessions.
+		#[cfg(feature = "share")]
+		Command::ShareSend { .. }
+		| Command::ShareAdmit(_)
+		| Command::SharePassword(_)
+		| Command::ShareList => {}
 	}
 }
 
@@ -670,7 +700,12 @@ fn build_time_settings() -> Settings {
 /// Applies the settings that need no restart, which the others' changes
 /// would have.
 #[cfg(feature = "ui")]
-fn apply_settings(old: &Settings, new: &Settings, node: &mut Node<EspPlatform>, overlay: &mut Overlay) {
+fn apply_settings(
+	old: &Settings,
+	new: &Settings,
+	node: &mut Node<EspPlatform>,
+	overlay: &mut Overlay,
+) {
 	if new.name != old.name {
 		node.set_nodeinfo(nodeinfo(new));
 		#[cfg(feature = "voice")]
@@ -681,6 +716,10 @@ fn apply_settings(old: &Settings, new: &Settings, node: &mut Node<EspPlatform>, 
 	}
 	#[cfg(feature = "voice")]
 	audio::set_ringer(new.ringtone, new.ring_volume);
+	#[cfg(feature = "share")]
+	if new.share_password != old.share_password {
+		share::set_password(&new.share_password);
+	}
 }
 
 /// The name calls go out under.

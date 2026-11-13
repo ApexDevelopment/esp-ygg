@@ -113,6 +113,122 @@ impl Slot {
 		})
 	}
 
+	/// Carries out a request of Share's, in the shared folder.
+	#[cfg(feature = "share")]
+	pub fn share(&mut self, request: crate::share::CardRequest) -> crate::share::CardReply {
+		use crate::share::{CardReply, CardRequest};
+		use esp_ygg_app::share::StoreError;
+		// What to answer if there is no card to ask.
+		let failed = Err(StoreError::Failed);
+		let no_card = match &request {
+			CardRequest::List => CardReply::List(failed.map(|()| Vec::new())),
+			CardRequest::Size(_) => CardReply::Size(failed.map(|()| 0)),
+			CardRequest::Read { .. } => CardReply::Read(failed.map(|()| Vec::new())),
+			CardRequest::Create { .. } => CardReply::Create(failed.map(|()| String::new())),
+			CardRequest::Append { .. } => CardReply::Done(failed),
+		};
+		let result = self.with_card(|card| {
+			let files = VolumeManager::new(card, Clock(None));
+			let volume = files.open_volume(VolumeIdx(0)).map_err(card_problem)?;
+			let root = volume.open_root_dir().map_err(card_problem)?;
+			let (outer, inner) = SHARE_FOLDER
+				.split_once('/')
+				.expect("the shared folder is in ours");
+			if let Err(Error::NotFound) = root.open_dir(outer).map(drop) {
+				root.make_dir_in_dir(outer).map_err(card_problem)?;
+			}
+			let ours = root.open_dir(outer).map_err(card_problem)?;
+			if let Err(Error::NotFound) = ours.open_dir(inner).map(drop) {
+				ours.make_dir_in_dir(inner).map_err(card_problem)?;
+			}
+			let folder = ours.open_dir(inner).map_err(card_problem)?;
+			let open = |name: &str, mode: Mode| {
+				folder
+					.open_long_name_file_in_dir(name, mode)
+					.or_else(|_| folder.open_file_in_dir(name, mode))
+			};
+			Ok(match request {
+				CardRequest::List => {
+					let mut storage = [0u8; 256];
+					let mut names = embedded_sdmmc::LfnBuffer::new(&mut storage);
+					let mut entries = Vec::new();
+					let listed = folder.iterate_dir_lfn(&mut names, |entry, long| {
+						if !entry.attributes.is_directory() && !entry.attributes.is_volume() {
+							entries.push(esp_ygg_app::share::Entry {
+								name: long
+									.map_or_else(|| alloc::format!("{}", entry.name), String::from),
+								size: entry.size.into(),
+							});
+						}
+						core::ops::ControlFlow::Continue(())
+					});
+					CardReply::List(listed.map(|()| entries).map_err(store_error))
+				}
+				CardRequest::Size(name) => CardReply::Size(
+					open(&name, Mode::ReadOnly)
+						.map(|file| file.length().into())
+						.map_err(store_error),
+				),
+				CardRequest::Read {
+					name,
+					offset,
+					length,
+				} => CardReply::Read(
+					(|| {
+						let file = open(&name, Mode::ReadOnly)?;
+						file.seek_from_start(offset as u32)?;
+						let mut data = alloc::vec![0u8; length];
+						let mut filled = 0;
+						while filled < length && !file.is_eof() {
+							filled += file.read(&mut data[filled..])?;
+						}
+						data.truncate(filled);
+						Ok(data)
+					})()
+					.map_err(store_error),
+				),
+				CardRequest::Create {
+					name,
+					keep_existing,
+				} => CardReply::Create(
+					(|| {
+						// The name it is asked for if the card can hold it, or
+						// a shortened one no other file has. One being read is
+						// kept, rather than emptied as it goes.
+						let mut number = u32::from(keep_existing);
+						let short = loop {
+							let short = esp_ygg_app::share::short_name(&name, number);
+							let plain = number == 0 && short.eq_ignore_ascii_case(&name);
+							if plain
+								|| folder
+									.open_file_in_dir(short.as_str(), Mode::ReadOnly)
+									.is_err()
+							{
+								break short;
+							}
+							number += 1;
+						};
+						folder.open_file_in_dir(short.as_str(), Mode::ReadWriteCreateOrTruncate)?;
+						Ok(short)
+					})()
+					.map_err(store_error),
+				),
+				CardRequest::Append { name, offset, data } => CardReply::Done(
+					(|| {
+						let file = folder.open_file_in_dir(name.as_str(), Mode::ReadWriteAppend)?;
+						if file.offset() != offset as u32 {
+							file.seek_from_start(offset as u32)?;
+						}
+						file.write(&data)?;
+						file.flush()
+					})()
+					.map_err(store_error),
+				),
+			})
+		});
+		result.unwrap_or(no_card)
+	}
+
 	/// Runs `use_card` with the card, if there is one, woken and sped up,
 	/// then hands the bus back as it was.
 	fn with_card<R>(
@@ -172,6 +288,26 @@ fn wake<'a>(
 	});
 	let card_type = card.get_card_type().ok_or("No SD card")?;
 	Ok((card, card_type))
+}
+
+/// Where Share keeps the files it shares, inside the board's own folder.
+#[cfg(feature = "share")]
+const SHARE_FOLDER: &str = "esp-ygg/share";
+
+#[cfg(feature = "share")]
+fn card_problem(error: Error<SdCardError>) -> String {
+	problem(error)
+}
+
+#[cfg(feature = "share")]
+fn store_error(error: Error<SdCardError>) -> esp_ygg_app::share::StoreError {
+	use esp_ygg_app::share::StoreError;
+	match error {
+		Error::NotFound => StoreError::NotFound,
+		Error::NotEnoughSpace => StoreError::Full,
+		Error::FilenameError(_) => StoreError::BadName,
+		_ => StoreError::Failed,
+	}
 }
 
 fn settings_path() -> (&'static str, &'static str) {

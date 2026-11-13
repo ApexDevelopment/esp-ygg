@@ -189,7 +189,7 @@ fn stack_used(len: usize) -> usize {
 #[cfg(feature = "tui")]
 mod text {
 	use embassy_executor::Spawner;
-	use embassy_futures::select::{Either3, select3};
+	use embassy_futures::select::{Either, Either3, select, select3};
 	use embassy_time::{Duration, Timer};
 	use esp_hal::peripherals::USB_DEVICE;
 	use esp_ygg_app::Settings;
@@ -219,6 +219,11 @@ mod text {
 	) {
 		spawner.spawn(run(screen, slot, settings).expect("spawning the UI task"));
 		spawner.spawn(serial(usb).expect("spawning the serial task"));
+		#[cfg(feature = "share")]
+		{
+			spawner.spawn(crate::share::serve_peers().expect("spawning Share's server"));
+			spawner.spawn(crate::share::send_files().expect("spawning Share's sender"));
+		}
 	}
 
 	#[embassy_executor::task]
@@ -226,16 +231,30 @@ mod text {
 		let mut app = App::new(settings, now());
 		loop {
 			super::report_stack();
-			match select3(INPUT.receive(), TO_UI.receive(), Timer::after(TICK)).await {
-				Either3::First(Input::Key(key)) => app.handle_key(key),
-				Either3::First(Input::Tap { column, row }) => app.handle_tap(column, row),
-				Either3::First(Input::Press { column, row }) => app.handle_press(column, row),
-				Either3::First(Input::Release) => app.handle_release(),
-				Either3::First(Input::Drag { .. }) => {
+			#[cfg(feature = "share")]
+			let card = crate::share::CARD_REQUESTS.receive();
+			#[cfg(not(feature = "share"))]
+			let card = core::future::pending::<()>();
+			let input = select3(INPUT.receive(), TO_UI.receive(), Timer::after(TICK));
+			match select(input, card).await {
+				Either::First(Either3::First(Input::Key(key))) => app.handle_key(key),
+				Either::First(Either3::First(Input::Tap { column, row })) => {
+					app.handle_tap(column, row)
+				}
+				Either::First(Either3::First(Input::Press { column, row })) => {
+					app.handle_press(column, row)
+				}
+				Either::First(Either3::First(Input::Release)) => app.handle_release(),
+				Either::First(Either3::First(Input::Drag { .. })) => {
 					log::warn!("Drags are for the graphical interface")
 				}
-				Either3::Second(message) => handle_message(&mut app, message),
-				Either3::Third(()) => {}
+				Either::First(Either3::Second(message)) => handle_message(&mut app, message),
+				Either::First(Either3::Third(())) => {}
+				// The card is on this side, for Share as for settings.
+				#[cfg(feature = "share")]
+				Either::Second((asker, request)) => crate::share::answer_card(asker, slot.share(request)),
+				#[cfg(not(feature = "share"))]
+				Either::Second(()) => {}
 			}
 			let locked = crate::lock::is_locked();
 			if locked != app.is_locked() {
@@ -246,6 +265,10 @@ mod text {
 				app.set_talking(crate::audio::TALKING.load(Ordering::Relaxed));
 				crate::speaker::show(app.speaker(crate::audio::MUTED.load(Ordering::Relaxed)));
 			}
+			#[cfg(feature = "share")]
+			if let Some(status) = crate::share::status_changed() {
+				app.set_share_status(status);
+			}
 			app.tick(now());
 			while let Some(command) = app.poll_command() {
 				match command {
@@ -254,6 +277,18 @@ mod text {
 						app.settings_exported(slot.export_settings(&text, app.local_time()))
 					}
 					Command::ImportSettings => app.settings_imported(slot.import_settings()),
+					#[cfg(feature = "share")]
+					Command::ShareList => {
+						let files = match slot.share(crate::share::CardRequest::List) {
+							crate::share::CardReply::List(Ok(files)) => files,
+							_ => alloc::vec::Vec::new(),
+						};
+						app.set_share_files(files);
+					}
+					#[cfg(feature = "share")]
+					command @ (Command::ShareSend { .. }
+					| Command::ShareAdmit(_)
+					| Command::SharePassword(_)) => crate::share::carry_out(command),
 					command => FROM_UI.send(command).await,
 				}
 			}
@@ -305,8 +340,13 @@ pub mod second_core {
 	use crate::cardputer::{self, Pins};
 
 	/// TLS for Gemini goes deepest, at 14 KB in a handshake with an elliptic
-	/// curve certificate. RSA certificates need more.
-	const STACK_SIZE: usize = 24 * 1024;
+	/// curve certificate. RSA certificates need more, as may Share's SSH
+	/// handshake, which stays under 15 KB on the touch board's RISC-V core.
+	const STACK_SIZE: usize = if cfg!(feature = "share") {
+		32 * 1024
+	} else {
+		24 * 1024
+	};
 
 	/// Starts the screen, the keyboard and the UI on the second core.
 	pub fn start(
@@ -423,6 +463,11 @@ pub mod own_thread {
 				spawner
 					.spawn(crate::gui::run(board, settings).expect("spawning the interface task"));
 				spawner.spawn(super::serial(usb).expect("spawning the serial task"));
+				#[cfg(feature = "share")]
+				{
+					spawner.spawn(crate::share::serve_peers().expect("spawning Share's server"));
+					spawner.spawn(crate::share::send_files().expect("spawning Share's sender"));
+				}
 			}
 		});
 	}

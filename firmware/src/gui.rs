@@ -4,10 +4,10 @@
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 
+use core::sync::atomic::Ordering;
 use embassy_time::{Duration, Instant, Timer};
 use esp_ygg_app::Settings;
 use esp_ygg_app::ui::Command;
-use core::sync::atomic::Ordering;
 use esp_ygg_app::ui::remote;
 use esp_ygg_app::ui::screen_timeout::ScreenTimeout;
 use esp_ygg_gui::{Gui, slint};
@@ -247,6 +247,17 @@ pub async fn run(board: Board, settings: Settings) {
 				ToUi::Event(event) => gui.handle_event(event),
 			}
 		}
+		#[cfg(feature = "share")]
+		{
+			if let Some(status) = crate::share::status_changed() {
+				gui.set_share_status(status);
+			}
+			// The card shares the screen's bus, so waits for its drawing.
+			while let Ok((asker, request)) = crate::share::CARD_REQUESTS.try_receive() {
+				panel.finish();
+				crate::share::answer_card(asker, slot.share(request));
+			}
+		}
 		gui.tick();
 		while let Some(command) = gui.poll_command() {
 			match command {
@@ -260,6 +271,19 @@ pub async fn run(board: Board, settings: Settings) {
 					panel.finish();
 					gui.settings_imported(slot.import_settings());
 				}
+				#[cfg(feature = "share")]
+				Command::ShareList => {
+					panel.finish();
+					let files = match slot.share(crate::share::CardRequest::List) {
+						crate::share::CardReply::List(Ok(files)) => files,
+						_ => alloc::vec::Vec::new(),
+					};
+					gui.set_share_files(files);
+				}
+				#[cfg(feature = "share")]
+				command @ (Command::ShareSend { .. }
+				| Command::ShareAdmit(_)
+				| Command::SharePassword(_)) => crate::share::carry_out(command),
 				command => FROM_UI.send(command).await,
 			}
 		}

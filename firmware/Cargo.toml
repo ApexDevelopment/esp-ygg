@@ -54,6 +54,9 @@ console = ["esp-ygg-app/console", "esp-ygg-gui?/console"]
 ntp = ["esp-ygg-app/ntp"]
 irc = ["esp-ygg-app/irc", "esp-ygg-gui?/irc"]
 gemini = ["esp-ygg-app/gemini", "esp-ygg-gui?/gemini", "dep:getrandom"]
+# Share: sending and receiving files over SFTP, kept on the SD card, so for
+# boards with an interface
+share = ["esp-ygg-app/share", "esp-ygg-gui?/share", "dep:getrandom"]
 # Voice calls with push-to-talk, on the Cardputers
 voice = ["cardputer", "tui", "esp-ygg-app/voice"]
 # What every interface needs, whichever it is. tui and gui turn it on.
@@ -132,4 +135,6 @@ opt-level = "s"
 [patch.crates-io]
 # Fix ESP32-S3 flash ID detection after a launcher reset.
 esp-storage = { path = "vendor/esp-storage" }
+# Without ML-KEM key exchange, whose 30 KB of stack the UI cannot spare.
+sunset = { path = "vendor/sunset" }
 rustls = { git = "https://github.com/ApexDevelopment/rustls", branch = "xtensa-0.23.46" }
