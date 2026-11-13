@@ -95,10 +95,10 @@ impl<S: Store, A: Attendant> SftpServer for SharedFiles<'_, S, A> {
 			.position(Option::is_none)
 			.ok_or(StatusCode::SSH_FX_FAILURE)?;
 		let size = match mode {
-			Mode::Read => self.store.size(name).map_err(status)?,
+			Mode::Read => self.store.size(name).await.map_err(status)?,
 			Mode::Write => 0,
 		};
-		let file = self.store.open(name, mode).map_err(status)?;
+		let file = self.store.open(name, mode).await.map_err(status)?;
 		self.files[slot] = Some(OpenFile {
 			name: name.to_string(),
 			file,
@@ -114,7 +114,7 @@ impl<S: Store, A: Attendant> SftpServer for SharedFiles<'_, S, A> {
 			.get_mut(handle.0 as usize)
 			.and_then(Option::take)
 			.ok_or(StatusCode::SSH_FX_FAILURE)?;
-		self.store.close(open.file).map_err(status)?;
+		self.store.close(open.file).await.map_err(status)?;
 		let name = open.name.as_str();
 		self.attendant.progress(match open.mode {
 			Mode::Write => Progress::Received {
@@ -153,7 +153,7 @@ impl<S: Store, A: Attendant> SftpServer for SharedFiles<'_, S, A> {
 					if let Some(finished) = sender.completed() {
 						return Ok(finished);
 					}
-					let read = store.read(file, at, &mut buffer).map_err(status)?;
+					let read = store.read(file, at, &mut buffer).await.map_err(status)?;
 					if read == 0 {
 						return Err(StatusCode::SSH_FX_FAILURE.into());
 					}
@@ -175,7 +175,10 @@ impl<S: Store, A: Attendant> SftpServer for SharedFiles<'_, S, A> {
 		if open.mode != Mode::Write {
 			return Err(StatusCode::SSH_FX_PERMISSION_DENIED);
 		}
-		store.write(&mut open.file, offset, data).map_err(status)?;
+		store
+			.write(&mut open.file, offset, data)
+			.await
+			.map_err(status)?;
 		open.size = open.size.max(offset + data.len() as u64);
 		self.attendant.progress(Progress::Receiving {
 			name: &open.name,
@@ -210,7 +213,7 @@ impl<S: Store, A: Attendant> SftpServer for SharedFiles<'_, S, A> {
 				.map_err(|_| StatusCode::SSH_FX_FAILURE);
 		}
 		self.listed = ReadStatus::EndOfFile;
-		let entries = self.store.list().map_err(status)?;
+		let entries = self.store.list().await.map_err(status)?;
 		if entries.is_empty() {
 			return reply
 				.send_eof()
@@ -260,7 +263,7 @@ impl<S: Store, A: Attendant> SftpServer for SharedFiles<'_, S, A> {
 		match file_name(path).map_err(status)? {
 			None => Ok(attrs(None, FOLDER_MODE)),
 			Some(name) => {
-				let size = self.store.size(name).map_err(status)?;
+				let size = self.store.size(name).await.map_err(status)?;
 				Ok(attrs(Some(size), FILE_MODE))
 			}
 		}
@@ -269,9 +272,9 @@ impl<S: Store, A: Attendant> SftpServer for SharedFiles<'_, S, A> {
 
 impl<S: Store, A: Attendant> SharedFiles<'_, S, A> {
 	/// Closes whatever the client left open.
-	pub(super) fn close_all(&mut self) {
+	pub(super) async fn close_all(&mut self) {
 		for open in self.files.iter_mut().filter_map(Option::take) {
-			if let Err(error) = self.store.close(open.file) {
+			if let Err(error) = self.store.close(open.file).await {
 				warn!("Closing {} failed: {error:?}", open.name);
 			}
 		}

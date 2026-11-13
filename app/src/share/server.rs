@@ -92,7 +92,7 @@ pub async fn serve<S: Store, A: Attendant>(
 		let mut files = SharedFiles::new(store, attendant);
 		let mut handler = SftpServerHandler::default();
 		let result = handler.run(&mut files, input, output).await;
-		files.close_all();
+		files.close_all().await;
 		result.map_err(|error| {
 			warn!("SFTP with {from} ended: {error:?}");
 			Error::ChannelEOF

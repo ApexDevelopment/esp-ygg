@@ -41,7 +41,7 @@ impl Drop for Folder {
 impl Store for Folder {
 	type File = fs::File;
 
-	fn list(&mut self) -> Result<Vec<Entry>, StoreError> {
+	async fn list(&mut self) -> Result<Vec<Entry>, StoreError> {
 		let mut entries: Vec<Entry> = fs::read_dir(&self.0)
 			.map_err(|_| StoreError::Failed)?
 			.filter_map(Result::ok)
@@ -54,12 +54,12 @@ impl Store for Folder {
 		Ok(entries)
 	}
 
-	fn size(&mut self, name: &str) -> Result<u64, StoreError> {
+	async fn size(&mut self, name: &str) -> Result<u64, StoreError> {
 		let metadata = fs::metadata(self.path(name)).map_err(|_| StoreError::NotFound)?;
 		Ok(metadata.len())
 	}
 
-	fn open(&mut self, name: &str, mode: Mode) -> Result<fs::File, StoreError> {
+	async fn open(&mut self, name: &str, mode: Mode) -> Result<fs::File, StoreError> {
 		let path = self.path(name);
 		match mode {
 			Mode::Read => fs::File::open(path).map_err(|_| StoreError::NotFound),
@@ -67,7 +67,7 @@ impl Store for Folder {
 		}
 	}
 
-	fn read(
+	async fn read(
 		&mut self,
 		file: &mut fs::File,
 		offset: u64,
@@ -78,13 +78,18 @@ impl Store for Folder {
 		file.read(buf).map_err(|_| StoreError::Failed)
 	}
 
-	fn write(&mut self, file: &mut fs::File, offset: u64, data: &[u8]) -> Result<(), StoreError> {
+	async fn write(
+		&mut self,
+		file: &mut fs::File,
+		offset: u64,
+		data: &[u8],
+	) -> Result<(), StoreError> {
 		file.seek(SeekFrom::Start(offset))
 			.map_err(|_| StoreError::Failed)?;
 		file.write_all(data).map_err(|_| StoreError::Failed)
 	}
 
-	fn close(&mut self, _file: fs::File) -> Result<(), StoreError> {
+	async fn close(&mut self, _file: fs::File) -> Result<(), StoreError> {
 		Ok(())
 	}
 }

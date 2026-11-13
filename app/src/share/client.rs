@@ -127,10 +127,10 @@ async fn upload<S: Store, A: Attendant>(
 	store: &mut S,
 	attendant: &A,
 ) -> Result<(), SendError> {
-	let total = store.size(name)?;
-	let mut file = store.open(name, Mode::Read)?;
+	let total = store.size(name).await?;
+	let mut file = store.open(name, Mode::Read).await?;
 	let result = write_file(channel, name, total, store, &mut file, attendant).await;
-	store.close(file)?;
+	store.close(file).await?;
 	result?;
 	attendant.progress(Progress::Sent { name });
 	info!("Sent {name}");
@@ -161,7 +161,7 @@ async fn write_file<S: Store, A: Attendant>(
 	let mut offset = 0;
 	let mut id = 2;
 	loop {
-		let read = store.read(file, offset, &mut buffer)?;
+		let read = store.read(file, offset, &mut buffer).await?;
 		if read == 0 {
 			break;
 		}
