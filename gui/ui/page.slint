@@ -1,4 +1,4 @@
-import { MaterialPalette, MaterialText, MaterialTypography, StateLayerArea } from "@material/material.slint";
+import { MaterialPalette, MaterialText, MaterialTypography } from "@material/material.slint";
 
 /// The title at the top of a page.
 export component PageTitle inherits HorizontalLayout {
@@ -32,16 +32,21 @@ export component EmptyNote inherits HorizontalLayout {
 export component Row {
     in property <string> text;
     in property <string> supporting_text;
-    /// Whether tapping it does something, and so ripples.
+    /// Whether tapping it does something, and so lights up while held.
     in property <bool> clickable;
 
     callback clicked();
 
     height: 52px;
 
-    if root.clickable: StateLayerArea {
-        width: 100%;
-        height: 100%;
+    // Material's pressed state, without its ripple, which costs a good deal
+    // of memory for each row.
+    Rectangle {
+        background: touch.pressed ? MaterialPalette.on_surface.transparentize(0.9) : transparent;
+    }
+
+    touch := TouchArea {
+        enabled: root.clickable;
 
         clicked => {
             root.clicked();

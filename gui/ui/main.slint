@@ -2,11 +2,13 @@ import { MaterialPalette, MaterialText, MaterialTypography, MaterialWindow, Navi
 import { Palette } from "std-widgets.slint";
 import { HomePage } from "home.slint";
 import { NeighborsPage } from "neighbors.slint";
+import { OnScreenKeyboard } from "keyboard.slint";
 import { NodesPage } from "nodes.slint";
 import { CompactBar, CompactRail } from "rail.slint";
 import { SettingsPage } from "settings.slint";
 import { Notice } from "state.slint";
-export { Node, NodeEntry, NeighborEntry, Notice, Setup, WifiEntry } from "state.slint";
+import { Keyboard } from "state.slint";
+export { Keyboard, Node, NodeEntry, NeighborEntry, Notice, Setting, Setup, WifiEntry } from "state.slint";
 import "../fonts/Roboto-Regular.ttf";
 import "../fonts/Roboto-Medium.ttf";
 
@@ -23,11 +25,11 @@ component Pages inherits VerticalLayout {
 /// A short message along the bottom, in the style of Material's snackbar,
 /// which goes after a few seconds.
 component NoticeBar inherits Rectangle {
-    height: 40px;
+    height: max(40px, message.preferred_height + 20px);
     border_radius: 4px;
     background: MaterialPalette.inverse_surface;
 
-    MaterialText {
+    message := MaterialText {
         x: 16px;
         width: parent.width - 32px;
         height: parent.height;
@@ -35,7 +37,7 @@ component NoticeBar inherits Rectangle {
         style: MaterialTypography.body_medium;
         color: MaterialPalette.inverse_on_surface;
         vertical_alignment: center;
-        overflow: elide;
+        wrap: word_wrap;
     }
 
     Timer {
@@ -88,7 +90,9 @@ export component MainWindow inherits MaterialWindow {
         Palette.color_scheme = ColorScheme.dark;
     }
 
-    if !root.portrait: HorizontalLayout {
+    // The keyboard covers the screen, so what is under it is let go while
+    // it is up, to leave memory for it.
+    if !Keyboard.open && !root.portrait: HorizontalLayout {
         CompactRail {
             horizontal_stretch: 0;
             items: root.destinations;
@@ -101,7 +105,7 @@ export component MainWindow inherits MaterialWindow {
         }
     }
 
-    if root.portrait: VerticalLayout {
+    if !Keyboard.open && root.portrait: VerticalLayout {
         Pages {
             vertical_stretch: 1;
             page: root.page;
@@ -118,5 +122,10 @@ export component MainWindow inherits MaterialWindow {
         x: root.portrait ? 8px : 88px;
         width: root.width - self.x - 8px;
         y: root.height - self.height - (root.portrait ? 88px : 8px);
+    }
+
+    if Keyboard.open: OnScreenKeyboard {
+        width: root.width;
+        height: root.height;
     }
 }

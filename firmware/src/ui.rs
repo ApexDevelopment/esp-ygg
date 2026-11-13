@@ -330,10 +330,10 @@ pub mod own_thread {
 
 	use crate::touch_lcd::{self, Pins};
 
-	/// Laying out the graphical interface's settings page takes 29 KB, and
+	/// Laying out the graphical interface's settings page takes 26 KB, and
 	/// TLS for Gemini 14 KB in a handshake with an elliptic curve
 	/// certificate. esp-rtos adds 6 KB to this.
-	const STACK_SIZE: usize = 48 * 1024;
+	const STACK_SIZE: usize = 40 * 1024;
 	/// WiFi's own threads run above both of these.
 	const NETWORK_PRIORITY: usize = 1;
 	const UI_PRIORITY: u32 = 0;

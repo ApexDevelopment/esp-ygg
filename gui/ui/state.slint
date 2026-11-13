@@ -43,30 +43,32 @@ export struct WifiEntry {
     secured: bool,
 }
 
-/// The settings being edited, as typed. Rust fills them in, and checks
-/// them when they are saved or exported.
+/// The settings typed in, one at a time, on the keyboard.
+export enum Setting {
+    name,
+    channel,
+    time_zone,
+    ssid,
+    wifi_password,
+    peer,
+    hotspot_name,
+    hotspot_password,
+}
+
+/// The settings being edited. Rust fills in the text shown for each, and
+/// keeps the edits until they are saved.
 export global Setup {
-    in_out property <string> name;
-    in_out property <string> channel;
-    in_out property <string> time_zone;
+    in property <string> name;
+    in property <string> channel;
+    in property <string> time_zone;
+    in property <string> ssid;
+    in property <string> wifi_password;
+    in property <string> peer;
+    in property <string> hotspot_name;
+    in property <string> hotspot_password;
     in_out property <bool> status_pages;
     in_out property <bool> bridge;
-    in_out property <string> ssid;
-    in_out property <string> wifi_password;
-    in_out property <string> peer;
     in_out property <bool> hotspot;
-    in_out property <string> hotspot_name;
-    in_out property <string> hotspot_password;
-
-    /// Why each text will not do, or empty.
-    in property <string> name_error;
-    in property <string> channel_error;
-    in property <string> time_zone_error;
-    in property <string> ssid_error;
-    in property <string> wifi_password_error;
-    in property <string> peer_error;
-    in property <string> hotspot_name_error;
-    in property <string> hotspot_password_error;
 
     /// Whether the list of WiFi networks is showing in place of the
     /// settings, the networks a scan found, and whether it is still going.
@@ -74,6 +76,12 @@ export global Setup {
     in property <[WifiEntry]> networks;
     in property <bool> scanning;
 
+    /// How far the page is scrolled, kept while the keyboard replaces it.
+    in_out property <length> scroll;
+
+    /// Opens the keyboard on a setting, under the label given.
+    callback edit(Setting, string);
+    callback pick_network(WifiEntry);
     callback save();
     callback export();
     callback import();
@@ -83,4 +91,21 @@ export global Setup {
 /// A short message about the last action, shown for a few seconds.
 export global Notice {
     in_out property <string> text;
+}
+
+/// The keyboard, and the setting being typed on it. Rust keeps the text,
+/// and checks it when Enter is pressed.
+export global Keyboard {
+    in property <bool> open;
+    in property <string> label;
+    /// The end of the text, as far as fits, with dots for a password.
+    in property <string> text;
+    /// Why the text will not do, after Enter.
+    in property <string> error;
+    /// Takes numbers alone, so gets a number pad.
+    in property <bool> numeric;
+
+    /// A character, or Key.Backspace, or Key.Return to finish.
+    callback key(string);
+    callback cancel();
 }

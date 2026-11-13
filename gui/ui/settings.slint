@@ -1,6 +1,6 @@
-import { FilledButton, ListView, MaterialPalette, MaterialText, MaterialTypography, OutlineButton, ScrollView, Switch, TextButton, TextField } from "@material/material.slint";
+import { FilledButton, ListView, MaterialPalette, MaterialText, MaterialTypography, OutlineButton, ScrollView, Switch, TextButton } from "@material/material.slint";
 import { EmptyNote, PageTitle, Row } from "page.slint";
-import { Setup } from "state.slint";
+import { Setting, Setup } from "state.slint";
 
 /// A heading over a group of settings.
 component Section inherits HorizontalLayout {
@@ -46,30 +46,23 @@ component SwitchRow inherits HorizontalLayout {
     }
 }
 
-/// A setting typed in, with a hint under it, or why it will not do.
-component Field inherits HorizontalLayout {
-    in property <string> label;
-    in_out property <string> text;
-    in property <string> hint;
-    in property <string> error;
-    in property <InputType> input_type: InputType.text;
+/// A setting typed in, showing its value, which opens the keyboard.
+component TextRow inherits Row {
+    in property <Setting> setting;
+    in property <string> value;
+    /// What to show when the value is empty.
+    in property <string> empty: "None";
 
-    padding_left: 16px;
-    padding_right: 16px;
-    padding_top: 4px;
-    padding_bottom: 4px;
+    supporting_text: root.value == "" ? root.empty : root.value;
+    clickable: true;
 
-    TextField {
-        horizontal_stretch: 1;
-        label: root.label;
-        text <=> root.text;
-        input_type: root.input_type;
-        has_error: root.error != "";
-        supporting_text: root.error != "" ? root.error : root.hint;
+    clicked => {
+        Setup.edit(root.setting, root.text);
     }
 }
 
-/// The WiFi networks in range, to pick the bridge's from.
+/// The WiFi networks in range, to pick the bridge's from, or to type the
+/// name of one that does not show.
 component NetworkChooser inherits VerticalLayout {
     HorizontalLayout {
         PageTitle {
@@ -90,10 +83,6 @@ component NetworkChooser inherits VerticalLayout {
         text: "Scanning…";
     }
 
-    if !Setup.scanning && Setup.networks.length == 0: EmptyNote {
-        text: "No networks found";
-    }
-
     ListView {
         for network in Setup.networks: Row {
             text: network.ssid;
@@ -101,12 +90,19 @@ component NetworkChooser inherits VerticalLayout {
             clickable: true;
 
             clicked => {
-                Setup.ssid = network.ssid;
-                if !network.secured {
-                    Setup.wifi_password = "";
-                }
-                Setup.choosing_network = false;
+                Setup.pick_network(network);
             }
+        }
+    }
+
+    Row {
+        text: "Other network";
+        supporting_text: "Type its name";
+        clickable: true;
+
+        clicked => {
+            Setup.choosing_network = false;
+            Setup.edit(Setting.ssid, "Network");
         }
     }
 }
@@ -115,6 +111,8 @@ export component SettingsPage inherits VerticalLayout {
     if Setup.choosing_network: NetworkChooser { }
 
     if !Setup.choosing_network: ScrollView {
+        content_y <=> Setup.scroll;
+
         VerticalLayout {
             PageTitle {
                 text: "Settings";
@@ -124,24 +122,22 @@ export component SettingsPage inherits VerticalLayout {
                 text: "This node";
             }
 
-            Field {
-                label: "Name";
-                text <=> Setup.name;
-                error: Setup.name_error;
+            TextRow {
+                text: "Name";
+                setting: Setting.name;
+                value: Setup.name;
             }
 
-            Field {
-                label: "Channel";
-                text <=> Setup.channel;
-                hint: "1 to 13";
-                error: Setup.channel_error;
+            TextRow {
+                text: "Channel";
+                setting: Setting.channel;
+                value: Setup.channel;
             }
 
-            Field {
-                label: "Time zone";
-                text <=> Setup.time_zone;
-                hint: "An offset from UTC, like -05:00";
-                error: Setup.time_zone_error;
+            TextRow {
+                text: "Time zone";
+                setting: Setting.time_zone;
+                value: "UTC" + Setup.time_zone;
             }
 
             SwitchRow {
@@ -159,38 +155,28 @@ export component SettingsPage inherits VerticalLayout {
             }
 
             if Setup.bridge: VerticalLayout {
-                Field {
-                    label: "Network";
-                    text <=> Setup.ssid;
-                    error: Setup.ssid_error;
-                }
+                Row {
+                    text: "Network";
+                    supporting_text: Setup.ssid == "" ? "Pick one" : Setup.ssid;
+                    clickable: true;
 
-                HorizontalLayout {
-                    padding_left: 8px;
-                    alignment: start;
-
-                    TextButton {
-                        text: "Find networks";
-
-                        clicked => {
-                            Setup.choosing_network = true;
-                            Setup.scan();
-                        }
+                    clicked => {
+                        Setup.choosing_network = true;
+                        Setup.scan();
                     }
                 }
 
-                Field {
-                    label: "Password";
-                    text <=> Setup.wifi_password;
-                    input_type: InputType.password;
-                    error: Setup.wifi_password_error;
+                TextRow {
+                    text: "Password";
+                    setting: Setting.wifi_password;
+                    value: Setup.wifi_password;
                 }
 
-                Field {
-                    label: "Peer";
-                    text <=> Setup.peer;
-                    hint: "An IPv4 address and port";
-                    error: Setup.peer_error;
+                TextRow {
+                    text: "Peer";
+                    setting: Setting.peer;
+                    value: Setup.peer;
+                    empty: "An IPv4 address and port";
                 }
             }
 
@@ -204,18 +190,17 @@ export component SettingsPage inherits VerticalLayout {
             }
 
             if Setup.hotspot: VerticalLayout {
-                Field {
-                    label: "Network name";
-                    text <=> Setup.hotspot_name;
-                    error: Setup.hotspot_name_error;
+                TextRow {
+                    text: "Network name";
+                    setting: Setting.hotspot_name;
+                    value: Setup.hotspot_name;
                 }
 
-                Field {
-                    label: "Password";
-                    text <=> Setup.hotspot_password;
-                    input_type: InputType.password;
-                    hint: "8 or more characters, or none";
-                    error: Setup.hotspot_password_error;
+                TextRow {
+                    text: "Password";
+                    setting: Setting.hotspot_password;
+                    value: Setup.hotspot_password;
+                    empty: "None, open";
                 }
             }
 

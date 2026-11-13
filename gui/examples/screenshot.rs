@@ -64,22 +64,79 @@ fn main() {
 		gui.handle_nodeinfo(*key, Some(info.as_bytes()));
 	}
 	save_pages(&gui, &window, &folder, "mesh");
+	save_keyboards(&mut gui, &window, &folder);
 	save_settings_scrolled(&mut gui, &window, &folder);
 }
 
+/// Saves the keyboard in both orientations: for the name, with letters,
+/// after typing on it, and with symbols; then for the channel, as a number
+/// pad, and after Enter on a channel that will not do.
+fn save_keyboards(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str) {
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		gui.window().set_page(3);
+		let row_x = if width > height { 200.0 } else { 120.0 };
+		let (rows_top, row) = (52.0, (height as f32 - 56.0) / 4.0);
+		let key = |column: f32, line: f32| (width as f32 * column, rows_top + row * line);
+		tap(gui, window, (row_x, 100.0));
+		save_screen(window, folder, &format!("keyboard-{orientation}-letters"));
+		// Shift, then F
+		tap(gui, window, (12.0, rows_top + row * 2.5));
+		tap(gui, window, key(0.42, 1.5));
+		save_screen(window, folder, &format!("keyboard-{orientation}-typed"));
+		tap(gui, window, (16.0, rows_top + row * 3.5));
+		save_screen(window, folder, &format!("keyboard-{orientation}-symbols"));
+		// Enter, which applies the name, then the channel, typed as 99
+		tap(gui, window, key(0.95, 3.5));
+		tap(gui, window, (row_x, 152.0));
+		save_screen(window, folder, &format!("keyboard-{orientation}-numbers"));
+		tap(gui, window, key(0.3, 2.5));
+		tap(gui, window, key(0.3, 2.5));
+		tap(gui, window, key(0.9, 3.5));
+		save_screen(window, folder, &format!("keyboard-{orientation}-error"));
+		// Cancel
+		tap(gui, window, (width as f32 - 30.0, 26.0));
+	}
+}
+
+fn save_screen(window: &MinimalSoftwareWindow, folder: &str, name: &str) {
+	let size = window.size();
+	let mut pixels = vec![Rgb565Pixel(0); (size.width * size.height) as usize];
+	slint::platform::update_timers_and_animations();
+	window.request_redraw();
+	window.draw_if_needed(|renderer| {
+		renderer.render(&mut pixels, size.width as usize);
+	});
+	let path = Path::new(folder).join(format!("{name}.png"));
+	save(&pixels, size.width, size.height, &path);
+	println!("{}", path.display());
+}
+
+/// Taps the screen, as a finger would, and lets the interface act on it.
+fn tap(gui: &mut Gui, window: &MinimalSoftwareWindow, at: (f32, f32)) {
+	use slint::platform::{PointerEventButton, WindowEvent};
+	let position = slint::LogicalPosition::new(at.0, at.1);
+	let button = PointerEventButton::Left;
+	window.dispatch_event(WindowEvent::PointerPressed { position, button });
+	window.dispatch_event(WindowEvent::PointerReleased { position, button });
+	window.dispatch_event(WindowEvent::PointerExited);
+	gui.tick();
+	for _ in 0..40 {
+		std::thread::sleep(Duration::from_millis(10));
+		slint::platform::update_timers_and_animations();
+	}
+}
+
 /// Saves the settings page with the bridge and the hotspot on, after
-/// saving with a peer that has no port and a password too short, as it
-/// looks dragged down a screen at a time, wide.
+/// saving without a network or peer, as it looks dragged down a screen at
+/// a time, wide.
 fn save_settings_scrolled(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str) {
 	let (_, width, height) = SIZES[0];
 	window.set_size(slint::PhysicalSize::new(width, height));
 	gui.window().set_page(3);
 	let setup = gui.window().global::<Setup>();
 	setup.set_bridge(true);
-	setup.set_ssid("PHOTON".into());
-	setup.set_peer("192.168.1.10".into());
 	setup.set_hotspot(true);
-	setup.set_hotspot_password("short".into());
 	setup.invoke_save();
 	gui.tick();
 	for screen in 1..=5 {

@@ -1,8 +1,9 @@
 //! Keeps the interface showing what the node reports, asks for the names of
 //! the nodes on the page being looked at, and carries out what is asked on
-//! the settings page.
+//! the settings page and typed on the keyboard.
 
 use alloc::collections::VecDeque;
+use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -11,39 +12,39 @@ use core::net::Ipv6Addr;
 
 use esp_ygg_app::Settings;
 use esp_ygg_app::settings::TextSetting;
-use esp_ygg_app::time::{DateTime, short_uptime};
+use esp_ygg_app::time::{DateTime, format_offset, short_uptime};
 use esp_ygg_app::ui::directory::Directory;
-use esp_ygg_app::ui::{Command, SETTINGS_FILE, Status, WifiNetwork};
+use esp_ygg_app::ui::{Command, Key, SETTINGS_FILE, Status, WifiNetwork};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use yggdrasil_espnow::PublicKey;
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
-use crate::{MainWindow, NeighborEntry, Node, NodeEntry, Notice, Setup, WifiEntry};
+use crate::{
+	Keyboard, MainWindow, NeighborEntry, Node, NodeEntry, Notice, Setting, Setup, WifiEntry,
+};
 
-/// Every setting typed in on the settings page.
-const TEXT_SETTINGS: [TextSetting; 8] = [
-	TextSetting::Name,
-	TextSetting::Channel,
-	TextSetting::TimeZone,
-	TextSetting::Ssid,
-	TextSetting::WifiPassword,
-	TextSetting::Peer,
-	TextSetting::HotspotName,
-	TextSetting::HotspotPassword,
-];
+/// The most characters of the text being typed that the keyboard shows,
+/// from the end, as fits its width.
+const SHOWN_TYPED: usize = 24;
 
-/// What a button on the settings page asked for, until the next tick.
-#[derive(Clone, Copy)]
+/// What the interface asked for, until the next tick.
 enum Action {
+	Edit(TextSetting, SharedString),
+	PickNetwork(WifiEntry),
 	Save,
 	Export,
 	Import,
 	Scan,
+	/// A character, or Backspace or Return, from the keyboard.
+	Key(SharedString),
+	Cancel,
 }
 
-/// The pages whose names are looked up, as the navigation numbers them.
-const NODES_PAGE: i32 = 1;
-const NEIGHBORS_PAGE: i32 = 2;
+/// A setting being typed on the keyboard.
+struct Edit {
+	setting: TextSetting,
+	text: String,
+}
 
 pub struct Gui {
 	window: MainWindow,
@@ -52,8 +53,11 @@ pub struct Gui {
 	nodes: Rc<VecModel<NodeEntry>>,
 	neighbors: Rc<VecModel<NeighborEntry>>,
 	networks: Rc<VecModel<WifiEntry>>,
-	/// The settings in use, which edits start from.
+	/// The settings in use.
 	saved: Settings,
+	/// The settings as edited, until saved.
+	draft: Settings,
+	editing: Option<Edit>,
 	actions: Rc<RefCell<VecDeque<Action>>>,
 	/// What the host has been asked to do, oldest first.
 	commands: VecDeque<Command>,
@@ -68,17 +72,11 @@ impl Gui {
 		let node = window.global::<Node>();
 		node.set_nodes(ModelRc::from(nodes.clone()));
 		node.set_neighbors(ModelRc::from(neighbors.clone()));
-		let setup = window.global::<Setup>();
-		setup.set_networks(ModelRc::from(networks.clone()));
 		let actions = Rc::new(RefCell::new(VecDeque::new()));
-		let queue = |action| {
-			let actions = actions.clone();
-			move || actions.borrow_mut().push_back(action)
-		};
-		setup.on_save(queue(Action::Save));
-		setup.on_export(queue(Action::Export));
-		setup.on_import(queue(Action::Import));
-		setup.on_scan(queue(Action::Scan));
+		connect(&window, &actions);
+		window
+			.global::<Setup>()
+			.set_networks(ModelRc::from(networks.clone()));
 		let gui = Gui {
 			window,
 			directory: Directory::new(),
@@ -86,11 +84,13 @@ impl Gui {
 			nodes,
 			neighbors,
 			networks,
+			draft: settings.clone(),
 			saved: settings,
+			editing: None,
 			actions,
 			commands: VecDeque::new(),
 		};
-		gui.show_settings(&gui.saved);
+		gui.show_settings();
 		Ok(gui)
 	}
 
@@ -122,8 +122,8 @@ impl Gui {
 		self.refresh_lists();
 	}
 
-	/// Carries out what the settings page asked for, and looks up the names
-	/// of nodes on the page showing.
+	/// Carries out what the interface asked for, and looks up the names of
+	/// nodes on the page showing.
 	pub fn tick(&mut self) {
 		let actions: Vec<Action> = self.actions.borrow_mut().drain(..).collect();
 		for action in actions {
@@ -133,8 +133,8 @@ impl Gui {
 			return;
 		};
 		let wanted: Vec<PublicKey> = match self.window.get_page() {
-			NODES_PAGE => status.nodes(),
-			NEIGHBORS_PAGE => status.neighbors.iter().filter_map(|n| n.key).collect(),
+			1 => status.nodes(),
+			2 => status.neighbors.iter().filter_map(|n| n.key).collect(),
 			_ => Vec::new(),
 		};
 		for key in self.directory.start_lookups(wanted) {
@@ -144,6 +144,18 @@ impl Gui {
 
 	pub fn poll_command(&mut self) -> Option<Command> {
 		self.commands.pop_front()
+	}
+
+	/// Types a key from a keyboard other than the screen's, such as the
+	/// serial port's, into the setting being edited, if there is one.
+	pub fn type_key(&mut self, key: Key) {
+		match key {
+			Key::Char(character) => self.type_text(&character.to_string()),
+			Key::Backspace => self.backspace(),
+			Key::Enter => self.finish_edit(),
+			Key::Escape => self.close_keyboard(),
+			_ => {}
+		}
 	}
 
 	/// Takes the networks a scan found.
@@ -164,18 +176,19 @@ impl Gui {
 	/// How writing settings to the SD card went.
 	pub fn settings_exported(&mut self, result: Result<(), String>) {
 		self.notify(match result {
-			Ok(()) => alloc::format!("Exported to {SETTINGS_FILE}"),
+			Ok(()) => format!("Exported to {SETTINGS_FILE}"),
 			Err(problem) => problem,
 		});
 	}
 
 	/// The settings file read from the SD card, or why it could not be.
-	/// What it holds replaces what is on the page, until it is saved.
+	/// What it holds replaces the edits, until they are saved.
 	pub fn settings_imported(&mut self, result: Result<String, String>) {
-		let base = self.edited_settings().unwrap_or_else(|| self.saved.clone());
-		match result.and_then(|text| base.with_text(&text)) {
+		self.take_switches();
+		match result.and_then(|text| self.draft.with_text(&text)) {
 			Ok(settings) => {
-				self.show_settings(&settings);
+				self.draft = settings;
+				self.show_settings();
 				self.notify("Imported, save to apply".into());
 			}
 			Err(problem) => self.notify(problem),
@@ -193,23 +206,29 @@ impl Gui {
 
 	fn carry_out(&mut self, action: Action) {
 		match action {
+			Action::Edit(setting, label) => self.open_keyboard(setting, label),
+			Action::PickNetwork(network) => {
+				self.draft.ssid = network.ssid.into();
+				if !network.secured {
+					self.draft.password.clear();
+				}
+				self.window.global::<Setup>().set_choosing_network(false);
+				self.show_settings();
+			}
 			Action::Save => {
-				let Some(settings) = self.edited_settings() else {
-					return;
-				};
-				if settings.bridge && !settings.can_bridge() {
+				self.take_switches();
+				if self.draft.bridge && !self.draft.can_bridge() {
 					self.notify("Bridging needs a network and peer".into());
 					return;
 				}
-				self.saved = settings.clone();
-				self.commands.push_back(Command::Save(settings));
+				self.saved = self.draft.clone();
+				self.commands.push_back(Command::Save(self.draft.clone()));
 				self.notify("Saved, restarting".into());
 			}
 			Action::Export => {
-				if let Some(settings) = self.edited_settings() {
-					self.commands
-						.push_back(Command::ExportSettings(settings.to_text()));
-				}
+				self.take_switches();
+				self.commands
+					.push_back(Command::ExportSettings(self.draft.to_text()));
 			}
 			Action::Import => self.commands.push_back(Command::ImportSettings),
 			Action::Scan => {
@@ -217,48 +236,110 @@ impl Gui {
 				self.window.global::<Setup>().set_scanning(true);
 				self.commands.push_back(Command::ScanWifi);
 			}
+			Action::Key(text) if text.as_str() == "\u{8}" => self.backspace(),
+			Action::Key(text) if text.as_str() == "\n" => self.finish_edit(),
+			Action::Key(text) => self.type_text(&text),
+			Action::Cancel => self.close_keyboard(),
 		}
+	}
+
+	fn open_keyboard(&mut self, setting: TextSetting, label: SharedString) {
+		self.editing = Some(Edit {
+			setting,
+			text: self.draft.text(setting),
+		});
+		let keyboard = self.window.global::<Keyboard>();
+		keyboard.set_label(label);
+		keyboard.set_error(SharedString::new());
+		keyboard.set_numeric(setting.is_numeric());
+		keyboard.set_open(true);
+		self.show_typed();
+	}
+
+	fn type_text(&mut self, text: &str) {
+		let Some(edit) = &mut self.editing else {
+			return;
+		};
+		for character in text.chars() {
+			if edit.text.chars().count() < edit.setting.max_len() {
+				edit.text.push(character);
+			}
+		}
+		self.show_typed();
+	}
+
+	fn backspace(&mut self) {
+		if let Some(edit) = &mut self.editing {
+			edit.text.pop();
+			self.show_typed();
+		}
+	}
+
+	/// Applies the text typed if it will do, or says why not and leaves the
+	/// keyboard up.
+	fn finish_edit(&mut self) {
+		let Some(edit) = &self.editing else {
+			return;
+		};
+		match self.draft.set_text(edit.setting, &edit.text) {
+			Ok(()) => {
+				self.close_keyboard();
+				self.show_settings();
+			}
+			Err(problem) => self.window.global::<Keyboard>().set_error(problem.into()),
+		}
+	}
+
+	fn close_keyboard(&mut self) {
+		self.editing = None;
+		self.window.global::<Keyboard>().set_open(false);
+	}
+
+	/// Shows the end of the text being typed on the keyboard.
+	fn show_typed(&self) {
+		let Some(edit) = &self.editing else {
+			return;
+		};
+		let shown = shown_value(edit.setting, &edit.text);
+		let count = shown.chars().count();
+		let end: String = shown
+			.chars()
+			.skip(count.saturating_sub(SHOWN_TYPED))
+			.collect();
+		let keyboard = self.window.global::<Keyboard>();
+		keyboard.set_text(end.into());
+		keyboard.set_error(SharedString::new());
+	}
+
+	/// Takes what the switches on the settings page say into the edits.
+	fn take_switches(&mut self) {
+		let setup = self.window.global::<Setup>();
+		self.draft.status_page = setup.get_status_pages();
+		self.draft.bridge = setup.get_bridge();
+		self.draft.hotspot = setup.get_hotspot();
+	}
+
+	/// Shows the edits on the settings page.
+	fn show_settings(&self) {
+		let setup = self.window.global::<Setup>();
+		let draft = &self.draft;
+		setup.set_name(draft.name.as_str().into());
+		setup.set_channel(draft.channel.to_string().into());
+		setup.set_time_zone(format_offset(draft.utc_offset).into());
+		setup.set_ssid(draft.ssid.as_str().into());
+		let wifi_password = shown_value(TextSetting::WifiPassword, &draft.password);
+		setup.set_wifi_password(wifi_password.into());
+		setup.set_peer(draft.peer.as_str().into());
+		setup.set_hotspot_name(draft.hotspot_name.as_str().into());
+		let hotspot_password = shown_value(TextSetting::HotspotPassword, &draft.hotspot_password);
+		setup.set_hotspot_password(hotspot_password.into());
+		setup.set_status_pages(draft.status_page);
+		setup.set_bridge(draft.bridge);
+		setup.set_hotspot(draft.hotspot);
 	}
 
 	fn notify(&self, text: String) {
 		self.window.global::<Notice>().set_text(text.into());
-	}
-
-	/// Puts `settings` on the settings page.
-	fn show_settings(&self, settings: &Settings) {
-		let setup = self.window.global::<Setup>();
-		for setting in TEXT_SETTINGS {
-			set_text(&setup, setting, settings.text(setting).into());
-			set_error(&setup, setting, SharedString::new());
-		}
-		setup.set_status_pages(settings.status_page);
-		setup.set_bridge(settings.bridge);
-		setup.set_hotspot(settings.hotspot);
-	}
-
-	/// The settings as edited on the page, or `None` if some text will not
-	/// do, which is then marked on the page.
-	fn edited_settings(&self) -> Option<Settings> {
-		let setup = self.window.global::<Setup>();
-		let mut settings = self.saved.clone();
-		settings.status_page = setup.get_status_pages();
-		settings.bridge = setup.get_bridge();
-		settings.hotspot = setup.get_hotspot();
-		let mut valid = true;
-		for setting in TEXT_SETTINGS {
-			let error = match settings.set_text(setting, &text(&setup, setting)) {
-				Ok(()) => "",
-				Err(problem) => {
-					valid = false;
-					problem
-				}
-			};
-			set_error(&setup, setting, error.into());
-		}
-		if !valid {
-			self.notify("Some settings need fixing".into());
-		}
-		valid.then_some(settings)
 	}
 
 	fn refresh_lists(&self) {
@@ -304,6 +385,53 @@ impl Gui {
 	}
 }
 
+/// Queues what the interface's callbacks ask for, for the next tick.
+fn connect(window: &MainWindow, actions: &Rc<RefCell<VecDeque<Action>>>) {
+	let queue = |action: fn() -> Action| {
+		let actions = actions.clone();
+		move || actions.borrow_mut().push_back(action())
+	};
+	let setup = window.global::<Setup>();
+	setup.on_save(queue(|| Action::Save));
+	setup.on_export(queue(|| Action::Export));
+	setup.on_import(queue(|| Action::Import));
+	setup.on_scan(queue(|| Action::Scan));
+	let edits = actions.clone();
+	setup.on_edit(move |setting, label| {
+		let action = Action::Edit(text_setting(setting), label);
+		edits.borrow_mut().push_back(action);
+	});
+	let picks = actions.clone();
+	setup
+		.on_pick_network(move |network| picks.borrow_mut().push_back(Action::PickNetwork(network)));
+	let keyboard = window.global::<Keyboard>();
+	let keys = actions.clone();
+	keyboard.on_key(move |text| keys.borrow_mut().push_back(Action::Key(text)));
+	keyboard.on_cancel(queue(|| Action::Cancel));
+}
+
+fn text_setting(setting: Setting) -> TextSetting {
+	match setting {
+		Setting::Name => TextSetting::Name,
+		Setting::Channel => TextSetting::Channel,
+		Setting::TimeZone => TextSetting::TimeZone,
+		Setting::Ssid => TextSetting::Ssid,
+		Setting::WifiPassword => TextSetting::WifiPassword,
+		Setting::Peer => TextSetting::Peer,
+		Setting::HotspotName => TextSetting::HotspotName,
+		Setting::HotspotPassword => TextSetting::HotspotPassword,
+	}
+}
+
+/// A setting's value as shown, with dots for a password.
+fn shown_value(setting: TextSetting, text: &str) -> String {
+	if setting.is_secret() {
+		"●".repeat(text.chars().count())
+	} else {
+		text.into()
+	}
+}
+
 /// Changes `model` to hold `rows`, touching only rows that differ, so the
 /// lists keep their place and only what changed is drawn again.
 fn sync<T: Clone + PartialEq + 'static>(model: &VecModel<T>, rows: Vec<T>) {
@@ -316,44 +444,5 @@ fn sync<T: Clone + PartialEq + 'static>(model: &VecModel<T>, rows: Vec<T>) {
 	}
 	while model.row_count() > rows.len() {
 		model.remove(model.row_count() - 1);
-	}
-}
-
-fn text(setup: &Setup<'_>, setting: TextSetting) -> SharedString {
-	match setting {
-		TextSetting::Name => setup.get_name(),
-		TextSetting::Channel => setup.get_channel(),
-		TextSetting::TimeZone => setup.get_time_zone(),
-		TextSetting::Ssid => setup.get_ssid(),
-		TextSetting::WifiPassword => setup.get_wifi_password(),
-		TextSetting::Peer => setup.get_peer(),
-		TextSetting::HotspotName => setup.get_hotspot_name(),
-		TextSetting::HotspotPassword => setup.get_hotspot_password(),
-	}
-}
-
-fn set_text(setup: &Setup<'_>, setting: TextSetting, text: SharedString) {
-	match setting {
-		TextSetting::Name => setup.set_name(text),
-		TextSetting::Channel => setup.set_channel(text),
-		TextSetting::TimeZone => setup.set_time_zone(text),
-		TextSetting::Ssid => setup.set_ssid(text),
-		TextSetting::WifiPassword => setup.set_wifi_password(text),
-		TextSetting::Peer => setup.set_peer(text),
-		TextSetting::HotspotName => setup.set_hotspot_name(text),
-		TextSetting::HotspotPassword => setup.set_hotspot_password(text),
-	}
-}
-
-fn set_error(setup: &Setup<'_>, setting: TextSetting, error: SharedString) {
-	match setting {
-		TextSetting::Name => setup.set_name_error(error),
-		TextSetting::Channel => setup.set_channel_error(error),
-		TextSetting::TimeZone => setup.set_time_zone_error(error),
-		TextSetting::Ssid => setup.set_ssid_error(error),
-		TextSetting::WifiPassword => setup.set_wifi_password_error(error),
-		TextSetting::Peer => setup.set_peer_error(error),
-		TextSetting::HotspotName => setup.set_hotspot_name_error(error),
-		TextSetting::HotspotPassword => setup.set_hotspot_password_error(error),
 	}
 }

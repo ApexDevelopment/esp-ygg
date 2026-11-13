@@ -8,11 +8,10 @@ use embassy_time::{Duration, Instant, Timer};
 use embedded_graphics_core::pixelcolor::Rgb565;
 use embedded_graphics_core::pixelcolor::raw::RawU16;
 use esp_ygg_app::Settings;
-use esp_ygg_app::ui::{Command, Key};
+use esp_ygg_app::ui::Command;
 use esp_ygg_gui::{Gui, slint};
 use log::info;
 use slint::ComponentHandle;
-use slint::SharedString;
 use slint::platform::software_renderer::{
 	LineBufferProvider, MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel,
 };
@@ -181,7 +180,7 @@ pub async fn run(board: Board, settings: Settings) {
 		// Taps over the serial port, in pixels here, for testing.
 		while let Ok(input) = INPUT.try_receive() {
 			if let Input::Key(key) = input {
-				type_key(&window, key);
+				gui.type_key(key);
 			}
 			if let Input::Press { column, row } = input {
 				let position = slint::LogicalPosition::new(column.into(), row.into());
@@ -217,22 +216,4 @@ pub async fn run(board: Board, settings: Settings) {
 			Timer::after(FRAME).await;
 		}
 	}
-}
-
-/// Types a key from the serial port into whatever has focus, for testing.
-fn type_key(window: &MinimalSoftwareWindow, key: Key) {
-	use slint::platform::Key as SlintKey;
-	let text: SharedString = match key {
-		Key::Char(character) => character.into(),
-		Key::Enter => SlintKey::Return.into(),
-		Key::Backspace => SlintKey::Backspace.into(),
-		Key::Tab => SlintKey::Tab.into(),
-		Key::Escape => SlintKey::Escape.into(),
-		Key::Up => SlintKey::UpArrow.into(),
-		Key::Down => SlintKey::DownArrow.into(),
-		Key::Left => SlintKey::LeftArrow.into(),
-		Key::Right => SlintKey::RightArrow.into(),
-	};
-	window.dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
-	window.dispatch_event(WindowEvent::KeyReleased { text });
 }
