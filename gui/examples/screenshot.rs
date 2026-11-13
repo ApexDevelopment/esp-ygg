@@ -15,7 +15,7 @@ use esp_ygg_app::Event;
 use esp_ygg_app::Stream;
 use esp_ygg_app::ui::{Neighbor, Status, Uplink};
 use esp_ygg_app::{BoardInfo, Settings};
-use esp_ygg_gui::{App, Console, Gui, Irc, IrcField, Launcher, Ping, Setting, Setup};
+use esp_ygg_gui::{App, Console, Gopher, Gui, Irc, IrcField, Launcher, Ping, Setting, Setup};
 use slint::ComponentHandle;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel};
 use slint::platform::{Platform, WindowAdapter};
@@ -71,6 +71,58 @@ fn main() {
 	save_ping(&mut gui, &window, &folder, &keys);
 	save_console(&mut gui, &window, &folder, &keys);
 	save_irc(&mut gui, &window, &folder);
+	save_gopher(&mut gui, &window, &folder);
+}
+
+const GOPHER_MENU: &str =
+	"iWelcome to a made-up Gopher hole, served over Yggdrasil from a board in the attic.\t\t\t0\r
+i\t\t\t0\r
+1Phlog\t/phlog\t200::5\t70\r
+0About this server, and the board it runs on\t/about.txt\t200::5\t70\r
+7Search the mesh\t/search\t200::5\t70\r
+hA web page\tURL:http://example.com\t200::5\t70\r
+.\r
+";
+
+const GOPHER_TEXT: &str = "About this server\r
+=================\r
+\r
+This hole is served by an ESP32 over ESP-NOW, a few rooms away from anything with a proper network connection.\r
+\r
+\tIt has no disk, so everything here fits in a few kilobytes.\r
+.\r
+";
+
+/// Saves Gopher in both orientations: a menu, then a text document.
+fn save_gopher(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str) {
+	use esp_ygg_app::ui::Key;
+	gui.window().global::<Launcher>().set_open(App::Gopher);
+	gui.window().global::<Gopher>().invoke_go();
+	gui.tick();
+	for character in "[200::5]".chars() {
+		gui.type_key(Key::Char(character));
+	}
+	gui.type_key(Key::Enter);
+	gui.handle_event(Event::Fetched {
+		data: GOPHER_MENU.as_bytes().to_vec(),
+	});
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		save_screen(window, folder, &format!("gopher-{orientation}-menu"));
+		gui.tick();
+		save_screen(window, folder, &format!("gopher-{orientation}-menu"));
+	}
+	gui.window().global::<Gopher>().invoke_open(3);
+	gui.tick();
+	gui.handle_event(Event::Fetched {
+		data: GOPHER_TEXT.as_bytes().to_vec(),
+	});
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		save_screen(window, folder, &format!("gopher-{orientation}-text"));
+		gui.tick();
+		save_screen(window, folder, &format!("gopher-{orientation}-text"));
+	}
 }
 
 /// Saves IRC in both orientations: the form, then a channel after some

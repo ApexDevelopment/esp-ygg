@@ -1,0 +1,85 @@
+import { MaterialPalette, MaterialText, MaterialTypography } from "@material/material.slint";
+import { ComposeBar } from "chat.slint";
+import { AppBar } from "page.slint";
+import { App, Gopher, Launcher } from "state.slint";
+import { ListView } from "widgets.slint";
+
+/// A browser for Gopher's menus and text, wrapped to the screen.
+export component GopherPage inherits VerticalLayout {
+    // Lines are wrapped short of the edge, as Rust's measure can be a
+    // pixel out.
+    property <length> text_width: list.visible_width - 34px;
+
+    init => {
+        Gopher.width = root.text_width;
+    }
+
+    changed text_width => {
+        Gopher.width = root.text_width;
+    }
+
+    AppBar {
+        text: "Gopher";
+
+        back => {
+            if Gopher.can_go_back {
+                Gopher.back();
+            } else {
+                Launcher.open = App.none;
+            }
+        }
+    }
+
+    ComposeBar {
+        placeholder: Gopher.address == "" ? "Go to address" : Gopher.address;
+
+        write => {
+            Gopher.go();
+        }
+    }
+
+    if Gopher.loading || Gopher.error != "": HorizontalLayout {
+        padding_left: 16px;
+        padding_right: 16px;
+        padding_bottom: 4px;
+
+        MaterialText {
+            text: Gopher.error != "" ? Gopher.error : "Loading…";
+            style: MaterialTypography.body_small;
+            color: Gopher.error != "" ? MaterialPalette.error : MaterialPalette.on_surface_variant;
+            wrap: word_wrap;
+        }
+    }
+
+    list := ListView {
+        content_y <=> Gopher.scroll;
+
+        for line in Gopher.lines: Rectangle {
+            height: 20px;
+            background: line.link >= 0 && line.link == Gopher.held ? MaterialPalette.on_surface.transparentize(0.9) : transparent;
+
+            TouchArea {
+                enabled: line.link >= 0 && line.supported;
+
+                changed pressed => {
+                    Gopher.held = self.pressed ? line.link : -1;
+                }
+
+                clicked => {
+                    Gopher.open(line.link);
+                }
+            }
+
+            Text {
+                x: 16px;
+                width: parent.width - 32px;
+                text: line.text;
+                font_size: MaterialTypography.body_medium.font_size;
+                color: line.link < 0 ? MaterialPalette.on_surface
+                    : line.supported ? MaterialPalette.primary
+                    : MaterialPalette.on_surface_variant;
+                vertical_alignment: center;
+            }
+        }
+    }
+}

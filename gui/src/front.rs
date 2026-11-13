@@ -26,6 +26,8 @@ use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
 #[cfg(feature = "console")]
 use crate::console::Console;
+#[cfg(feature = "gopher")]
+use crate::gopher::Gopher;
 #[cfg(feature = "irc")]
 use crate::irc::Irc;
 use crate::ping::Pinger;
@@ -45,6 +47,9 @@ const DESTINATION_LEN: usize = 53;
 /// The longest message the console sends.
 #[cfg(feature = "console")]
 const MESSAGE_LEN: usize = 200;
+/// The longest Gopher address or search.
+#[cfg(feature = "gopher")]
+const GOPHER_LEN: usize = 60;
 #[cfg(feature = "irc")]
 const IRC_NICK_LEN: usize = 30;
 /// The longest server or channel name.
@@ -81,6 +86,12 @@ enum Action {
 	JoinIrc,
 	#[cfg(feature = "irc")]
 	DisconnectIrc,
+	#[cfg(feature = "gopher")]
+	GoGopher,
+	#[cfg(feature = "gopher")]
+	OpenGopher(i32),
+	#[cfg(feature = "gopher")]
+	BackGopher,
 	PickNetwork(WifiEntry),
 	Save,
 	Export,
@@ -109,6 +120,11 @@ enum Field {
 	/// A channel to join.
 	#[cfg(feature = "irc")]
 	IrcJoin,
+	#[cfg(feature = "gopher")]
+	GopherAddress,
+	/// The query for a Gopher search.
+	#[cfg(feature = "gopher")]
+	GopherSearch,
 }
 
 impl Field {
@@ -126,6 +142,8 @@ impl Field {
 			Field::IrcForm(_) | Field::IrcJoin => IRC_NAME_LEN,
 			#[cfg(feature = "irc")]
 			Field::IrcLine => IRC_LINE_LEN,
+			#[cfg(feature = "gopher")]
+			Field::GopherAddress | Field::GopherSearch => GOPHER_LEN,
 		}
 	}
 
@@ -155,6 +173,8 @@ pub struct Gui {
 	console: Console,
 	#[cfg(feature = "irc")]
 	irc: Irc,
+	#[cfg(feature = "gopher")]
+	gopher: Gopher,
 	/// The settings in use.
 	saved: Settings,
 	/// The settings as edited, until saved.
@@ -191,6 +211,8 @@ impl Gui {
 				App::Console,
 				#[cfg(feature = "irc")]
 				App::Irc,
+				#[cfg(feature = "gopher")]
+				App::Gopher,
 			]))));
 		let gui = Gui {
 			window: window.clone_strong(),
@@ -204,6 +226,8 @@ impl Gui {
 			console: Console::new(&window),
 			#[cfg(feature = "irc")]
 			irc: Irc::new(&window, &settings.name),
+			#[cfg(feature = "gopher")]
+			gopher: Gopher::new(&window),
 			draft: settings.clone(),
 			saved: settings,
 			editing: None,
@@ -267,6 +291,10 @@ impl Gui {
 			}
 			#[cfg(feature = "irc")]
 			Event::StreamClosed(Stream::Irc) => self.irc.closed(),
+			#[cfg(feature = "gopher")]
+			Event::Fetched { data } => self.gopher.fetched(&data),
+			#[cfg(feature = "gopher")]
+			Event::FetchFailed => self.gopher.failed(),
 			// Other apps' events, in builds with them
 			#[allow(unreachable_patterns)]
 			_ => {}
@@ -290,10 +318,12 @@ impl Gui {
 		}
 		#[cfg(feature = "irc")]
 		self.irc.refresh(self.viewing_irc());
+		#[cfg(feature = "gopher")]
+		self.gopher.refresh();
 		let choosing = match self.window.global::<Launcher>().get_open() {
 			App::Ping => self.window.global::<Ping>().get_choosing(),
 			App::Console => self.window.global::<crate::Console>().get_choosing(),
-			App::Irc | App::None => false,
+			App::Irc | App::Gopher | App::None => false,
 		};
 		let wanted: Vec<PublicKey> = match self.window.get_page() {
 			0 if choosing => status.nodes(),
@@ -408,6 +438,17 @@ impl Gui {
 			Action::JoinIrc => self.open_keyboard(Field::IrcJoin, "Channel".into()),
 			#[cfg(feature = "irc")]
 			Action::DisconnectIrc => self.irc.submit("/quit", &mut self.commands),
+			#[cfg(feature = "gopher")]
+			Action::GoGopher => self.open_keyboard(Field::GopherAddress, "Address".into()),
+			#[cfg(feature = "gopher")]
+			Action::OpenGopher(link) => {
+				let link = usize::try_from(link).unwrap_or(usize::MAX);
+				if self.gopher.open(link, &mut self.commands) {
+					self.open_keyboard(Field::GopherSearch, "Search".into());
+				}
+			}
+			#[cfg(feature = "gopher")]
+			Action::BackGopher => self.gopher.back(),
 			#[cfg(feature = "console")]
 			Action::WriteMessage => {
 				let label = self.window.global::<crate::Console>().get_target();
@@ -479,6 +520,10 @@ impl Gui {
 			Field::IrcForm(field) => self.irc.form(field),
 			#[cfg(feature = "irc")]
 			Field::IrcLine | Field::IrcJoin => String::new(),
+			#[cfg(feature = "gopher")]
+			Field::GopherAddress => self.gopher.address(),
+			#[cfg(feature = "gopher")]
+			Field::GopherSearch => String::new(),
 		};
 		self.editing = Some(Edit { field, text });
 		let keyboard = self.window.global::<Keyboard>();
@@ -562,6 +607,18 @@ impl Gui {
 					.submit(&format!("/join {channel}"), &mut self.commands);
 				Ok(())
 			}
+			#[cfg(feature = "gopher")]
+			Field::GopherAddress => {
+				let text = edit.text.clone();
+				self.gopher.go_to(&text, &mut self.commands);
+				Ok(())
+			}
+			#[cfg(feature = "gopher")]
+			Field::GopherSearch => {
+				let query = edit.text.clone();
+				self.gopher.search(&query, &mut self.commands);
+				Ok(())
+			}
 		};
 		match applied {
 			Ok(()) => {
@@ -573,6 +630,14 @@ impl Gui {
 	}
 
 	fn close_keyboard(&mut self) {
+		#[cfg(feature = "gopher")]
+		if let Some(Edit {
+			field: Field::GopherSearch,
+			..
+		}) = self.editing
+		{
+			self.gopher.cancel_search();
+		}
 		self.editing = None;
 		self.window.global::<Keyboard>().set_open(false);
 	}
@@ -738,6 +803,14 @@ fn connect(window: &MainWindow, actions: &Rc<RefCell<VecDeque<Action>>>) {
 		irc.on_edit(move |field| edits.borrow_mut().push_back(Action::EditIrc(field)));
 		let switches = actions.clone();
 		irc.on_switch_to(move |name| switches.borrow_mut().push_back(Action::SwitchIrc(name)));
+	}
+	#[cfg(feature = "gopher")]
+	{
+		let gopher = window.global::<crate::Gopher>();
+		gopher.on_go(queue(|| Action::GoGopher));
+		gopher.on_back(queue(|| Action::BackGopher));
+		let opens = actions.clone();
+		gopher.on_open(move |link| opens.borrow_mut().push_back(Action::OpenGopher(link)));
 	}
 	let keyboard = window.global::<Keyboard>();
 	let keys = actions.clone();

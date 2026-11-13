@@ -74,8 +74,9 @@ export component LauncherPage {
         y: 8px + floor(index / root.columns) * root.tile_height;
         icon: app == App.console ? @image-url("../icons/terminal.svg")
             : app == App.irc ? @image-url("../icons/tag.svg")
+            : app == App.gopher ? @image-url("../icons/description.svg")
             : @image-url("../icons/network_ping.svg");
-        text: app == App.console ? "Console" : app == App.irc ? "IRC" : "Ping";
+        text: app == App.console ? "Console" : app == App.irc ? "IRC" : app == App.gopher ? "Gopher" : "Ping";
         badge: app == App.console ? Launcher.console_unread : app == App.irc ? Launcher.irc_unread : 0;
 
         clicked => {

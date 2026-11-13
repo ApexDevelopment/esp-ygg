@@ -40,7 +40,7 @@ export component ComposeBar inherits HorizontalLayout {
     callback button();
 
     padding_left: 16px;
-    padding_right: 4px;
+    padding_right: root.icon.width > 0 ? 4px : 16px;
     padding_bottom: 8px;
     spacing: 4px;
     height: 48px;
@@ -68,7 +68,8 @@ export component ComposeBar inherits HorizontalLayout {
         }
     }
 
-    button := TouchArea {
+    // Left out when there is no icon for it.
+    if root.icon.width > 0: button := TouchArea {
         width: 40px;
 
         clicked => {

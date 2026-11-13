@@ -49,7 +49,7 @@ default = ["esp32s3", "standard"]
 # --features cardputer,gopher,irc,gemini
 standard = ["http", "console", "ntp"]
 http = ["esp-ygg-app/http"]
-gopher = ["esp-ygg-app/gopher"]
+gopher = ["esp-ygg-app/gopher", "esp-ygg-gui?/gopher"]
 console = ["esp-ygg-app/console", "esp-ygg-gui?/console"]
 ntp = ["esp-ygg-app/ntp"]
 irc = ["esp-ygg-app/irc", "esp-ygg-gui?/irc"]

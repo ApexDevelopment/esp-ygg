@@ -9,6 +9,10 @@ import { MaterialAnimations, MaterialPalette, MaterialTypography } from "@materi
 /// moment whenever it moves.
 export component Scroller {
     in_out property <length> content_y <=> flickable.content_y;
+    in_out property <length> content_width <=> flickable.content_width;
+    in_out property <length> content_height <=> flickable.content_height;
+    out property <length> visible_width <=> flickable.width;
+    out property <length> visible_height <=> flickable.height;
 
     // Material leaves room for a scroll bar along the bottom and the side.
     property <length> bar_size: 8px;
@@ -57,6 +61,10 @@ export component Scroller {
         }
     }
 }
+
+/// A scroller that makes only the rows showing, which must be of one
+/// height. Slint knows it by its name and properties.
+export component ListView inherits Scroller { }
 
 /// Material's switch.
 export component Toggle {
