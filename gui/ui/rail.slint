@@ -37,9 +37,10 @@ component Destination {
                     : touch.pressed ? MaterialPalette.on_surface.transparentize(1 - MaterialPalette.state_layer_opacity_press)
                     : transparent;
 
+                // Drawn at the size of its file, as scaling makes it jagged.
                 Image {
-                    width: 18px;
-                    height: 18px;
+                    width: 20px;
+                    height: 20px;
                     source: root.selected ? root.selected_icon : root.icon;
                     colorize: MaterialPalette.on_surface;
                 }

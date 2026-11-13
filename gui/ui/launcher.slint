@@ -28,9 +28,10 @@ component AppTile {
         border_radius: 16px;
         background: touch.pressed ? MaterialPalette.primary_container.mix(MaterialPalette.on_primary_container, 0.85) : MaterialPalette.primary_container;
 
+        // Drawn at the size of its file, as scaling makes it jagged.
         Image {
-            width: 28px;
-            height: 28px;
+            width: 24px;
+            height: 24px;
             source: root.icon;
             colorize: MaterialPalette.on_primary_container;
         }
