@@ -5,8 +5,6 @@ use alloc::boxed::Box;
 use alloc::rc::Rc;
 
 use embassy_time::{Duration, Instant, Timer};
-use embedded_graphics_core::pixelcolor::Rgb565;
-use embedded_graphics_core::pixelcolor::raw::RawU16;
 use esp_ygg_app::Settings;
 use esp_ygg_app::ui::Command;
 use esp_ygg_app::ui::screen_timeout::ScreenTimeout;
@@ -18,7 +16,7 @@ use slint::platform::software_renderer::{
 };
 use slint::platform::{Platform, PointerEventButton, WindowAdapter, WindowEvent};
 
-use crate::touch_lcd::{self, Board, Display};
+use crate::touch_lcd::{self, Board, Panel};
 use crate::ui::{FROM_UI, INPUT, Input, TO_UI, ToUi, uptime};
 
 const WIDTH: u16 = 320;
@@ -26,7 +24,7 @@ const HEIGHT: u16 = 240;
 /// How often the touch panel is read, and the screen redrawn if it changed.
 const FRAME: Duration = Duration::from_millis(20);
 /// A draw slower than this is logged. Redrawing the whole screen takes
-/// about 90 ms, and a page about 60.
+/// about 60 ms, switching pages about 40, and scrolling about 30 a frame.
 const SLOW_DRAW: Duration = Duration::from_millis(100);
 
 struct Esp {
@@ -43,35 +41,26 @@ impl Platform for Esp {
 	}
 }
 
-/// Lines sent to the screen together, at most. Each send sets up a window
-/// on the display first, which costs about as much as the pixels of a line.
-const BATCH_LINES: usize = 8;
-
 /// Hands Slint a line at a time to draw into, and sends them to the screen
-/// in batches of lines below one another that cover the same columns.
+/// in batches of lines below one another that cover the same columns. Each
+/// batch goes out while Slint draws the next.
 struct Lines<'a> {
-	display: &'a mut Display,
-	pixels: [Rgb565Pixel; WIDTH as usize * BATCH_LINES],
-	/// The batch waiting to be sent: its first line, how many lines it has,
-	/// and the columns they cover.
+	panel: &'a mut Panel,
+	/// The batch being drawn: its first line, how many lines it has, and the
+	/// columns they cover.
 	batch: Option<(usize, usize, core::ops::Range<usize>)>,
 }
 
 impl Lines<'_> {
-	/// Sends the lines waiting, if any.
+	/// Sends the lines drawn, if any.
 	fn flush(&mut self) {
 		let Some((first, count, columns)) = self.batch.take() else {
 			return;
 		};
-		let colors = self.pixels[..columns.len() * count]
-			.iter()
-			.map(|pixel| Rgb565::from(RawU16::new(pixel.0)));
-		let _ = self.display.set_pixels(
-			columns.start as u16,
-			first as u16,
-			columns.end as u16 - 1,
-			(first + count - 1) as u16,
-			colors,
+		self.panel.send(
+			(columns.start as u16, columns.end as u16 - 1),
+			(first as u16, (first + count - 1) as u16),
+			columns.len() * count,
 		);
 	}
 }
@@ -86,7 +75,9 @@ impl LineBufferProvider for &mut Lines<'_> {
 		render_fn: impl FnOnce(&mut [Rgb565Pixel]),
 	) {
 		let fits = self.batch.as_ref().is_some_and(|(first, count, columns)| {
-			*columns == range && first + count == line && *count < BATCH_LINES
+			*columns == range
+				&& first + count == line
+				&& (count + 1) * range.len() <= touch_lcd::BATCH_PIXELS
 		});
 		if !fits {
 			self.flush();
@@ -96,7 +87,10 @@ impl LineBufferProvider for &mut Lines<'_> {
 			return;
 		};
 		let start = *count * range.len();
-		render_fn(&mut self.pixels[start..start + range.len()]);
+		let pixels = &mut self.panel.pixels()[start..start + range.len()];
+		// SAFETY: Slint's pixels are plain RGB565 values.
+		let pixels = unsafe { &mut *(core::ptr::from_mut(pixels) as *mut [Rgb565Pixel]) };
+		render_fn(pixels);
 		*count += 1;
 	}
 }
@@ -167,11 +161,12 @@ impl SerialFinger {
 #[embassy_executor::task]
 pub async fn run(board: Board, settings: Settings) {
 	let Board {
-		mut display,
+		display,
 		mut i2c,
 		mut slot,
 		..
 	} = board;
+	let mut panel = Panel::new(display);
 	let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
 	slint::platform::set_platform(Box::new(Esp {
 		window: window.clone(),
@@ -186,16 +181,12 @@ pub async fn run(board: Board, settings: Settings) {
 		free_before.saturating_sub(esp_alloc::HEAP.free()) / 1024,
 		esp_alloc::HEAP.free() / 1024
 	);
-	let mut lines = Lines {
-		display: &mut display,
-		pixels: [Rgb565Pixel(0); WIDTH as usize * BATCH_LINES],
-		batch: None,
-	};
 	let mut timeout = ScreenTimeout::new(uptime());
 	let mut backlight = u8::MAX;
 	let mut touching = None;
 	let mut serial_finger = SerialFinger::default();
 	loop {
+		let frame_started = Instant::now();
 		crate::ui::report_stack();
 		slint::platform::update_timers_and_animations();
 		let touch = timeout.touch(uptime(), touch_lcd::read_touch(&mut i2c));
@@ -237,9 +228,13 @@ pub async fn run(board: Board, settings: Settings) {
 				// The card is on this side, and quick enough to wait for.
 				Command::ExportSettings(text) => {
 					let time = gui.local_time();
+					panel.finish();
 					gui.settings_exported(slot.export_settings(&text, time));
 				}
-				Command::ImportSettings => gui.settings_imported(slot.import_settings()),
+				Command::ImportSettings => {
+					panel.finish();
+					gui.settings_imported(slot.import_settings());
+				}
 				command => FROM_UI.send(command).await,
 			}
 		}
@@ -264,6 +259,10 @@ pub async fn run(board: Board, settings: Settings) {
 		// What changed while the screen was off is drawn as it wakes.
 		if level > 0 {
 			let started = Instant::now();
+			let mut lines = Lines {
+				panel: &mut panel,
+				batch: None,
+			};
 			let drawn = window.draw_if_needed(|renderer| {
 				renderer.render_by_line(&mut lines);
 				lines.flush();
@@ -274,17 +273,19 @@ pub async fn run(board: Board, settings: Settings) {
 		}
 		if level != backlight {
 			if level == 0 || backlight == 0 {
-				touch_lcd::show_picture(lines.display, level > 0);
+				panel.show_picture(level > 0);
 			}
 			touch_lcd::set_backlight(&mut i2c, level);
 			backlight = level;
 		}
 		// While something moves, draw the next frame as soon as possible.
-		// The network's thread still goes first.
-		if window.has_active_animations() {
+		// Otherwise check for touches each frame, however long drawing the
+		// last one took. The network's thread goes first either way.
+		let next_frame = frame_started + FRAME;
+		if window.has_active_animations() || Instant::now() >= next_frame {
 			embassy_futures::yield_now().await;
 		} else {
-			Timer::after(FRAME).await;
+			Timer::at(next_frame).await;
 		}
 	}
 }

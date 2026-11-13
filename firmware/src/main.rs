@@ -286,6 +286,7 @@ async fn main(spawner: Spawner) -> ! {
 			sda: peripherals.GPIO6,
 			scl: peripherals.GPIO7,
 			boot_button: peripherals.GPIO9,
+			dma: peripherals.DMA_CH0,
 		};
 		ui::own_thread::start(pins, peripherals.USB_DEVICE, settings.clone());
 	}

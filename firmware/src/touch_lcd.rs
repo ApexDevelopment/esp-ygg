@@ -51,16 +51,17 @@ mod screen {
 
 	use embedded_graphics_core::pixelcolor::{Rgb565, RgbColor};
 	use embedded_graphics_core::prelude::DrawTarget;
-	use embedded_hal_bus::spi::{NoDelay, RefCellDevice};
+	use embedded_hal::delay::DelayNs;
+	use embedded_hal::spi::{ErrorType, Operation, SpiBus, SpiDevice};
 	use esp_hal::Blocking;
 	use esp_hal::delay::Delay;
 	use esp_hal::gpio::{InputConfig, Level, Output, OutputConfig, Pull};
 	use esp_hal::i2c::master::I2c;
 	use esp_hal::peripherals::{
-		GPIO0, GPIO1, GPIO6, GPIO7, GPIO8, GPIO9, GPIO10, GPIO11, GPIO23, I2C0, SPI2,
+		DMA_CH0, GPIO0, GPIO1, GPIO6, GPIO7, GPIO8, GPIO9, GPIO10, GPIO11, GPIO23, I2C0, SPI2,
 	};
 	use esp_hal::spi::Mode;
-	use esp_hal::spi::master::{Config, Spi};
+	use esp_hal::spi::master::{Config, ConfigError, Spi, SpiDma};
 	use esp_hal::time::Rate;
 	use esp_ygg_app::ui::touch::Point;
 	use log::{info, warn};
@@ -70,7 +71,7 @@ mod screen {
 	use static_cell::StaticCell;
 
 	use super::{EXPANDER_BACKLIGHT, MODEL_NAME, expander_write, i2c_bus};
-	use crate::sdcard::{Bus, Slot};
+	use crate::sdcard::{Slot, SpiPort};
 	#[cfg(feature = "tui")]
 	pub use text::start;
 
@@ -91,14 +92,93 @@ mod screen {
 	const PANEL_WIDTH: u16 = 240;
 
 	pub type Display = mipidsi::Display<
-		SpiInterface<
-			'static,
-			RefCellDevice<'static, Spi<'static, Blocking>, Output<'static>, NoDelay>,
-			Output<'static>,
-		>,
+		SpiInterface<'static, ScreenSpi, Output<'static>>,
 		ST7789,
 		mipidsi::NoResetPin,
 	>;
+
+	/// The SPI bus the screen and the SD card share, driven by DMA. The
+	/// graphical interface borrows the driver itself while it sends pixels.
+	pub struct SharedSpi(Option<SpiDma<'static, Blocking>>);
+
+	impl SharedSpi {
+		fn driver(&mut self) -> &mut SpiDma<'static, Blocking> {
+			self.0.as_mut().expect("the SPI driver was not handed back")
+		}
+
+		#[cfg(feature = "gui")]
+		fn lend(&mut self) -> SpiDma<'static, Blocking> {
+			self.0.take().expect("the SPI driver was not handed back")
+		}
+
+		#[cfg(feature = "gui")]
+		fn hand_back(&mut self, driver: SpiDma<'static, Blocking>) {
+			self.0 = Some(driver);
+		}
+	}
+
+	impl ErrorType for SharedSpi {
+		type Error = esp_hal::spi::Error;
+	}
+
+	impl SpiBus for SharedSpi {
+		fn read(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
+			SpiBus::read(self.driver(), words)
+		}
+
+		fn write(&mut self, words: &[u8]) -> Result<(), Self::Error> {
+			SpiBus::write(self.driver(), words)
+		}
+
+		fn transfer(&mut self, read: &mut [u8], write: &[u8]) -> Result<(), Self::Error> {
+			SpiBus::transfer(self.driver(), read, write)
+		}
+
+		fn transfer_in_place(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
+			SpiBus::transfer_in_place(self.driver(), words)
+		}
+
+		fn flush(&mut self) -> Result<(), Self::Error> {
+			SpiBus::flush(self.driver())
+		}
+	}
+
+	impl SpiPort for SharedSpi {
+		fn apply_config(&mut self, config: &Config) -> Result<(), ConfigError> {
+			self.driver().apply_config(config)
+		}
+	}
+
+	/// The screen's end of the shared bus.
+	pub struct ScreenSpi {
+		bus: &'static RefCell<SharedSpi>,
+		cs: Output<'static>,
+	}
+
+	impl ErrorType for ScreenSpi {
+		type Error = esp_hal::spi::Error;
+	}
+
+	impl SpiDevice for ScreenSpi {
+		fn transaction(&mut self, operations: &mut [Operation<'_, u8>]) -> Result<(), Self::Error> {
+			let mut bus = self.bus.borrow_mut();
+			self.cs.set_low();
+			let result = operations
+				.iter_mut()
+				.try_for_each(|operation| match operation {
+					Operation::Read(words) => bus.read(words),
+					Operation::Write(words) => bus.write(words),
+					Operation::Transfer(read, write) => bus.transfer(read, write),
+					Operation::TransferInPlace(words) => bus.transfer_in_place(words),
+					Operation::DelayNs(nanoseconds) => {
+						Delay::new().delay_ns(*nanoseconds);
+						Ok(())
+					}
+				});
+			self.cs.set_high();
+			result
+		}
+	}
 
 	pub struct Pins {
 		pub spi: SPI2<'static>,
@@ -113,6 +193,7 @@ mod screen {
 		pub sda: GPIO6<'static>,
 		pub scl: GPIO7<'static>,
 		pub boot_button: GPIO9<'static>,
+		pub dma: DMA_CH0<'static>,
 	}
 
 	pub fn model_name() -> &'static str {
@@ -136,13 +217,14 @@ mod screen {
 		info!("Board: {MODEL_NAME}");
 		let mut i2c = i2c_bus(pins.i2c, pins.sda, pins.scl);
 		reset_screen_and_touch(&mut i2c);
-		let bus = Spi::new(pins.spi, screen_speed())
+		let driver = Spi::new(pins.spi, screen_speed())
 			.expect("configuring the SPI bus")
 			.with_sck(pins.sck)
 			.with_mosi(pins.mosi)
-			.with_miso(pins.sd_miso);
-		static BUS: StaticCell<Bus> = StaticCell::new();
-		let bus = BUS.init(RefCell::new(bus));
+			.with_miso(pins.sd_miso)
+			.with_dma(pins.dma);
+		static BUS: StaticCell<RefCell<SharedSpi>> = StaticCell::new();
+		let bus = BUS.init(RefCell::new(SharedSpi(Some(driver))));
 		// Keeps the SD card off the bus while the screen talks.
 		let sd_cs = Output::new(pins.sd_cs, Level::High, OutputConfig::default());
 		let display = display(bus, pins.cs, pins.dc);
@@ -162,6 +244,8 @@ mod screen {
 		Config::default()
 			.with_frequency(Rate::from_mhz(80))
 			.with_mode(Mode::_0)
+			// Commands are quicker to send without setting up DMA.
+			.with_min_async_transfer_size(64)
 	}
 
 	/// Holds both reset lines low, then lets them go and waits for the touch
@@ -214,9 +298,13 @@ mod screen {
 	];
 
 	/// Starts the display, cleared to black.
-	fn display(bus: &'static Bus, cs: GPIO11<'static>, dc: GPIO10<'static>) -> Display {
+	fn display(
+		bus: &'static RefCell<SharedSpi>,
+		cs: GPIO11<'static>,
+		dc: GPIO10<'static>,
+	) -> Display {
 		let cs = Output::new(cs, Level::High, OutputConfig::default());
-		let device = RefCellDevice::new_no_delay(bus, cs).expect("display chip select");
+		let device = ScreenSpi { bus, cs };
 		static BUFFER: StaticCell<[u8; 1024]> = StaticCell::new();
 		let dc = Output::new(dc, Level::Low, OutputConfig::default());
 		let interface = SpiInterface::new(device, dc, BUFFER.init([0; 1024]));
@@ -244,19 +332,6 @@ mod screen {
 		expander_write(i2c, EXPANDER_BACKLIGHT, level);
 	}
 
-	/// Turns the panel's picture on or off. Drawing still works while it is
-	/// off, and turning it on shows what was drawn.
-	#[cfg(feature = "gui")]
-	pub fn show_picture(display: &mut Display, on: bool) {
-		const DISPLAY_OFF: u8 = 0x28;
-		const DISPLAY_ON: u8 = 0x29;
-		let command = if on { DISPLAY_ON } else { DISPLAY_OFF };
-		// SAFETY: the driver does not keep track of whether the picture is on.
-		if let Err(error) = unsafe { display.dcs() }.send_command(command, &[]) {
-			warn!("Turning the picture on or off failed: {error:?}");
-		}
-	}
-
 	/// Where the panel is touched, if anywhere, in the turned screen's pixels.
 	pub fn read_touch(i2c: &mut I2c<'static, Blocking>) -> Option<Point> {
 		let mut data = [0u8; 9];
@@ -272,6 +347,168 @@ mod screen {
 		let x = u16::from(data[7] & 0x0F) << 8 | u16::from(data[4]);
 		let y = u16::from(data[7] & 0xF0) << 4 | u16::from(data[5]);
 		Some((y, PANEL_WIDTH.saturating_sub(1 + x)))
+	}
+
+	#[cfg(feature = "gui")]
+	pub use panel::{BATCH_PIXELS, Panel};
+
+	/// The screen driven directly, for the graphical interface, which draws
+	/// a few lines at a time. Each batch goes out by DMA while the next is
+	/// drawn.
+	#[cfg(feature = "gui")]
+	mod panel {
+		use core::cell::RefCell;
+
+		use esp_hal::Blocking;
+		use esp_hal::dma::DmaTxBuf;
+		use esp_hal::dma_tx_buffer;
+		use esp_hal::gpio::Output;
+		use esp_hal::spi::master::{SpiDma, SpiDmaTransfer};
+		use log::warn;
+
+		use super::{Display, ScreenSpi, SharedSpi};
+
+		/// The most pixels sent at once.
+		pub const BATCH_PIXELS: usize = 320 * 8;
+
+		const DISPLAY_OFF: u8 = 0x28;
+		const DISPLAY_ON: u8 = 0x29;
+		const COLUMNS: u8 = 0x2A;
+		const ROWS: u8 = 0x2B;
+		const WRITE_MEMORY: u8 = 0x2C;
+
+		pub struct Panel {
+			bus: &'static RefCell<SharedSpi>,
+			cs: Output<'static>,
+			dc: Output<'static>,
+			drawing: DmaTxBuf,
+			/// The other buffer, while it is not being sent.
+			spare: Option<DmaTxBuf>,
+			sending: Option<SpiDmaTransfer<'static, Blocking, DmaTxBuf>>,
+		}
+
+		impl Panel {
+			/// Takes over the screen, set up and cleared as `display` left it.
+			pub fn new(display: Display) -> Self {
+				let (interface, _, _) = display.release();
+				let (ScreenSpi { bus, cs }, dc) = interface.release();
+				let first = dma_tx_buffer!(BATCH_PIXELS * 2).expect("a pixel buffer");
+				let second = dma_tx_buffer!(BATCH_PIXELS * 2).expect("a pixel buffer");
+				Panel {
+					bus,
+					cs,
+					dc,
+					drawing: first,
+					spare: Some(second),
+					sending: None,
+				}
+			}
+
+			/// Where to draw the next pixels, in RGB565.
+			pub fn pixels(&mut self) -> &mut [u16] {
+				// SAFETY: any two bytes make a u16, and DMA buffers are word
+				// aligned, so nothing is left over at the start.
+				let (start, pixels, _) =
+					unsafe { self.drawing.as_mut_slice().align_to_mut::<u16>() };
+				debug_assert!(start.is_empty());
+				pixels
+			}
+
+			/// Puts the high byte of each of the first `count` pixels first,
+			/// as the panel takes them, two pixels at a time.
+			fn swap_bytes(&mut self, count: usize) {
+				let bytes = &mut self.drawing.as_mut_slice()[..count.next_multiple_of(2) * 2];
+				// SAFETY: any four bytes make a u32, and DMA buffers are word
+				// aligned, so nothing is left over at the start.
+				let (start, words, _) = unsafe { bytes.align_to_mut::<u32>() };
+				debug_assert!(start.is_empty());
+				for word in words {
+					*word = (*word & 0x00FF_00FF) << 8 | (*word >> 8) & 0x00FF_00FF;
+				}
+			}
+
+			/// Starts sending the first `count` pixels drawn, in rows from
+			/// left to right, to the columns and rows given, and moves on to
+			/// the other buffer.
+			pub fn send(&mut self, columns: (u16, u16), rows: (u16, u16), count: usize) {
+				self.swap_bytes(count);
+				let mut driver = self.wait();
+				self.cs.set_low();
+				let [left, right] = [columns.0, columns.1].map(u16::to_be_bytes);
+				let [top, bottom] = [rows.0, rows.1].map(u16::to_be_bytes);
+				self.command(
+					&mut driver,
+					COLUMNS,
+					&[left[0], left[1], right[0], right[1]],
+				);
+				self.command(&mut driver, ROWS, &[top[0], top[1], bottom[0], bottom[1]]);
+				self.command(&mut driver, WRITE_MEMORY, &[]);
+				let next = self.spare.take().expect("a spare pixel buffer");
+				let mut batch = core::mem::replace(&mut self.drawing, next);
+				batch.set_length(count * 2);
+				match driver.write_buffer(count * 2, batch) {
+					Ok(transfer) => self.sending = Some(transfer),
+					Err((error, driver, batch)) => {
+						warn!("Sending pixels failed: {error:?}");
+						self.spare = Some(batch);
+						self.release(driver);
+					}
+				}
+			}
+
+			/// Waits for the pixels on their way, and frees the bus. Until
+			/// then, the last pixels go out while the next frame is worked
+			/// out.
+			pub fn finish(&mut self) {
+				if self.sending.is_some() {
+					let driver = self.wait();
+					self.release(driver);
+				}
+			}
+
+			/// Turns the picture on or off. Drawing still works while it is
+			/// off, and turning it on shows what was drawn.
+			pub fn show_picture(&mut self, on: bool) {
+				let mut driver = self.wait();
+				self.cs.set_low();
+				self.command(&mut driver, if on { DISPLAY_ON } else { DISPLAY_OFF }, &[]);
+				self.release(driver);
+			}
+
+			/// The SPI driver, once the pixels on their way have gone.
+			fn wait(&mut self) -> SpiDma<'static, Blocking> {
+				match self.sending.take() {
+					Some(transfer) => {
+						let (driver, batch) = transfer.wait();
+						self.spare = Some(batch);
+						driver
+					}
+					None => self.bus.borrow_mut().lend(),
+				}
+			}
+
+			fn release(&mut self, driver: SpiDma<'static, Blocking>) {
+				self.cs.set_high();
+				self.bus.borrow_mut().hand_back(driver);
+			}
+
+			fn command(
+				&mut self,
+				driver: &mut SpiDma<'static, Blocking>,
+				command: u8,
+				arguments: &[u8],
+			) {
+				self.dc.set_low();
+				let mut result = driver.write(&[command]);
+				self.dc.set_high();
+				if result.is_ok() && !arguments.is_empty() {
+					result = driver.write(arguments);
+				}
+				if let Err(error) = result {
+					warn!("Sending a command to the screen failed: {error:?}");
+				}
+			}
+		}
 	}
 
 	/// The text interface's screen, and touch read as gestures for it.

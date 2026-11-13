@@ -48,7 +48,7 @@ mod screen {
 	use ratatui::Terminal;
 	use static_cell::StaticCell;
 
-	use crate::sdcard::{Bus, Slot};
+	use crate::sdcard::Slot;
 	use crate::ui::{self, INPUT, Screen};
 
 	const KEYBOARD_CONTROLLER: u8 = 0x34;
@@ -127,7 +127,7 @@ mod screen {
 			.with_sck(pins.sck)
 			.with_miso(pins.miso)
 			.with_mosi(pins.mosi);
-		static BUS: StaticCell<Bus> = StaticCell::new();
+		static BUS: StaticCell<RefCell<Spi<'static, Blocking>>> = StaticCell::new();
 		Slot::new(BUS.init(RefCell::new(bus)), output_high(pins.cs), None)
 	}
 

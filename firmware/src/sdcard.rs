@@ -5,6 +5,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
+use embedded_hal::spi::{ErrorType, SpiBus};
 use embedded_hal_bus::spi::{ExclusiveDevice, NoDelay};
 use embedded_sdmmc::{
 	Error, Mode, SdCard, SdCardError, TimeSource, Timestamp, VolumeIdx, VolumeManager,
@@ -12,7 +13,7 @@ use embedded_sdmmc::{
 use esp_hal::Blocking;
 use esp_hal::delay::Delay;
 use esp_hal::gpio::Output;
-use esp_hal::spi::master::{Config, Spi};
+use esp_hal::spi::master::{Config, ConfigError, Spi};
 use esp_hal::time::Rate;
 use esp_ygg_app::time::DateTime;
 use esp_ygg_app::ui::SETTINGS_FILE;
@@ -24,24 +25,35 @@ const FULL_SPEED: Rate = Rate::from_mhz(20);
 /// Settings files are far smaller; anything larger is not one.
 const MAX_FILE_LEN: usize = 4096;
 
-pub type Bus = RefCell<Spi<'static, Blocking>>;
+/// An SPI bus the card can be on.
+pub trait SpiPort: SpiBus<u8> + ErrorType<Error = esp_hal::spi::Error> {
+	fn apply_config(&mut self, config: &Config) -> Result<(), ConfigError>;
+}
+
+impl SpiPort for Spi<'static, Blocking> {
+	fn apply_config(&mut self, config: &Config) -> Result<(), ConfigError> {
+		Spi::apply_config(self, config)
+	}
+}
 
 pub struct Slot {
-	bus: &'static Bus,
+	bus: &'static RefCell<dyn SpiPort>,
 	cs: Output<'static>,
 	/// How to set the bus back up for whatever shares it, if anything does.
 	shared_with: Option<Config>,
 }
 
-type Card<'a> = SdCard<
-	ExclusiveDevice<&'a mut Spi<'static, Blocking>, &'a mut Output<'static>, NoDelay>,
-	Delay,
->;
+type Card<'a> =
+	SdCard<ExclusiveDevice<&'a mut dyn SpiPort, &'a mut Output<'static>, NoDelay>, Delay>;
 
 impl Slot {
 	/// The card's chip select must start high. On a shared bus, the others'
 	/// must be high whenever they are not in use.
-	pub fn new(bus: &'static Bus, cs: Output<'static>, shared_with: Option<Config>) -> Self {
+	pub fn new(
+		bus: &'static RefCell<dyn SpiPort>,
+		cs: Output<'static>,
+		shared_with: Option<Config>,
+	) -> Self {
 		Slot {
 			bus,
 			cs,
@@ -103,7 +115,7 @@ impl Slot {
 		use_card: impl FnOnce(Card<'_>) -> Result<R, String>,
 	) -> Result<R, String> {
 		let mut bus = self.bus.borrow_mut();
-		let result = wake(&mut bus, &mut self.cs).and_then(use_card);
+		let result = wake(&mut *bus, &mut self.cs).and_then(use_card);
 		if let Some(config) = &self.shared_with
 			&& let Err(error) = bus.apply_config(config)
 		{
@@ -114,10 +126,7 @@ impl Slot {
 }
 
 /// Wakes the card, if there is one, and speeds it up.
-fn wake<'a>(
-	bus: &'a mut Spi<'static, Blocking>,
-	cs: &'a mut Output<'static>,
-) -> Result<Card<'a>, String> {
+fn wake<'a>(bus: &'a mut dyn SpiPort, cs: &'a mut Output<'static>) -> Result<Card<'a>, String> {
 	let _ = bus.apply_config(&Config::default().with_frequency(WAKING_SPEED));
 	// Cards need 74 clocks with chip select high to wake into SPI mode.
 	cs.set_high();
