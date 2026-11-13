@@ -5,6 +5,8 @@
 //! - `key <name>...` presses keys by name: `enter`, `esc`, `tab`,
 //!   `backspace`, `space`, `up`, `down`, `left` and `right`.
 //! - `tap <column> <row>` taps the touch screen at a character cell.
+//! - `drag <x> <y> <x> <y>` drags a finger across the graphical interface,
+//!   in pixels, from the first point to the second.
 //! - `screen` asks for the screen as text.
 //! - `talk on` and `talk off` hold and release the push-to-talk button.
 //! - `mute on` and `mute off` silence the speaker, for quiet testing.
@@ -25,6 +27,7 @@ pub const SCREEN_END: &str = "--- end ---";
 pub enum Remote {
 	Keys(Vec<Key>),
 	Tap(u16, u16),
+	Drag((u16, u16), (u16, u16)),
 	Screen,
 	Talk(bool),
 	Mute(bool),
@@ -46,6 +49,15 @@ pub fn parse(line: &str) -> Result<Remote, String> {
 			match (numbers.next(), numbers.next(), numbers.next()) {
 				(Some(Ok(column)), Some(Ok(row)), None) => Ok(Remote::Tap(column, row)),
 				_ => Err(alloc::format!("Tap at a column and row, not {rest}")),
+			}
+		}
+		"drag" => {
+			let numbers: Result<Vec<u16>, _> = rest.split_whitespace().map(str::parse).collect();
+			match numbers.as_deref() {
+				Ok(&[x1, y1, x2, y2]) => Ok(Remote::Drag((x1, y1), (x2, y2))),
+				_ => Err(alloc::format!(
+					"Drag from one x and y to another, not {rest}"
+				)),
 			}
 		}
 		"screen" => Ok(Remote::Screen),
@@ -121,6 +133,7 @@ mod tests {
 		);
 		assert_eq!(parse("tap 3 12"), Ok(Remote::Tap(3, 12)));
 		assert!(parse("tap 3").is_err());
+		assert_eq!(parse("drag 1 2 3 4"), Ok(Remote::Drag((1, 2), (3, 4))));
 		assert_eq!(parse("screen"), Ok(Remote::Screen));
 		assert_eq!(parse("talk on"), Ok(Remote::Talk(true)));
 		assert!(parse("key sideways").is_err());

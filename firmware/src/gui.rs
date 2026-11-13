@@ -101,6 +101,69 @@ impl LineBufferProvider for &mut Lines<'_> {
 	}
 }
 
+/// How long a serial tap holds the screen, as a finger would.
+const TAP_HOLD: Duration = Duration::from_millis(150);
+/// How long a serial drag takes from end to end.
+const DRAG: Duration = Duration::from_millis(300);
+
+/// A finger moved over the screen by commands from the serial port, for
+/// testing.
+#[derive(Default)]
+struct SerialFinger {
+	stroke: Option<Stroke>,
+}
+
+struct Stroke {
+	from: slint::LogicalPosition,
+	to: slint::LogicalPosition,
+	started: Instant,
+	length: Duration,
+}
+
+impl SerialFinger {
+	fn start(
+		&mut self,
+		window: &MinimalSoftwareWindow,
+		from: (u16, u16),
+		to: (u16, u16),
+		length: Duration,
+	) {
+		let point = |(x, y): (u16, u16)| slint::LogicalPosition::new(x.into(), y.into());
+		self.stroke = Some(Stroke {
+			from: point(from),
+			to: point(to),
+			started: Instant::now(),
+			length,
+		});
+		window.dispatch_event(WindowEvent::PointerPressed {
+			position: point(from),
+			button: PointerEventButton::Left,
+		});
+	}
+
+	/// Moves the finger along, and lifts it at the end.
+	fn update(&mut self, window: &MinimalSoftwareWindow) {
+		let Some(stroke) = &self.stroke else {
+			return;
+		};
+		let done = (stroke.started.elapsed().as_micros() as f32 / stroke.length.as_micros() as f32)
+			.min(1.0);
+		let position = slint::LogicalPosition::new(
+			stroke.from.x + (stroke.to.x - stroke.from.x) * done,
+			stroke.from.y + (stroke.to.y - stroke.from.y) * done,
+		);
+		window.dispatch_event(WindowEvent::PointerMoved { position });
+		if done >= 1.0 {
+			window.dispatch_event(WindowEvent::PointerReleased {
+				position,
+				button: PointerEventButton::Left,
+			});
+			window.dispatch_event(WindowEvent::PointerExited);
+			self.stroke = None;
+		}
+	}
+}
+
 #[embassy_executor::task]
 pub async fn run(board: Board, settings: Settings) {
 	let Board {
@@ -131,8 +194,7 @@ pub async fn run(board: Board, settings: Settings) {
 	let mut timeout = ScreenTimeout::new(uptime());
 	let mut backlight = u8::MAX;
 	let mut touching = None;
-	// A serial tap, held until then as a finger would be.
-	let mut serial_tap: Option<(Instant, slint::LogicalPosition)> = None;
+	let mut serial_finger = SerialFinger::default();
 	loop {
 		crate::ui::report_stack();
 		slint::platform::update_timers_and_animations();
@@ -189,24 +251,15 @@ pub async fn run(board: Board, settings: Settings) {
 			if let Input::Key(key) = input {
 				gui.type_key(key);
 			}
-			if let Input::Press { column, row } = input {
-				let position = slint::LogicalPosition::new(column.into(), row.into());
-				window.dispatch_event(WindowEvent::PointerPressed {
-					position,
-					button: PointerEventButton::Left,
-				});
-				serial_tap = Some((Instant::now() + Duration::from_millis(150), position));
+			match input {
+				Input::Press { column, row } => {
+					serial_finger.start(&window, (column, row), (column, row), TAP_HOLD)
+				}
+				Input::Drag { from, to } => serial_finger.start(&window, from, to, DRAG),
+				_ => {}
 			}
 		}
-		if let Some((until, position)) = serial_tap
-			&& Instant::now() >= until
-		{
-			window.dispatch_event(WindowEvent::PointerReleased {
-				position,
-				button: PointerEventButton::Left,
-			});
-			serial_tap = None;
-		}
+		serial_finger.update(&window);
 		let level = timeout.backlight(uptime());
 		// What changed while the screen was off is drawn as it wakes.
 		if level > 0 {

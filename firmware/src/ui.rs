@@ -60,6 +60,12 @@ pub enum Input {
 		row: u16,
 	},
 	Release,
+	/// A finger dragged from one pixel to another, from the serial port.
+	#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+	Drag {
+		from: (u16, u16),
+		to: (u16, u16),
+	},
 }
 
 /// The time since startup.
@@ -99,6 +105,7 @@ pub(crate) async fn serial(usb: USB_DEVICE<'static>) {
 					INPUT.send(Input::Tap { column, row }).await;
 					INPUT.send(Input::Release).await;
 				}
+				Ok(Remote::Drag(from, to)) => INPUT.send(Input::Drag { from, to }).await,
 				Ok(Remote::Screen) => SCREEN_WANTED.store(true, Ordering::Relaxed),
 				#[cfg(feature = "voice")]
 				Ok(Remote::Talk(on)) => crate::audio::REMOTE_TALK.store(on, Ordering::Relaxed),
@@ -224,6 +231,9 @@ mod text {
 				Either3::First(Input::Tap { column, row }) => app.handle_tap(column, row),
 				Either3::First(Input::Press { column, row }) => app.handle_press(column, row),
 				Either3::First(Input::Release) => app.handle_release(),
+				Either3::First(Input::Drag { .. }) => {
+					log::warn!("Drags are for the graphical interface")
+				}
 				Either3::Second(message) => handle_message(&mut app, message),
 				Either3::Third(()) => {}
 			}

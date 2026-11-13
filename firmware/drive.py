@@ -5,7 +5,10 @@ Usage: python3 drive.py <port> <command>...
 Each command is one of:
 	type <text>      types the text
 	key <name>...    presses keys: enter, esc, tab, backspace, space, up, down, left, right
-	tap <col> <row>  taps a touch screen at a character cell
+	tap <col> <row>  taps a touch screen at a character cell, or a pixel in
+	                 the graphical interface
+	drag <x> <y> <x> <y>
+	                 drags across the graphical interface, in pixels
 	screen           prints the screen
 	talk on|off      holds or releases push-to-talk
 	mute on|off      silences the speaker

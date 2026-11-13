@@ -295,6 +295,9 @@ fn screenshots(folder: &Path, commands: &[String]) -> io::Result<()> {
 			Remote::Talk(_) | Remote::Mute(_) => {
 				return Err(io::Error::other("The preview has no audio"));
 			}
+			Remote::Drag(..) => {
+				return Err(io::Error::other("Drags are for the graphical interface"));
+			}
 		}
 		run_for(&mut sim, &mut terminal, SETTLE)?;
 	}
