@@ -1,6 +1,7 @@
-import { FilledButton, ListView, MaterialPalette, MaterialText, MaterialTypography, OutlineButton, ScrollView, Switch, TextButton } from "@material/material.slint";
+import { ListView, MaterialPalette, MaterialText, MaterialTypography } from "@material/material.slint";
 import { EmptyNote, PageTitle, Row } from "page.slint";
 import { Setting, Setup } from "state.slint";
+import { Button, ButtonKind, Scroller, Toggle } from "widgets.slint";
 
 /// A heading over a group of settings.
 component Section inherits HorizontalLayout {
@@ -40,7 +41,7 @@ component SwitchRow inherits HorizontalLayout {
         alignment: center;
         horizontal_stretch: 0;
 
-        Switch {
+        Toggle {
             checked <=> root.checked;
         }
     }
@@ -70,8 +71,9 @@ component NetworkChooser inherits VerticalLayout {
             text: "Networks";
         }
 
-        TextButton {
+        Button {
             text: "Cancel";
+            kind: ButtonKind.text;
 
             clicked => {
                 Setup.choosing_network = false;
@@ -109,7 +111,7 @@ component NetworkChooser inherits VerticalLayout {
 export component SettingsPage inherits VerticalLayout {
     if Setup.choosing_network: NetworkChooser { }
 
-    if !Setup.choosing_network: ScrollView {
+    if !Setup.choosing_network: Scroller {
         content_y <=> Setup.scroll;
 
         VerticalLayout {
@@ -205,7 +207,7 @@ export component SettingsPage inherits VerticalLayout {
                 padding: 16px;
                 spacing: 8px;
 
-                FilledButton {
+                Button {
                     text: "Save & restart";
 
                     clicked => {
@@ -213,16 +215,18 @@ export component SettingsPage inherits VerticalLayout {
                     }
                 }
 
-                OutlineButton {
+                Button {
                     text: "Export to SD";
+                    kind: ButtonKind.outlined;
 
                     clicked => {
                         Setup.export();
                     }
                 }
 
-                OutlineButton {
+                Button {
                     text: "Import from SD";
+                    kind: ButtonKind.outlined;
 
                     clicked => {
                         Setup.import();

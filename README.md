@@ -128,7 +128,7 @@ The touch board can show a graphical interface instead of the text one, made wit
 
 Tapping a setting opens a keyboard in the style of Material 3 over the whole screen, with the setting at the top. Settings that take numbers, such as the channel and the peer, get a number pad. Enter checks the setting, with the same rules as the text interface, and says what is wrong if it will not do. Over the serial port, `type` and `key` type on the keyboard while it is up, `tap` taps at a pixel, and `drag 200 220 200 40` drags a finger from one pixel to another, which scrolls.
 
-Slint draws a few lines of the screen at a time, and the board sends each batch to the screen by DMA while it draws the next.
+Slint draws a few lines of the screen at a time, and the board sends each batch to the screen by DMA while it draws the next. Redrawing the whole screen takes about 60 ms, and a frame of scrolling about 30. Slint goes through every part of the interface each frame, so the navigation and the Settings page use lighter versions of Material's navigation items, switch, buttons and scroll view, drawn the same from fewer parts, with presses tinting instead of rippling.
 
 Slint is licensed under the GPLv3 on microcontrollers, so firmware built with `gui` is distributed under the GPLv3. The rest of the project, and every other build, stays under the LGPLv3. The Material components in `gui/material-1.1.0` are under the MIT license, the Roboto font in `gui/fonts` under the SIL Open Font License, and the icons in `gui/icons`, from Google's Material Symbols, under the Apache License 2.0.
 

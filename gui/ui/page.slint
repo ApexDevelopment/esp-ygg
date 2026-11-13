@@ -68,7 +68,9 @@ export component Row {
                 overflow: elide;
             }
 
-            if root.supporting_text != "": MaterialText {
+            // Kept when empty, at no height, as one less part to build.
+            MaterialText {
+                height: root.supporting_text == "" ? 0 : self.preferred_height;
                 text: root.supporting_text;
                 style: MaterialTypography.body_small;
                 color: MaterialPalette.on_surface_variant;

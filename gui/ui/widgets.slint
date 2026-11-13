@@ -1,0 +1,188 @@
+// Material's scroll view, switch and buttons, drawn the same from fewer
+// parts. Every part is gone through each time the screen is redrawn, so
+// fewer make scrolling and animations smoother. Presses tint instead of
+// rippling, as elsewhere.
+
+import { MaterialAnimations, MaterialPalette, MaterialTypography } from "@material/material.slint";
+
+/// Content taller than the screen, with Material's scroll bar showing for a
+/// moment whenever it moves.
+export component Scroller {
+    in_out property <length> content_y <=> flickable.content_y;
+
+    // Material leaves room for a scroll bar along the bottom and the side.
+    property <length> bar_size: 8px;
+    property <length> maximum: flickable.content_height - flickable.height;
+    property <length> track: flickable.height - 4px;
+
+    min_width: 50px;
+    min_height: 50px;
+    horizontal_stretch: 1;
+    vertical_stretch: 1;
+    preferred_width: 100%;
+    preferred_height: 100%;
+
+    flickable := Flickable {
+        x: 0;
+        y: 0;
+        width: root.width - root.bar_size + 2px;
+        height: root.height - root.bar_size;
+
+        changed content_y => {
+            if !hide_timer.running {
+                hide_timer.running = true;
+            }
+        }
+
+        @children
+    }
+
+    Rectangle {
+        x: flickable.width + 1px;
+        width: root.bar_size;
+        height: root.maximum <= 0 ? 0 : max(min(32px, flickable.height), root.track * flickable.height / flickable.content_height);
+        y: 2px + (root.track - self.height) * (-flickable.content_y / root.maximum);
+        border_radius: self.width / 2;
+        background: hide_timer.running ? MaterialPalette.on_background.transparentize(60%) : MaterialPalette.on_background.transparentize(100%);
+
+        animate background { duration: 150ms; }
+    }
+
+    hide_timer := Timer {
+        interval: 1.5s;
+        running: false;
+
+        triggered => {
+            self.running = false;
+        }
+    }
+}
+
+/// Material's switch.
+export component Toggle {
+    in_out property <bool> checked;
+
+    // The thumb slides once tapped, rather than as the switch first shows.
+    property <bool> tapped;
+
+    min_width: 52px;
+    min_height: 32px;
+
+    touch := TouchArea {
+        clicked => {
+            root.tapped = true;
+            root.checked = !root.checked;
+        }
+    }
+
+    track := Rectangle {
+        background: root.checked ? MaterialPalette.primary : MaterialPalette.surface_container_highest;
+        border_radius: self.height / 2;
+        border_width: root.checked ? 0 : 2px;
+        border_color: MaterialPalette.outline;
+
+        animate background, border_color {
+            duration: MaterialAnimations.opacity_duration;
+            easing: MaterialAnimations.opacity_easing;
+        }
+
+        // Shows behind the thumb while it is held.
+        Rectangle {
+            x: thumb.x + (thumb.width - self.width) / 2;
+            width: self.height;
+            height: root.height + 8px;
+            border_radius: self.height / 2;
+            background: touch.pressed ? thumb.background.transparentize(1 - MaterialPalette.state_layer_opacity_press) : transparent;
+        }
+
+        thumb := Rectangle {
+            property <length> inset: root.checked ? 4px : 8px;
+            property <length> resting_height: track.height - 2 * self.inset;
+
+            x: root.checked ? track.width - self.inset - self.width : self.inset - (self.height - self.resting_height) / 2;
+            width: self.height;
+            height: self.resting_height;
+            border_radius: self.height / 2;
+            background: root.checked ? MaterialPalette.primary_container : touch.pressed ? MaterialPalette.on_surface_variant : MaterialPalette.outline;
+
+            animate background {
+                duration: MaterialAnimations.opacity_duration;
+                easing: MaterialAnimations.opacity_easing;
+            }
+
+            animate x {
+                duration: root.tapped ? MaterialAnimations.emphasized_accelerate_duration : 0ms;
+                easing: MaterialAnimations.emphasized_easing;
+            }
+
+            // Animated only as it is pressed and let go, not as the layout
+            // first sizes it.
+            states [
+                pressed when touch.pressed: {
+                    height: track.height - 2px;
+
+                    in {
+                        animate height {
+                            duration: MaterialAnimations.emphasized_accelerate_duration;
+                            easing: MaterialAnimations.emphasized_easing;
+                        }
+                    }
+
+                    out {
+                        animate height {
+                            duration: MaterialAnimations.emphasized_accelerate_duration;
+                            easing: MaterialAnimations.emphasized_easing;
+                        }
+                    }
+                }
+            ]
+        }
+    }
+}
+
+export enum ButtonKind { filled, outlined, text }
+
+/// Material's filled, outlined and text buttons.
+export component Button {
+    in property <string> text;
+    in property <ButtonKind> kind: ButtonKind.filled;
+
+    callback clicked();
+
+    property <color> color: root.kind == ButtonKind.filled ? MaterialPalette.on_primary : MaterialPalette.primary;
+
+    min_width: max(40px, label.min_width + 48px);
+    min_height: max(40px, label.min_height + 20px);
+
+    Rectangle {
+        border_radius: self.height / 2;
+        background: root.kind == ButtonKind.filled ? MaterialPalette.primary : transparent;
+        border_width: root.kind == ButtonKind.outlined ? 1px : 0;
+        border_color: MaterialPalette.outline;
+
+        Rectangle {
+            border_radius: parent.border_radius;
+            background: touch.pressed ? root.color.transparentize(1 - MaterialPalette.state_layer_opacity_press) : root.color.transparentize(100%);
+
+            animate background {
+                duration: MaterialAnimations.opacity_duration;
+                easing: MaterialAnimations.opacity_easing;
+            }
+        }
+    }
+
+    label := Text {
+        text: root.text;
+        font_size: MaterialTypography.label_large.font_size;
+        font_weight: MaterialTypography.label_large.font_weight;
+        color: root.color;
+        horizontal_alignment: center;
+        vertical_alignment: center;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}

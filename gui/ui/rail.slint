@@ -1,6 +1,60 @@
-import { MaterialPalette } from "@material/material.slint";
+import { MaterialPalette, MaterialTypography } from "@material/material.slint";
 import { BaseNavigation } from "@material/ui/components/base_navigation.slint";
-import { NavigationItemTemplate } from "@material/ui/components/navigation_bar.slint";
+
+/// A destination, drawn as Material's navigation items are, from a handful
+/// of parts so redrawing the screen has less to go through. A press tints
+/// the indicator instead of rippling.
+component Destination {
+    in property <image> icon;
+    in property <image> selected_icon;
+    in property <string> text;
+    in property <bool> selected;
+    in property <length> top_space;
+    in property <length> bottom_space;
+
+    callback clicked();
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    VerticalLayout {
+        alignment: start;
+        spacing: 4px;
+        padding_top: root.top_space;
+        padding_bottom: root.bottom_space;
+
+        HorizontalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: 58px;
+                height: 32px;
+                border_radius: self.height / 2;
+                background: root.selected ? MaterialPalette.secondary_container
+                    : touch.pressed ? MaterialPalette.on_surface.transparentize(1 - MaterialPalette.state_layer_opacity_press)
+                    : transparent;
+
+                Image {
+                    width: 18px;
+                    height: 18px;
+                    source: root.selected ? root.selected_icon : root.icon;
+                    colorize: MaterialPalette.on_surface;
+                }
+            }
+        }
+
+        Text {
+            text: root.text;
+            font_size: MaterialTypography.label_medium.font_size;
+            font_weight: root.selected ? MaterialTypography.label_medium_prominent.font_weight : MaterialTypography.label_medium.font_weight;
+            color: MaterialPalette.on_surface;
+            horizontal_alignment: center;
+        }
+    }
+}
 
 /// Material's navigation rail without the room it leaves above and below
 /// its items for a menu button, so four fit on a screen 240 pixels tall.
@@ -13,14 +67,12 @@ export component CompactRail inherits BaseNavigation {
         VerticalLayout {
             alignment: center;
 
-            for item[index] in root.items: NavigationItemTemplate {
+            for item[index] in root.items: Destination {
                 icon: item.icon;
                 selected_icon: item.selected_icon;
                 text: item.text;
-                index: index;
                 selected: index == root.current_index;
-                navitem_padding_top: 0;
-                navitem_padding_bottom: 4px;
+                bottom_space: 4px;
 
                 clicked => {
                     root.select(index);
@@ -39,13 +91,14 @@ export component CompactBar inherits BaseNavigation {
         background: MaterialPalette.surface_container;
 
         HorizontalLayout {
-            for item[index] in root.items: NavigationItemTemplate {
+            for item[index] in root.items: Destination {
                 horizontal_stretch: 1;
                 icon: item.icon;
                 selected_icon: item.selected_icon;
                 text: item.text;
-                index: index;
                 selected: index == root.current_index;
+                top_space: 12px;
+                bottom_space: 16px;
 
                 clicked => {
                     root.select(index);
