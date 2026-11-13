@@ -17,7 +17,7 @@ Each command is one of:
 	wait <seconds>   waits, printing whatever the board logs meanwhile
 
 For example:
-	python3 drive.py /dev/ttyACM0 "key down down enter" "type 200::1" "key enter" "wait 3" screen
+	python3 drive.py /dev/ttyACM0 "key down down enter enter" "type 200::1" "key enter" "wait 3" screen
 """
 
 import os

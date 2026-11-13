@@ -183,7 +183,7 @@ fn counts_unread_messages_on_the_home_screen() {
 		data: b"ping?".to_vec(),
 	});
 	assert!(screen(&app).join("\n").contains("Apps (1 new)"));
-	press(&mut app, &[Key::Down, Key::Down, Key::Down, Key::Enter]);
+	choose(&mut app, MENU, "Apps");
 	assert!(screen(&app).join("\n").contains("UDP Console (1 new)"));
 	open(&mut app, "UDP Console");
 	press(&mut app, &[Key::Escape]);
@@ -812,9 +812,9 @@ fn the_keyboard_hides_and_comes_back_on_a_tap() {
 	let mut app = App::new(Settings::new(), at(0));
 	let peer = key(2);
 	app.set_status(status(&[peer], &[peer]));
-	// Opening Ping by tapping starts typing its address.
-	press(&mut app, &[Key::Down, Key::Down]);
-	app.handle_tap(5, 5);
+	// Opening Ping by tapping, first in the apps, starts typing its address.
+	choose(&mut app, MENU, "Apps");
+	app.handle_tap(5, 1);
 	assert!(find_key(&app, "q").is_some());
 	tap_keys(&mut app, &["▼"]);
 	assert!(find_key(&app, "q").is_none());

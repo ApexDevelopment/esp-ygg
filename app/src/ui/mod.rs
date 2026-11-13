@@ -259,7 +259,6 @@ struct Completion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Screen {
 	Home,
-	#[cfg(feature = "apps")]
 	Apps,
 	Nodes,
 	Node(PublicKey),
@@ -366,21 +365,16 @@ const FIELDS: &[Field] = &[
 const MENU: &[(&str, Screen)] = &[
 	("Yggdrasil Nodes", Screen::Nodes),
 	("ESP-NOW Neighbors", Screen::Neighbors),
-	("Ping", Screen::Ping),
-	#[cfg(feature = "apps")]
 	("Apps", Screen::Apps),
 	("Settings", Screen::Settings),
 ];
 
 /// Menu items that open a menu of their own.
-const MENUS: &[Screen] = &[
-	#[cfg(feature = "apps")]
-	Screen::Apps,
-];
+const MENUS: &[Screen] = &[Screen::Apps];
 
 /// The apps menu, opened from the home menu.
-#[cfg(feature = "apps")]
 const APPS: &[(&str, Screen)] = &[
+	("Ping", Screen::Ping),
 	#[cfg(feature = "console")]
 	("UDP Console", Screen::Console),
 	#[cfg(feature = "voice")]
@@ -398,7 +392,6 @@ pub struct App {
 	status: Option<Status>,
 	screen: Screen,
 	menu: usize,
-	#[cfg(feature = "apps")]
 	apps_selected: usize,
 	commands: VecDeque<Command>,
 	/// A short message about the last action, cleared by the next key.
@@ -443,7 +436,6 @@ impl App {
 			status: None,
 			screen: Screen::Home,
 			menu: 0,
-			#[cfg(feature = "apps")]
 			apps_selected: 0,
 			commands: VecDeque::new(),
 			notice: None,
@@ -591,7 +583,6 @@ impl App {
 		}
 		let outcome = match self.screen {
 			Screen::Home => self.home_key(key),
-			#[cfg(feature = "apps")]
 			Screen::Apps => self.apps_key(key),
 			Screen::Nodes => self.nodes_key(key),
 			Screen::Node(node) => self.node_key(node, key),
@@ -705,7 +696,6 @@ impl App {
 			Screen::Node(_) => Screen::Nodes,
 			Screen::SettingsGroup(_) => Screen::Settings,
 			Screen::WifiNetworks => Screen::SettingsGroup(Group::Bridge),
-			#[cfg(feature = "apps")]
 			screen if APPS.iter().any(|&(_, app)| app == screen) => Screen::Apps,
 			_ => Screen::Home,
 		}
@@ -721,7 +711,6 @@ impl App {
 		Outcome::Stay
 	}
 
-	#[cfg(feature = "apps")]
 	fn apps_key(&mut self, key: Key) -> Outcome {
 		match navigation(key) {
 			Some(Key::Up) => self.apps_selected = self.apps_selected.saturating_sub(1),

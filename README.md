@@ -88,8 +88,8 @@ On a board with a screen, the home screen shows the board's address and how many
 
 - Yggdrasil Nodes lists every node the board knows, direct peers first, named from their nodeinfo. Open one to see its details, then press `p` to ping it or `m` to send it a console message.
 - ESP-NOW Neighbors lists the boards in radio range, with their recent signal strength and the share of frames sent to them that went unacknowledged, for finding where boards still reach each other.
-- Ping sends a ping every second to an address you type or pick, and shows each round trip.
 - Apps opens a menu of the apps below, and counts the new messages waiting in them:
+  - Ping sends a ping every second to an address you type or pick, and shows each round trip.
   - Gopher browses Gopher menus and text, starting from an address you type. Links to a board's peers make it easy to hop across the mesh. Yggdrasil has no standard way to look up names, so links work when they use an address or the name of the server they came from.
   - Gemini browses Gemini capsules, starting from an address you type. Up and down move between links, scrolling past text where there are none, and Enter follows the selected one. It answers questions servers ask and follows redirects. Gemini servers mostly sign their own certificates, so the browser trusts the certificate a server shows first and refuses a different one until the board restarts. Going back fetches the page again, to save memory.
   - IRC connects to an IRC server over Yggdrasil and joins a channel. Each channel and private conversation gets its own buffer, and Tab moves between them. The usual commands work, such as `/join`, `/part`, `/msg`, `/me`, `/nick` and `/quit`. Leaving the screen keeps the connection, and the menu counts new lines.
@@ -111,7 +111,7 @@ The button on the side, G0 on a Cardputer and BOOT on the touch board, locks the
 The interface can also be driven from a computer over the USB serial port, for testing without someone at the keyboard. `firmware/drive.py` sends lines such as `type 200::1`, `key down enter`, `tap 5 2`, which taps a touch screen at a column and row of characters, and `screen`, which prints what the screen shows, or for the graphical interface saves it as `screen.png`, and it does so without resetting the board:
 
 ```sh
-python3 firmware/drive.py /dev/ttyACM0 "key down down enter" "type 200::1" "key enter" "wait 3" screen
+python3 firmware/drive.py /dev/ttyACM0 "key down down enter enter" "type 200::1" "key enter" "wait 3" screen
 ```
 
 `lock` presses the button that locks and unlocks the board. In voice builds, `talk on` and `talk off` hold and release push-to-talk, and `mute on` silences the speaker for quiet testing.
@@ -121,7 +121,7 @@ To try the interface without a board, run `cargo run -p esp-ygg-app --example pr
 The preview can also draw the touch board's screen pixel for pixel, as the board does, and save pictures of it. It takes the same commands as `drive.py`, and saves a PNG at each `screen`:
 
 ```sh
-cargo run -p esp-ygg-app --example preview -- png shots "key down down down down enter" "tap 5 2" screen
+cargo run -p esp-ygg-app --example preview -- png shots "key down down down enter" "tap 5 2" screen
 ```
 
 ## Graphical interface

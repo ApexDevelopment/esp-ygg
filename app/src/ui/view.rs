@@ -10,7 +10,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
-#[cfg(feature = "apps")]
 use super::APPS;
 use super::directory::Lookup;
 use super::{App, FIELDS, Field, Group, MENU, MENUS, Screen, TextInput, Uplink};
@@ -42,7 +41,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
 	draw_title(frame, title, app);
 	match app.screen {
 		Screen::Home => draw_home(frame, body, app),
-		#[cfg(feature = "apps")]
 		Screen::Apps => draw_menu(frame, body, app, APPS, app.apps_selected),
 		Screen::Nodes => draw_nodes(frame, body, app),
 		Screen::Node(key) => draw_node(frame, body, app, key),
@@ -89,7 +87,6 @@ fn draw_locked(frame: &mut Frame) {
 fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 	let screen = match app.screen {
 		Screen::Home => "",
-		#[cfg(feature = "apps")]
 		Screen::Apps => "Apps",
 		Screen::Nodes | Screen::Node(_) => "Nodes",
 		Screen::Neighbors => "Neighbors",
@@ -152,7 +149,6 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 fn hints(app: &App) -> &'static str {
 	match app.screen {
 		Screen::Home => "↑↓ select  enter open",
-		#[cfg(feature = "apps")]
 		Screen::Apps => "↑↓ select  enter open  esc back",
 		Screen::Nodes => "↑↓ select  enter open  esc back",
 		Screen::Node(_) => "p ping  m message  esc back",
@@ -231,7 +227,6 @@ fn draw_menu(frame: &mut Frame, area: Rect, app: &App, items: &[(&str, Screen)],
 
 /// New messages waiting on a menu item's screen, or in the apps it opens.
 fn unread(app: &App, screen: Screen) -> usize {
-	#[cfg(feature = "apps")]
 	if screen == Screen::Apps {
 		return APPS
 			.iter()
