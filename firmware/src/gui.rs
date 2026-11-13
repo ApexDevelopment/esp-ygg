@@ -7,6 +7,8 @@ use alloc::rc::Rc;
 use embassy_time::{Duration, Instant, Timer};
 use esp_ygg_app::Settings;
 use esp_ygg_app::ui::Command;
+use core::sync::atomic::Ordering;
+use esp_ygg_app::ui::remote;
 use esp_ygg_app::ui::screen_timeout::ScreenTimeout;
 use esp_ygg_gui::{Gui, slint};
 use log::info;
@@ -17,7 +19,7 @@ use slint::platform::software_renderer::{
 use slint::platform::{Platform, PointerEventButton, WindowAdapter, WindowEvent};
 
 use crate::touch_lcd::{self, Board, Panel};
-use crate::ui::{FROM_UI, INPUT, Input, TO_UI, ToUi, uptime};
+use crate::ui::{FROM_UI, INPUT, Input, SCREEN_WANTED, TO_UI, ToUi, uptime};
 
 const WIDTH: u16 = 320;
 const HEIGHT: u16 = 240;
@@ -49,6 +51,8 @@ struct Lines<'a> {
 	/// The batch being drawn: its first line, how many lines it has, and the
 	/// columns they cover.
 	batch: Option<(usize, usize, core::ops::Range<usize>)>,
+	/// Whether to print each line to the serial port too, for testing.
+	print: bool,
 }
 
 impl Lines<'_> {
@@ -92,7 +96,21 @@ impl LineBufferProvider for &mut Lines<'_> {
 		let pixels = unsafe { &mut *(core::ptr::from_mut(pixels) as *mut [Rgb565Pixel]) };
 		render_fn(pixels);
 		*count += 1;
+		if self.print {
+			print_pixels(pixels);
+		}
 	}
+}
+
+/// Prints a line of pixels as hexadecimal RGB565, for `drive.py` to turn
+/// into a picture.
+fn print_pixels(pixels: &[Rgb565Pixel]) {
+	use core::fmt::Write;
+	let mut text = alloc::string::String::with_capacity(pixels.len() * 4);
+	for pixel in pixels {
+		let _ = write!(text, "{:04x}", pixel.0);
+	}
+	esp_println::println!("{text}");
 }
 
 /// How long a serial tap holds the screen, as a finger would.
@@ -258,16 +276,34 @@ pub async fn run(board: Board, settings: Settings) {
 		let level = timeout.backlight(uptime());
 		// What changed while the screen was off is drawn as it wakes.
 		if level > 0 {
+			// The whole screen, when the serial port asks to see it.
+			let print = SCREEN_WANTED.swap(false, Ordering::Relaxed);
+			if print {
+				window.request_redraw();
+				esp_println::println!("{}", remote::SCREEN_START);
+				esp_println::println!("{WIDTH}x{HEIGHT}");
+			}
 			let started = Instant::now();
 			let mut lines = Lines {
 				panel: &mut panel,
 				batch: None,
+				print,
 			};
 			let drawn = window.draw_if_needed(|renderer| {
+				// A new buffer has nothing on it yet, so is drawn whole.
+				if print {
+					renderer.set_repaint_buffer_type(RepaintBufferType::NewBuffer);
+				}
 				renderer.render_by_line(&mut lines);
 				lines.flush();
+				if print {
+					renderer.set_repaint_buffer_type(RepaintBufferType::ReusedBuffer);
+				}
 			});
-			if drawn && started.elapsed() > SLOW_DRAW {
+			if print {
+				esp_println::println!("{}", remote::SCREEN_END);
+			}
+			if drawn && !print && started.elapsed() > SLOW_DRAW {
 				info!("Drawing took {} ms", started.elapsed().as_millis());
 			}
 		}

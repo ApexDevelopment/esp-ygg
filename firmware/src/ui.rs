@@ -75,7 +75,7 @@ pub fn uptime() -> core::time::Duration {
 }
 
 /// Whether the serial port asked to see the screen.
-static SCREEN_WANTED: AtomicBool = AtomicBool::new(false);
+pub static SCREEN_WANTED: AtomicBool = AtomicBool::new(false);
 
 /// Takes commands from the USB serial port, as [`remote`] describes, so the
 /// interface can be driven from a computer.

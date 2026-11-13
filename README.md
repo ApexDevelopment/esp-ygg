@@ -106,7 +106,7 @@ On the touch screen, dragging up or down moves the selection a row at a time, fo
 
 The touch board's screen dims after 30 seconds without a touch, and turns off 30 seconds later. Touching it, or pressing the BOOT button, wakes it, and the touch that wakes it does nothing else.
 
-The interface can also be driven from a computer over the USB serial port, for testing without someone at the keyboard. `firmware/drive.py` sends lines such as `type 200::1`, `key down enter`, `tap 5 2`, which taps a touch screen at a column and row of characters, and `screen`, which prints what the screen shows, and it does so without resetting the board:
+The interface can also be driven from a computer over the USB serial port, for testing without someone at the keyboard. `firmware/drive.py` sends lines such as `type 200::1`, `key down enter`, `tap 5 2`, which taps a touch screen at a column and row of characters, and `screen`, which prints what the screen shows, or for the graphical interface saves it as `screen.png`, and it does so without resetting the board:
 
 ```sh
 python3 firmware/drive.py /dev/ttyACM0 "key down down enter" "type 200::1" "key enter" "wait 3" screen

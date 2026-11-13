@@ -9,7 +9,8 @@ Each command is one of:
 	                 the graphical interface
 	drag <x> <y> <x> <y>
 	                 drags across the graphical interface, in pixels
-	screen           prints the screen
+	screen           prints the screen, or saves the graphical interface's
+	                 as screen.png
 	talk on|off      holds or releases push-to-talk
 	mute on|off      silences the speaker
 	wait <seconds>   waits, printing whatever the board logs meanwhile
@@ -19,11 +20,15 @@ For example:
 """
 
 import os
+import re
 import select
+import struct
 import sys
 import termios
 import time
+import zlib
 
+SCREEN_START = "--- screen ---"
 SCREEN_END = b"--- end ---"
 
 
@@ -70,6 +75,39 @@ def read_for(port, seconds, until=None):
 	return received.decode(errors="replace")
 
 
+def save_png(dump, path):
+	"""Saves the graphical interface's screen, sent as a size line then a
+	line of hexadecimal RGB565 pixels for each row, as a PNG."""
+	lines = dump.split("\n")
+	width, height = map(int, lines[0].split("x"))
+	raw = bytearray()
+	for line in lines[1:height + 1]:
+		raw.append(0)
+		for index in range(0, width * 4, 4):
+			pixel = int(line[index:index + 4], 16)
+			red, green, blue = pixel >> 11, (pixel >> 5) & 0x3F, pixel & 0x1F
+			raw += bytes((red * 255 // 31, green * 255 // 63, blue * 255 // 31))
+
+	def chunk(kind, data):
+		body = kind + data
+		return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+	header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+	png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b"")
+	with open(path, "wb") as file:
+		file.write(png)
+
+
+def show_screen(received):
+	"""Prints the screen, or saves it if it is the graphical interface's."""
+	dump = received.split(SCREEN_START + "\n", 1)[-1].replace("\r", "")
+	if re.match(r"\d+x\d+\n", dump):
+		save_png(dump.split(SCREEN_END.decode())[0], "screen.png")
+		print("Saved screen.png")
+	else:
+		print(received, end="")
+
+
 def main():
 	if len(sys.argv) < 3:
 		sys.exit(__doc__)
@@ -80,7 +118,7 @@ def main():
 			continue
 		write_all(port, (command + "\n").encode())
 		if command == "screen":
-			print(read_for(port, 3, until=SCREEN_END), end="")
+			show_screen(read_for(port, 10, until=SCREEN_END))
 		else:
 			print(read_for(port, 0.3), end="")
 
