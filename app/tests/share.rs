@@ -12,8 +12,6 @@ use embedded_io_adapters::tokio_1::FromTokio;
 use esp_ygg_app::share::{self, Attendant, Entry, Mode, Progress, SendError, Store, StoreError};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::Command;
-use yggdrasil_espnow::PrivateKey;
-use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
 const SEED: [u8; 32] = [7; 32];
 
@@ -255,7 +253,6 @@ async fn asks_about_a_wrong_password() {
 
 /// Sends a file from one folder to a board serving another.
 async fn send_to(
-	to: Ipv6Addr,
 	receiving: &mut Folder,
 	sending: &mut Folder,
 	name: &str,
@@ -271,41 +268,19 @@ async fn send_to(
 			.unwrap();
 		let (input, output) = stream.into_split();
 		let (mut input, mut output) = (FromTokio::new(input), FromTokio::new(output));
-		share::send(
-			&mut input,
-			&mut output,
-			to,
-			"esp-ygg",
-			name,
-			sending,
-			&sender,
-		)
-		.await
+		share::send(&mut input, &mut output, "esp-ygg", name, sending, &sender).await
 	})
 	.await
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn sends_to_the_board_at_its_address() {
+async fn sends_to_a_board() {
 	let mut receiving = Folder::new("receiving");
 	let mut sending = Folder::new("sending");
 	let photo: Vec<u8> = (0..5000u32).map(|n| n as u8).collect();
 	fs::write(sending.path("photo.jpg"), &photo).unwrap();
-	let key = PrivateKey::from_seed(&SEED).public_key();
-	let address = Ipv6Addr::from(addr_for_key(&key).0);
-	send_to(address, &mut receiving, &mut sending, "photo.jpg")
+	send_to(&mut receiving, &mut sending, "photo.jpg")
 		.await
 		.unwrap();
 	assert_eq!(fs::read(receiving.path("photo.jpg")).unwrap(), photo);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn refuses_a_board_at_another_address() {
-	let mut receiving = Folder::new("impostor");
-	let mut sending = Folder::new("impostor-sending");
-	fs::write(sending.path("note.txt"), "note").unwrap();
-	let other = "200::1".parse().unwrap();
-	let result = send_to(other, &mut receiving, &mut sending, "note.txt").await;
-	assert_eq!(result, Err(SendError::WrongKey));
-	assert!(!receiving.path("note.txt").exists());
 }

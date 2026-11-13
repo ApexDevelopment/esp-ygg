@@ -3,16 +3,13 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::net::Ipv6Addr;
 
 use embassy_futures::select::{Either3, select3};
 use embassy_sync::signal::Signal;
 use embedded_io_async::{Read, Write};
 use log::info;
-use sunset::{CliEvent, PubKey};
+use sunset::CliEvent;
 use sunset_async::{ChanInOut, ProgressHolder, SSHClient, SunsetRawMutex};
-use yggdrasil_espnow::PublicKey;
-use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
 use super::{Attendant, Mode, Progress, Store, StoreError};
 
@@ -34,8 +31,6 @@ const SSH_FX_OK: u32 = 0;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum SendError {
-	/// The server's key is a board's, but not the one at the address.
-	WrongKey,
 	/// The server would not let us in.
 	Refused,
 	/// The server would not take the file, saying why.
@@ -57,15 +52,12 @@ impl From<StoreError> for SendError {
 	}
 }
 
-/// Sends the file `name` from the store to the server at `to`, logging in
-/// as `user`, over a connection already open. A server with an ed25519 key
-/// that makes a Yggdrasil address is taken to be a board, and must be the
-/// one at `to`.
-#[allow(clippy::too_many_arguments)]
+/// Sends the file `name` from the store to a server, logging in as `user`,
+/// over a connection already open. Any host key is accepted: Yggdrasil
+/// already makes sure the node at an address holds that address's key.
 pub async fn send<S: Store, A: Attendant>(
 	input: &mut impl Read,
 	output: &mut impl Write,
-	to: Ipv6Addr,
 	user: &str,
 	name: &str,
 	store: &mut S,
@@ -75,7 +67,6 @@ pub async fn send<S: Store, A: Attendant>(
 	let mut outbuf = [0u8; SSH_BUFFER];
 	let client = SSHClient::new(&mut inbuf, &mut outbuf);
 	let session = Signal::<SunsetRawMutex, ChanInOut<'_>>::new();
-	let mut wrong_key = false;
 	let mut refused = true;
 
 	let events = async {
@@ -83,14 +74,7 @@ pub async fn send<S: Store, A: Attendant>(
 		loop {
 			let mut holder = ProgressHolder::new();
 			match client.progress(&mut holder).await? {
-				CliEvent::Hostkey(check) => {
-					if is_other_board(&check.hostkey()?, to) {
-						wrong_key = true;
-						check.reject()?;
-					} else {
-						check.accept()?;
-					}
-				}
+				CliEvent::Hostkey(check) => check.accept()?,
 				CliEvent::Username(request) => request.username(user)?,
 				CliEvent::Password(request) => match attendant.password(user).await {
 					Some(password) => request.password(password)?,
@@ -131,26 +115,9 @@ pub async fn send<S: Store, A: Attendant>(
 		Either3::Third(result) => result,
 	};
 	match result {
-		Err(_) if wrong_key => Err(SendError::WrongKey),
 		Err(SendError::Failed) if refused => Err(SendError::Refused),
 		result => result,
 	}
-}
-
-/// Whether a host key makes a Yggdrasil address other than `to`'s, so is a
-/// board's but not the one dialled.
-fn is_other_board(key: &PubKey<'_>, to: Ipv6Addr) -> bool {
-	let PubKey::Ed25519(key) = key else {
-		return false;
-	};
-	let key = PublicKey(key.key.0);
-	let address = Ipv6Addr::from(addr_for_key(&key).0);
-	is_yggdrasil(address) && address != to && is_yggdrasil(to)
-}
-
-/// Whether an address is in Yggdrasil's range, 200::/7.
-fn is_yggdrasil(address: Ipv6Addr) -> bool {
-	address.octets()[0] & 0xfe == 0x02
 }
 
 /// Writes the file over an SFTP channel: open, write, close.
