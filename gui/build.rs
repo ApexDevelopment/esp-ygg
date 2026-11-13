@@ -3,8 +3,9 @@ use std::path::Path;
 
 /// Text sizes to draw glyphs at ahead of time. Material sets its sizes in
 /// a way Slint cannot see when building, so they are listed here: those of
-/// Material's text styles small enough for a 320x240 screen.
-const FONT_SIZES: &str = "11,12,14,16,22,24";
+/// the Material text styles the interface uses. Every font is drawn at
+/// every size, so each one costs flash, which the C6 maps only 4 MB of.
+const FONT_SIZES: &str = "11,12,14,16";
 
 fn main() {
 	// SAFETY: nothing else runs in the build script yet to read the
