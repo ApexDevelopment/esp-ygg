@@ -36,6 +36,7 @@ export enum App {
     console,
     irc,
     gopher,
+    gemini,
 }
 
 /// The app open on the home page, if any, over the launcher.
@@ -145,13 +146,28 @@ export global Irc {
     callback disconnect();
 }
 
-/// A line of a page, wrapped to the screen in Rust.
+export enum LineStyle {
+    text,
+    /// A link that can be followed.
+    link,
+    /// A link that cannot be followed here.
+    faint,
+    heading,
+    /// An item of a list, its bullet and all.
+    item,
+    quote,
+    /// Laid out by its author, so cut off rather than wrapped.
+    preformatted,
+}
+
+/// A row of a page, wrapped to the screen in Rust.
 export struct PageLine {
     text: string,
     /// The link it is part of, or -1.
     link: int,
-    /// Whether the link can be opened here.
-    supported: bool,
+    style: LineStyle,
+    /// How far in from the page's edge it starts.
+    indent: length,
 }
 
 /// The Gopher browser, run from Rust.
@@ -166,13 +182,32 @@ export global Gopher {
     in_out property <length> scroll;
     /// How wide lines may be, for Rust to wrap them to.
     in_out property <length> width;
-    /// The link being pressed, or -1.
-    in_out property <int> held: -1;
 
     /// Opens the keyboard for an address.
     callback go();
     callback open(int);
     callback back();
+}
+
+/// The Gemini browser, run from Rust.
+export global Gemini {
+    /// The page showing, or empty before one is.
+    in property <string> address;
+    in property <bool> loading;
+    in property <string> error;
+    in property <bool> can_go_back;
+    in property <[PageLine]> lines;
+    /// How far down the page is scrolled.
+    in_out property <length> scroll;
+    /// How wide lines may be, for Rust to wrap them to.
+    in_out property <length> width;
+
+    /// Opens the keyboard for an address.
+    callback go();
+    callback open(int);
+    callback back();
+    /// Stops loading a page.
+    callback stop();
 }
 
 /// The settings typed in, one at a time, on the keyboard.

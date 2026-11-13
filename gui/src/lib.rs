@@ -8,11 +8,13 @@ extern crate alloc;
 #[cfg(feature = "console")]
 mod console;
 mod front;
+#[cfg(feature = "gemini")]
+mod gemini;
 #[cfg(feature = "gopher")]
 mod gopher;
 #[cfg(feature = "irc")]
 mod irc;
-#[cfg(feature = "gopher")]
+#[cfg(any(feature = "gopher", feature = "gemini"))]
 mod page;
 mod ping;
 

@@ -9,24 +9,34 @@ use core::ops::Range;
 
 use slint::{Model, ModelNotify, ModelTracker};
 
-use crate::PageLine;
+use crate::{LineStyle, PageLine};
 
 include!(concat!(env!("OUT_DIR"), "/advances.rs"));
 
 /// Spaces a tab goes to the next multiple of.
 const TAB_STOP: usize = 8;
+/// How far a quote is set in, leaving room for its bar, in pixels.
+const QUOTE_INDENT: u32 = 12;
+/// The text size the advances are for, and the size of headings, which
+/// must match the page's.
+const BODY_SIZE: u32 = 14;
+const HEADING_SIZE: u32 = 16;
+/// The bullet that begins an item of a list.
+pub const BULLET: &str = "• ";
 
 /// A line before wrapping.
 struct Line {
 	text: Range<usize>,
 	/// The link it is part of, or -1.
 	link: i32,
-	supported: bool,
+	style: LineStyle,
 }
 
 struct Row {
 	text: Range<usize>,
 	line: usize,
+	/// In pixels.
+	indent: u32,
 }
 
 #[derive(Default)]
@@ -41,19 +51,19 @@ pub struct Page {
 
 impl Page {
 	/// Shows these lines in place of the page's: their text, the link each
-	/// is part of or -1, and whether it can be opened.
-	pub fn set<'a>(&self, lines: impl IntoIterator<Item = (&'a str, i32, bool)>) {
+	/// is part of or -1, and their style.
+	pub fn set<'a>(&self, lines: impl IntoIterator<Item = (&'a str, i32, LineStyle)>) {
 		let mut text = self.text.borrow_mut();
 		let mut kept = self.lines.borrow_mut();
 		text.clear();
 		kept.clear();
-		for (line, link, supported) in lines {
+		for (line, link, style) in lines {
 			let start = text.len();
 			expand_tabs(line, &mut text);
 			kept.push(Line {
 				text: start..text.len(),
 				link,
-				supported,
+				style,
 			});
 		}
 		drop((text, kept));
@@ -73,12 +83,30 @@ impl Page {
 		let text = self.text.borrow();
 		let mut rows = self.rows.borrow_mut();
 		rows.clear();
+		let width = self.width.get();
 		for (index, line) in self.lines.borrow().iter().enumerate() {
 			let start = line.text.start;
-			for range in wrap(&text[line.text.clone()], self.width.get()) {
+			let source = &text[line.text.clone()];
+			let (first, rest) = match line.style {
+				LineStyle::Quote => (QUOTE_INDENT, QUOTE_INDENT),
+				// Lines after the first start under the item's text.
+				LineStyle::Item => (0, width_of(BULLET, &ADVANCES) / 64),
+				_ => (0, 0),
+			};
+			let ranges = match line.style {
+				LineStyle::Preformatted => core::iter::once(0..source.len()).collect(),
+				// Headings are larger, so as much fits as in less room at body size.
+				LineStyle::Heading => {
+					let room = width * BODY_SIZE / HEADING_SIZE;
+					wrap(source, room, (first, rest), &MEDIUM_ADVANCES)
+				}
+				_ => wrap(source, width, (first, rest), &ADVANCES),
+			};
+			for (number, range) in ranges.into_iter().enumerate() {
 				rows.push(Row {
 					text: start + range.start..start + range.end,
 					line: index,
+					indent: if number == 0 { first } else { rest },
 				});
 			}
 		}
@@ -101,7 +129,8 @@ impl Model for Page {
 		Some(PageLine {
 			text: self.text.borrow()[row.text.clone()].into(),
 			link: line.link,
-			supported: line.supported,
+			style: line.style,
+			indent: row.indent as f32,
 		})
 	}
 
@@ -124,23 +153,27 @@ fn expand_tabs(line: &str, into: &mut String) {
 	}
 }
 
-/// How far a character moves the pen, in 64ths of a pixel. Others than
-/// ASCII are taken to be as wide as M, to be sure they fit.
-fn advance(character: char) -> u32 {
+/// How far a character moves the pen, in 64ths of a pixel, in a font's
+/// table of advances. Others than ASCII are taken to be as wide as M, to be
+/// sure they fit.
+fn advance(character: char, advances: &[u32; 95]) -> u32 {
 	let index = match character {
 		' '..='~' => character as usize - ' ' as usize,
 		_ => 'M' as usize - ' ' as usize,
 	};
-	ADVANCES[index]
+	advances[index]
 }
 
-fn width_of(text: &str) -> u32 {
-	text.chars().map(advance).sum()
+fn width_of(text: &str, advances: &[u32; 95]) -> u32 {
+	text.chars()
+		.map(|character| advance(character, advances))
+		.sum()
 }
 
-/// Splits a line into rows no wider than `width`, at spaces where it can,
-/// as byte ranges. An empty line is one empty row.
-fn wrap(line: &str, width: u32) -> Vec<Range<usize>> {
+/// Splits a line into rows no wider than `width`, in 64ths of a pixel, at
+/// spaces where it can, as byte ranges. The first row and the rest are set
+/// in by `indents`, in pixels. An empty line is one empty row.
+fn wrap(line: &str, width: u32, indents: (u32, u32), advances: &[u32; 95]) -> Vec<Range<usize>> {
 	// Not yet laid out
 	if width == 0 {
 		return core::iter::once(0..line.len()).collect();
@@ -148,11 +181,13 @@ fn wrap(line: &str, width: u32) -> Vec<Range<usize>> {
 	let mut rows = Vec::new();
 	let mut start = 0;
 	let mut used = 0;
+	let mut room = width.saturating_sub(indents.0 * 64);
 	// The last space in the row so far, to break at.
 	let mut space = None;
 	for (index, character) in line.char_indices() {
-		let advance = advance(character);
-		if used + advance > width && index > start {
+		let advance = advance(character, advances);
+		if used + advance > room && index > start {
+			room = width.saturating_sub(indents.1 * 64);
 			if character == ' ' {
 				rows.push(start..index);
 				start = index + 1;
@@ -163,7 +198,7 @@ fn wrap(line: &str, width: u32) -> Vec<Range<usize>> {
 			let end = space.filter(|&space| space > start).unwrap_or(index);
 			rows.push(start..end);
 			start = if Some(end) == space { end + 1 } else { end };
-			used = width_of(&line[start..index]);
+			used = width_of(&line[start..index], advances);
 			space = None;
 		}
 		if character == ' ' {
@@ -180,8 +215,8 @@ mod tests {
 	use super::*;
 
 	fn rows(line: &str, characters: u32) -> Vec<&str> {
-		let width = characters * advance('n');
-		wrap(line, width)
+		let width = characters * advance('n', &ADVANCES);
+		wrap(line, width, (0, 0), &ADVANCES)
 			.into_iter()
 			.map(|range| &line[range])
 			.collect()
@@ -205,6 +240,16 @@ mod tests {
 	#[test]
 	fn drops_the_space_at_a_break() {
 		assert_eq!(rows("nnnn nnnn", 4), ["nnnn", "nnnn"]);
+	}
+
+	#[test]
+	fn narrows_rows_after_the_first_by_their_indent() {
+		let n = advance('n', &ADVANCES);
+		let line = "nnnn nnnn nnnn";
+		// Set in by a little over five letters, rows after the first fit three.
+		let wrapped = wrap(line, 9 * n, (0, 5 * n / 64 + 1), &ADVANCES);
+		let rows: Vec<&str> = wrapped.into_iter().map(|range| &line[range]).collect();
+		assert_eq!(rows, ["nnnn nnnn", "nnn", "n"]);
 	}
 
 	#[test]

@@ -19,19 +19,27 @@ fn main() {
 		.embed_resources(slint_build::EmbedResourcesKind::EmbedForSoftwareRenderer)
 		.with_library_paths(HashMap::from([("material".into(), material)]));
 	slint_build::compile_with_config("ui/main.slint", config).expect("compiling the interface");
-	#[cfg(feature = "gopher")]
+	#[cfg(any(feature = "gopher", feature = "gemini"))]
 	write_advances();
 }
 
 /// Writes how far each printable ASCII character moves the pen in body
-/// text, in 64ths of a pixel, for wrapping text to the screen in Rust.
-#[cfg(feature = "gopher")]
+/// text, regular and medium, in 64ths of a pixel, for wrapping text to the
+/// screen in Rust.
+#[cfg(any(feature = "gopher", feature = "gemini"))]
 fn write_advances() {
-	const FONT: &str = "fonts/Roboto-Regular.ttf";
+	let code = advances("ADVANCES", "fonts/Roboto-Regular.ttf")
+		+ &advances("MEDIUM_ADVANCES", "fonts/Roboto-Medium.ttf");
+	let out = Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("advances.rs");
+	std::fs::write(out, code).expect("writing the advances");
+}
+
+#[cfg(any(feature = "gopher", feature = "gemini"))]
+fn advances(name: &str, font: &str) -> String {
 	/// Material's body_medium text.
 	const SIZE: f32 = 14.0;
-	println!("cargo::rerun-if-changed={FONT}");
-	let data = std::fs::read(FONT).expect("reading the font");
+	println!("cargo::rerun-if-changed={font}");
+	let data = std::fs::read(font).expect("reading the font");
 	let face = ttf_parser::Face::parse(&data, 0).expect("parsing the font");
 	let scale = SIZE * 64.0 / f32::from(face.units_per_em());
 	let advances: Vec<String> = (' '..='~')
@@ -41,10 +49,8 @@ fn write_advances() {
 			((f32::from(advance) * scale).round() as u32).to_string()
 		})
 		.collect();
-	let code = format!(
-		"/// Advances of ' ' to '~' in body text, in 64ths of a pixel.\npub const ADVANCES: [u32; 95] = [{}];\n",
+	format!(
+		"/// Advances of ' ' to '~' in {font} at body size, in 64ths of a pixel.\npub const {name}: [u32; 95] = [{}];\n",
 		advances.join(", ")
-	);
-	let out = Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("advances.rs");
-	std::fs::write(out, code).expect("writing the advances");
+	)
 }

@@ -1,6 +1,7 @@
 import { MaterialPalette, MaterialText, MaterialTypography, MaterialWindow, NavigationItem } from "@material/material.slint";
 import { Palette } from "std-widgets.slint";
 import { ConsolePage } from "console.slint";
+import { GeminiPage } from "gemini.slint";
 import { GopherPage } from "gopher.slint";
 import { IrcPage } from "irc.slint";
 import { LauncherPage } from "launcher.slint";
@@ -11,7 +12,7 @@ import { PingPage } from "ping.slint";
 import { CompactBar, CompactRail, NavigationHandle } from "rail.slint";
 import { SettingsPage } from "settings.slint";
 import { App, Keyboard, Launcher, Notice } from "state.slint";
-export { App, ChatEntry, Console, Gopher, Irc, IrcBuffer, IrcField, Keyboard, Launcher, Node, NodeEntry, NeighborEntry, Notice, PageLine, Ping, Setting, Setup, WifiEntry } from "state.slint";
+export { App, ChatEntry, Console, Gemini, Gopher, Irc, IrcBuffer, IrcField, Keyboard, Launcher, LineStyle, Node, NodeEntry, NeighborEntry, Notice, PageLine, Ping, Setting, Setup, WifiEntry } from "state.slint";
 import "../fonts/Roboto-Regular.ttf";
 import "../fonts/Roboto-Medium.ttf";
 
@@ -24,6 +25,7 @@ component Pages inherits VerticalLayout {
     if root.page == 0 && Launcher.open == App.console: ConsolePage { }
     if root.page == 0 && Launcher.open == App.irc: IrcPage { }
     if root.page == 0 && Launcher.open == App.gopher: GopherPage { }
+    if root.page == 0 && Launcher.open == App.gemini: GeminiPage { }
     if root.page == 1: NodesPage { }
     if root.page == 2: NeighborsPage { }
     if root.page == 3: SettingsPage { }

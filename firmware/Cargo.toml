@@ -53,7 +53,7 @@ gopher = ["esp-ygg-app/gopher", "esp-ygg-gui?/gopher"]
 console = ["esp-ygg-app/console", "esp-ygg-gui?/console"]
 ntp = ["esp-ygg-app/ntp"]
 irc = ["esp-ygg-app/irc", "esp-ygg-gui?/irc"]
-gemini = ["esp-ygg-app/gemini", "dep:getrandom"]
+gemini = ["esp-ygg-app/gemini", "esp-ygg-gui?/gemini", "dep:getrandom"]
 # Voice calls with push-to-talk, on the Cardputers
 voice = ["cardputer", "tui", "esp-ygg-app/voice"]
 # What every interface needs, whichever it is. tui and gui turn it on.

@@ -1,0 +1,60 @@
+import { MaterialPalette, MaterialTypography } from "@material/material.slint";
+import { LineStyle, PageLine } from "state.slint";
+import { ListView } from "widgets.slint";
+
+/// A page of text and links, as rows Rust wrapped to `text_width`.
+export component PageView {
+    in property <[PageLine]> lines;
+    in_out property <length> scroll <=> list.content_y;
+    // Lines are wrapped short of the edge, as Rust's measure can be a
+    // pixel out.
+    out property <length> text_width: list.visible_width - 34px;
+
+    callback open(int);
+
+    /// The link being pressed, or -1.
+    property <int> held: -1;
+
+    list := ListView {
+        width: root.width;
+        height: root.height;
+
+        for line in root.lines: Rectangle {
+            height: 20px;
+            background: line.link >= 0 && line.link == root.held ? MaterialPalette.on_surface.transparentize(0.9) : transparent;
+
+            TouchArea {
+                enabled: line.style == LineStyle.link;
+
+                changed pressed => {
+                    root.held = self.pressed ? line.link : -1;
+                }
+
+                clicked => {
+                    root.open(line.link);
+                }
+            }
+
+            // A quote's bar
+            Rectangle {
+                x: 16px;
+                width: line.style == LineStyle.quote ? 3px : 0;
+                border_radius: 1px;
+                background: MaterialPalette.outline_variant;
+            }
+
+            Text {
+                x: 16px + line.indent;
+                width: parent.width - 32px - line.indent;
+                text: line.text;
+                // Headings' size is also in Rust, which wraps them.
+                font_size: line.style == LineStyle.heading ? MaterialTypography.title_medium.font_size : MaterialTypography.body_medium.font_size;
+                font_weight: line.style == LineStyle.heading ? MaterialTypography.title_medium.font_weight : MaterialTypography.body_medium.font_weight;
+                color: line.style == LineStyle.link ? MaterialPalette.primary
+                    : line.style == LineStyle.faint || line.style == LineStyle.quote ? MaterialPalette.on_surface_variant
+                    : MaterialPalette.on_surface;
+                vertical_alignment: center;
+            }
+        }
+    }
+}

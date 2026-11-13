@@ -1,0 +1,62 @@
+import { MaterialPalette, MaterialText, MaterialTypography } from "@material/material.slint";
+import { ComposeBar } from "chat.slint";
+import { AppBar } from "page.slint";
+import { App, Gemini, Launcher } from "state.slint";
+import { PageView } from "page_view.slint";
+
+/// A browser for Gemini's pages, wrapped to the screen.
+export component GeminiPage inherits VerticalLayout {
+    property <length> text_width: page.text_width;
+
+    init => {
+        Gemini.width = root.text_width;
+    }
+
+    changed text_width => {
+        Gemini.width = root.text_width;
+    }
+
+    AppBar {
+        text: "Gemini";
+
+        back => {
+            if Gemini.loading {
+                Gemini.stop();
+            } else if Gemini.can_go_back {
+                Gemini.back();
+            } else {
+                Launcher.open = App.none;
+            }
+        }
+    }
+
+    ComposeBar {
+        placeholder: Gemini.address == "" ? "Go to address" : Gemini.address;
+
+        write => {
+            Gemini.go();
+        }
+    }
+
+    if Gemini.loading || Gemini.error != "": HorizontalLayout {
+        padding_left: 16px;
+        padding_right: 16px;
+        padding_bottom: 4px;
+
+        MaterialText {
+            text: Gemini.error != "" ? Gemini.error : "Loading…";
+            style: MaterialTypography.body_small;
+            color: Gemini.error != "" ? MaterialPalette.error : MaterialPalette.on_surface_variant;
+            wrap: word_wrap;
+        }
+    }
+
+    page := PageView {
+        lines: Gemini.lines;
+        scroll <=> Gemini.scroll;
+
+        open(link) => {
+            Gemini.open(link);
+        }
+    }
+}

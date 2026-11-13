@@ -10,8 +10,8 @@ use esp_ygg_app::ui::Commands;
 use esp_ygg_app::ui::gopher::{Browser, Content};
 use slint::{ComponentHandle, ModelRc};
 
-use crate::MainWindow;
 use crate::page::Page;
+use crate::{LineStyle, MainWindow};
 
 /// As many pages back as the browser keeps.
 const MAX_HISTORY: usize = 16;
@@ -117,7 +117,8 @@ impl Gopher {
 		};
 		match &page.content {
 			Content::Text { text, .. } => {
-				self.page.set(text.lines().map(|line| (line, -1, false)));
+				self.page
+					.set(text.lines().map(|line| (line, -1, LineStyle::Text)));
 			}
 			Content::Menu { items, .. } => {
 				let texts: Vec<String> = items
@@ -134,8 +135,12 @@ impl Gopher {
 						.zip(&texts)
 						.enumerate()
 						.map(|(index, (item, text))| {
-							let link = if item.is_link() { index as i32 } else { -1 };
-							(text.as_str(), link, item.is_supported())
+							let (link, style) = match (item.is_link(), item.is_supported()) {
+								(false, _) => (-1, LineStyle::Text),
+								(true, true) => (index as i32, LineStyle::Link),
+								(true, false) => (index as i32, LineStyle::Faint),
+							};
+							(text.as_str(), link, style)
 						}),
 				);
 			}

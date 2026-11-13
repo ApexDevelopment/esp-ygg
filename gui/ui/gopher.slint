@@ -2,13 +2,11 @@ import { MaterialPalette, MaterialText, MaterialTypography } from "@material/mat
 import { ComposeBar } from "chat.slint";
 import { AppBar } from "page.slint";
 import { App, Gopher, Launcher } from "state.slint";
-import { ListView } from "widgets.slint";
+import { PageView } from "page_view.slint";
 
 /// A browser for Gopher's menus and text, wrapped to the screen.
 export component GopherPage inherits VerticalLayout {
-    // Lines are wrapped short of the edge, as Rust's measure can be a
-    // pixel out.
-    property <length> text_width: list.visible_width - 34px;
+    property <length> text_width: page.text_width;
 
     init => {
         Gopher.width = root.text_width;
@@ -51,35 +49,12 @@ export component GopherPage inherits VerticalLayout {
         }
     }
 
-    list := ListView {
-        content_y <=> Gopher.scroll;
+    page := PageView {
+        lines: Gopher.lines;
+        scroll <=> Gopher.scroll;
 
-        for line in Gopher.lines: Rectangle {
-            height: 20px;
-            background: line.link >= 0 && line.link == Gopher.held ? MaterialPalette.on_surface.transparentize(0.9) : transparent;
-
-            TouchArea {
-                enabled: line.link >= 0 && line.supported;
-
-                changed pressed => {
-                    Gopher.held = self.pressed ? line.link : -1;
-                }
-
-                clicked => {
-                    Gopher.open(line.link);
-                }
-            }
-
-            Text {
-                x: 16px;
-                width: parent.width - 32px;
-                text: line.text;
-                font_size: MaterialTypography.body_medium.font_size;
-                color: line.link < 0 ? MaterialPalette.on_surface
-                    : line.supported ? MaterialPalette.primary
-                    : MaterialPalette.on_surface_variant;
-                vertical_alignment: center;
-            }
+        open(link) => {
+            Gopher.open(link);
         }
     }
 }

@@ -13,7 +13,7 @@ use core::net::Ipv6Addr;
 #[cfg(feature = "console")]
 use core::net::SocketAddrV6;
 
-#[cfg(feature = "irc")]
+#[cfg(any(feature = "irc", feature = "gemini"))]
 use esp_ygg_app::Stream;
 use esp_ygg_app::settings::TextSetting;
 use esp_ygg_app::time::{DateTime, format_offset, short_uptime};
@@ -26,6 +26,8 @@ use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 
 #[cfg(feature = "console")]
 use crate::console::Console;
+#[cfg(feature = "gemini")]
+use crate::gemini::Gemini;
 #[cfg(feature = "gopher")]
 use crate::gopher::Gopher;
 #[cfg(feature = "irc")]
@@ -47,6 +49,11 @@ const DESTINATION_LEN: usize = 53;
 /// The longest message the console sends.
 #[cfg(feature = "console")]
 const MESSAGE_LEN: usize = 200;
+#[cfg(feature = "gemini")]
+const GEMINI_ADDRESS_LEN: usize = 120;
+/// The longest answer to a Gemini server's question.
+#[cfg(feature = "gemini")]
+const GEMINI_ANSWER_LEN: usize = 200;
 /// The longest Gopher address or search.
 #[cfg(feature = "gopher")]
 const GOPHER_LEN: usize = 60;
@@ -92,6 +99,14 @@ enum Action {
 	OpenGopher(i32),
 	#[cfg(feature = "gopher")]
 	BackGopher,
+	#[cfg(feature = "gemini")]
+	GoGemini,
+	#[cfg(feature = "gemini")]
+	OpenGemini(i32),
+	#[cfg(feature = "gemini")]
+	BackGemini,
+	#[cfg(feature = "gemini")]
+	StopGemini,
 	PickNetwork(WifiEntry),
 	Save,
 	Export,
@@ -125,6 +140,11 @@ enum Field {
 	/// The query for a Gopher search.
 	#[cfg(feature = "gopher")]
 	GopherSearch,
+	#[cfg(feature = "gemini")]
+	GeminiAddress,
+	/// The answer to a Gemini server's question, and whether it is secret.
+	#[cfg(feature = "gemini")]
+	GeminiAnswer(bool),
 }
 
 impl Field {
@@ -144,11 +164,20 @@ impl Field {
 			Field::IrcLine => IRC_LINE_LEN,
 			#[cfg(feature = "gopher")]
 			Field::GopherAddress | Field::GopherSearch => GOPHER_LEN,
+			#[cfg(feature = "gemini")]
+			Field::GeminiAddress => GEMINI_ADDRESS_LEN,
+			#[cfg(feature = "gemini")]
+			Field::GeminiAnswer(_) => GEMINI_ANSWER_LEN,
 		}
 	}
 
 	fn is_secret(self) -> bool {
-		matches!(self, Field::Setting(setting) if setting.is_secret())
+		match self {
+			Field::Setting(setting) => setting.is_secret(),
+			#[cfg(feature = "gemini")]
+			Field::GeminiAnswer(secret) => secret,
+			_ => false,
+		}
 	}
 
 	fn is_numeric(self) -> bool {
@@ -175,6 +204,8 @@ pub struct Gui {
 	irc: Irc,
 	#[cfg(feature = "gopher")]
 	gopher: Gopher,
+	#[cfg(feature = "gemini")]
+	gemini: Gemini,
 	/// The settings in use.
 	saved: Settings,
 	/// The settings as edited, until saved.
@@ -213,6 +244,8 @@ impl Gui {
 				App::Irc,
 				#[cfg(feature = "gopher")]
 				App::Gopher,
+				#[cfg(feature = "gemini")]
+				App::Gemini,
 			]))));
 		let gui = Gui {
 			window: window.clone_strong(),
@@ -228,6 +261,8 @@ impl Gui {
 			irc: Irc::new(&window, &settings.name),
 			#[cfg(feature = "gopher")]
 			gopher: Gopher::new(&window),
+			#[cfg(feature = "gemini")]
+			gemini: Gemini::new(&window),
 			draft: settings.clone(),
 			saved: settings,
 			editing: None,
@@ -295,6 +330,15 @@ impl Gui {
 			Event::Fetched { data } => self.gopher.fetched(&data),
 			#[cfg(feature = "gopher")]
 			Event::FetchFailed => self.gopher.failed(),
+			#[cfg(feature = "gemini")]
+			Event::StreamOpened(Stream::Gemini) => self.gemini.opened(&mut self.commands),
+			#[cfg(feature = "gemini")]
+			Event::StreamData {
+				stream: Stream::Gemini,
+				data,
+			} => self.gemini.received(&data, &mut self.commands),
+			#[cfg(feature = "gemini")]
+			Event::StreamClosed(Stream::Gemini) => self.gemini.closed(&mut self.commands),
 			// Other apps' events, in builds with them
 			#[allow(unreachable_patterns)]
 			_ => {}
@@ -308,9 +352,6 @@ impl Gui {
 		for action in actions {
 			self.carry_out(action);
 		}
-		let Some(status) = &self.status else {
-			return;
-		};
 		#[cfg(feature = "console")]
 		// The notice of a new message would only cover it.
 		if self.viewing(App::Console) && self.console.mark_read() {
@@ -320,10 +361,17 @@ impl Gui {
 		self.irc.refresh(self.viewing_irc());
 		#[cfg(feature = "gopher")]
 		self.gopher.refresh();
+		#[cfg(feature = "gemini")]
+		if let Some((question, secret)) = self.gemini.refresh() {
+			self.open_keyboard(Field::GeminiAnswer(secret), question.into());
+		}
+		let Some(status) = &self.status else {
+			return;
+		};
 		let choosing = match self.window.global::<Launcher>().get_open() {
 			App::Ping => self.window.global::<Ping>().get_choosing(),
 			App::Console => self.window.global::<crate::Console>().get_choosing(),
-			App::Irc | App::Gopher | App::None => false,
+			App::Irc | App::Gopher | App::Gemini | App::None => false,
 		};
 		let wanted: Vec<PublicKey> = match self.window.get_page() {
 			0 if choosing => status.nodes(),
@@ -449,6 +497,17 @@ impl Gui {
 			}
 			#[cfg(feature = "gopher")]
 			Action::BackGopher => self.gopher.back(),
+			#[cfg(feature = "gemini")]
+			Action::GoGemini => self.open_keyboard(Field::GeminiAddress, "Address".into()),
+			#[cfg(feature = "gemini")]
+			Action::OpenGemini(link) => {
+				let link = usize::try_from(link).unwrap_or(usize::MAX);
+				self.gemini.open(link, &mut self.commands);
+			}
+			#[cfg(feature = "gemini")]
+			Action::BackGemini => self.gemini.back(&mut self.commands),
+			#[cfg(feature = "gemini")]
+			Action::StopGemini => self.gemini.stop(&mut self.commands),
 			#[cfg(feature = "console")]
 			Action::WriteMessage => {
 				let label = self.window.global::<crate::Console>().get_target();
@@ -524,6 +583,10 @@ impl Gui {
 			Field::GopherAddress => self.gopher.address(),
 			#[cfg(feature = "gopher")]
 			Field::GopherSearch => String::new(),
+			#[cfg(feature = "gemini")]
+			Field::GeminiAddress => self.gemini.address(),
+			#[cfg(feature = "gemini")]
+			Field::GeminiAnswer(_) => String::new(),
 		};
 		self.editing = Some(Edit { field, text });
 		let keyboard = self.window.global::<Keyboard>();
@@ -619,6 +682,18 @@ impl Gui {
 				self.gopher.search(&query, &mut self.commands);
 				Ok(())
 			}
+			#[cfg(feature = "gemini")]
+			Field::GeminiAddress => {
+				let text = edit.text.clone();
+				self.gemini.go_to(&text, &mut self.commands);
+				Ok(())
+			}
+			#[cfg(feature = "gemini")]
+			Field::GeminiAnswer(_) => {
+				let answer = edit.text.clone();
+				self.gemini.answer(&answer, &mut self.commands);
+				Ok(())
+			}
 		};
 		match applied {
 			Ok(()) => {
@@ -637,6 +712,14 @@ impl Gui {
 		}) = self.editing
 		{
 			self.gopher.cancel_search();
+		}
+		#[cfg(feature = "gemini")]
+		if let Some(Edit {
+			field: Field::GeminiAnswer(_),
+			..
+		}) = self.editing
+		{
+			self.gemini.cancel_answer();
 		}
 		self.editing = None;
 		self.window.global::<Keyboard>().set_open(false);
@@ -811,6 +894,15 @@ fn connect(window: &MainWindow, actions: &Rc<RefCell<VecDeque<Action>>>) {
 		gopher.on_back(queue(|| Action::BackGopher));
 		let opens = actions.clone();
 		gopher.on_open(move |link| opens.borrow_mut().push_back(Action::OpenGopher(link)));
+	}
+	#[cfg(feature = "gemini")]
+	{
+		let gemini = window.global::<crate::Gemini>();
+		gemini.on_go(queue(|| Action::GoGemini));
+		gemini.on_back(queue(|| Action::BackGemini));
+		gemini.on_stop(queue(|| Action::StopGemini));
+		let opens = actions.clone();
+		gemini.on_open(move |link| opens.borrow_mut().push_back(Action::OpenGemini(link)));
 	}
 	let keyboard = window.global::<Keyboard>();
 	let keys = actions.clone();

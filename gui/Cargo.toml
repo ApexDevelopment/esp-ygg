@@ -12,17 +12,21 @@ yggdrasil-espnow = { path = "../node" }
 slint = { version = "1.18.1", default-features = false, features = ["compat-1-2", "unsafe-single-threaded", "libm", "renderer-software"] }
 
 [features]
-default = ["console", "irc", "gopher"]
+default = ["console", "irc", "gopher", "gemini"]
 # The apps beyond Ping, each with the app crate's feature of the same name
 console = ["esp-ygg-app/console"]
 irc = ["esp-ygg-app/irc"]
 gopher = ["esp-ygg-app/gopher", "dep:ttf-parser"]
+gemini = ["esp-ygg-app/gemini", "dep:ttf-parser"]
 
 [build-dependencies]
 slint-build = "1.18.1"
-# Reads the font's glyph widths, so the Gopher app can wrap text itself
+# Reads the font's glyph widths, so Gopher and Gemini can wrap text themselves
 ttf-parser = { version = "0.25.1", optional = true }
 
 [dev-dependencies]
 # Saves what the screen shows, in the screenshot example
 png = "0.18.1"
+# A Gemini server for the screenshot example to browse
+rustls = { version = "0.23.46", default-features = false, features = ["std", "tls12"] }
+rustls-rustcrypto = { version = "0.1.0-pre.0", features = ["std", "tls12"] }

@@ -15,7 +15,9 @@ use esp_ygg_app::Event;
 use esp_ygg_app::Stream;
 use esp_ygg_app::ui::{Neighbor, Status, Uplink};
 use esp_ygg_app::{BoardInfo, Settings};
-use esp_ygg_gui::{App, Console, Gopher, Gui, Irc, IrcField, Launcher, Ping, Setting, Setup};
+use esp_ygg_gui::{
+	App, Console, Gemini, Gopher, Gui, Irc, IrcField, Launcher, Ping, Setting, Setup,
+};
 use slint::ComponentHandle;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel};
 use slint::platform::{Platform, WindowAdapter};
@@ -73,6 +75,99 @@ fn main() {
 	save_irc(&mut gui, &window, &folder);
 	save_gopher(&mut gui, &window, &folder);
 	save_navigation_over_app(&mut gui, &window, &folder);
+	save_gemini(&mut gui, &window, &folder);
+}
+
+const GEMINI_PAGE: &str = "20 text/gemini\r
+# A capsule on the mesh
+Served over Yggdrasil to a board with no proper network connection — and wrapped to its screen, “quotes”, café and all.
+## Lately
+=> /log/attic.gmi Moving the board to the attic
+=> /log/battery.gmi Running on a battery
+* Lists hang under their bullets when they run long enough to wrap
+> Quotes sit beside a bar.
+```
+  /\\_/\\   preformatted
+ ( o.o )  and cut off at the edge
+```
+";
+
+/// Answers one Gemini request over TLS, as a server would, by passing the
+/// interface's stream commands to a TLS server in this process.
+fn serve_gemini(gui: &mut Gui, response: &[u8]) {
+	use esp_ygg_app::ui::Command;
+	use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+	use std::io::{Read, Write};
+	const CERTIFICATE: &[u8] = include_bytes!("../../app/tests/data/server.crt.der");
+	const KEY: &[u8] = include_bytes!("../../app/tests/data/server.key.der");
+	let provider = std::sync::Arc::new(rustls_rustcrypto::provider());
+	let config = rustls::ServerConfig::builder_with_provider(provider)
+		.with_safe_default_protocol_versions()
+		.unwrap()
+		.with_no_client_auth()
+		.with_single_cert(
+			vec![CertificateDer::from(CERTIFICATE.to_vec())],
+			PrivateKeyDer::try_from(KEY.to_vec()).unwrap(),
+		)
+		.unwrap();
+	let mut server = rustls::ServerConnection::new(std::sync::Arc::new(config)).unwrap();
+	let mut answered = false;
+	for _ in 0..50 {
+		gui.tick();
+		let commands: Vec<Command> = std::iter::from_fn(|| gui.poll_command()).collect();
+		for command in commands {
+			match command {
+				Command::OpenStream(Stream::Gemini, _) => {
+					gui.handle_event(Event::StreamOpened(Stream::Gemini));
+				}
+				Command::StreamSend(Stream::Gemini, data) => {
+					server.read_tls(&mut &data[..]).unwrap();
+					server.process_new_packets().unwrap();
+					let mut request = Vec::new();
+					let _ = server.reader().read_to_end(&mut request);
+					if !answered && request.ends_with(b"\r\n") {
+						server.writer().write_all(response).unwrap();
+						server.send_close_notify();
+						answered = true;
+					}
+					let mut data = Vec::new();
+					while server.wants_write() {
+						server.write_tls(&mut data).unwrap();
+					}
+					gui.handle_event(Event::StreamData {
+						stream: Stream::Gemini,
+						data,
+					});
+				}
+				Command::CloseStream(Stream::Gemini) => return,
+				_ => {}
+			}
+		}
+	}
+	panic!("the Gemini exchange never finished");
+}
+
+/// Saves a Gemini page in both orientations, after browsing to it.
+fn save_gemini(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str) {
+	use esp_ygg_app::ui::Key;
+	gui.window().set_page(0);
+	gui.window().global::<Launcher>().set_open(App::Gemini);
+	gui.window().global::<Gemini>().invoke_go();
+	gui.tick();
+	for character in "200::1".chars() {
+		gui.type_key(Key::Char(character));
+	}
+	gui.type_key(Key::Enter);
+	serve_gemini(gui, GEMINI_PAGE.as_bytes());
+	for (orientation, width, height) in SIZES {
+		window.set_size(slint::PhysicalSize::new(width, height));
+		save_screen(window, folder, &format!("gemini-{orientation}"));
+		gui.tick();
+		save_screen(window, folder, &format!("gemini-{orientation}"));
+		drag(window, (200.0, 220.0), (200.0, 40.0));
+		save_screen(window, folder, &format!("gemini-{orientation}-end"));
+		gui.window().global::<Gemini>().set_scroll(0.0);
+	}
 }
 
 /// Saves the navigation brought back over an open app by its handle, in
@@ -86,7 +181,11 @@ fn save_navigation_over_app(gui: &mut Gui, window: &MinimalSoftwareWindow, folde
 			(width as f32 / 2.0, height as f32 - 10.0)
 		};
 		tap(gui, window, handle);
-		save_screen(window, folder, &format!("navigation-{orientation}-over-app"));
+		save_screen(
+			window,
+			folder,
+			&format!("navigation-{orientation}-over-app"),
+		);
 		// A tap on the app puts it away again.
 		tap(gui, window, (width as f32 - 20.0, 20.0));
 	}
