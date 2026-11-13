@@ -15,7 +15,7 @@ use esp_ygg_app::Event;
 use esp_ygg_app::Stream;
 use esp_ygg_app::ui::{Neighbor, Status, Uplink};
 use esp_ygg_app::{BoardInfo, Settings};
-use esp_ygg_gui::{App, Console, Gui, Irc, IrcField, Launcher, Ping, Setup};
+use esp_ygg_gui::{App, Console, Gui, Irc, IrcField, Launcher, Ping, Setting, Setup};
 use slint::ComponentHandle;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel};
 use slint::platform::{Platform, WindowAdapter};
@@ -199,10 +199,12 @@ fn save_keyboards(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str) {
 	for (orientation, width, height) in SIZES {
 		window.set_size(slint::PhysicalSize::new(width, height));
 		gui.window().set_page(3);
-		let row_x = if width > height { 200.0 } else { 120.0 };
 		let (rows_top, row) = (52.0, (height as f32 - 56.0) / 4.0);
 		let key = |column: f32, line: f32| (width as f32 * column, rows_top + row * line);
-		tap(gui, window, (row_x, 100.0));
+		gui.window()
+			.global::<Setup>()
+			.invoke_edit(Setting::Name, "Name".into());
+		gui.tick();
 		save_screen(window, folder, &format!("keyboard-{orientation}-letters"));
 		// Shift, then F
 		tap(gui, window, (12.0, rows_top + row * 2.5));
@@ -212,7 +214,10 @@ fn save_keyboards(gui: &mut Gui, window: &MinimalSoftwareWindow, folder: &str) {
 		save_screen(window, folder, &format!("keyboard-{orientation}-symbols"));
 		// Enter, which applies the name, then the channel, typed as 99
 		tap(gui, window, key(0.95, 3.5));
-		tap(gui, window, (row_x, 152.0));
+		gui.window()
+			.global::<Setup>()
+			.invoke_edit(Setting::Channel, "Channel".into());
+		gui.tick();
 		save_screen(window, folder, &format!("keyboard-{orientation}-numbers"));
 		tap(gui, window, key(0.3, 2.5));
 		tap(gui, window, key(0.3, 2.5));
