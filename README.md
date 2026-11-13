@@ -1,158 +1,200 @@
 # esp-ygg
 
-Yggdrasil on ESP32 chips, with ESP-NOW as the link between nodes.
+esp-ygg turns ESP32 boards into Yggdrasil nodes that link to each other over ESP-NOW, Espressif's protocol for sending WiFi frames straight between chips without an access point.
 
-Each board is a full Yggdrasil node with its own key and address. Boards in radio range find each other and peer automatically, and route traffic for each other like any other Yggdrasil nodes. A board can also join a WiFi network and peer over TCP with a regular Yggdrasil node, which connects the ESP-NOW mesh to the rest of the network.
+Flash it onto a few boards and they find each other in radio range, peer, and route traffic for each other like any other Yggdrasil nodes, each with its own key and address. To connect the mesh to the rest of Yggdrasil, have one board join your WiFi network and peer with a regular Yggdrasil node. A board can also run a WiFi hotspot, so your phone or laptop can reach Yggdrasil through it without installing anything.
 
-Every board runs a few services on its Yggdrasil address:
+You can reach these services on each board's Yggdrasil address:
 
-- an HTTP status page on port 80, with its address, uptime, memory and peers
-- a Gopher menu on port 70 with the same facts, linking to its peers' menus
-- a UDP console on port 4242 that shows text it receives and sends text back
-- the time over NTP on UDP port 123, once it knows it
-- replies to pings, `yggdrasilctl getNodeInfo` and the `debug_remoteGet*` requests
+- an HTTP status page on port 80, with the board's address, uptime, memory and peers
+- a Gopher menu on port 70 with the same facts, linking to the menus of its peers
+- a UDP console on port 4242, which shows text it receives and sends text back
+- the time over NTP on UDP port 123, once the board knows it
+- answers to ping, `yggdrasilctl getNodeInfo` and the `debug_remoteGet*` requests
 
-On an M5Stack Cardputer or Cardputer ADV, the screen and keyboard give an interface for browsing the network, pinging nodes, using the console and changing settings. The Waveshare ESP32-C6-Touch-LCD-2.8 shows the same interface on its touch screen.
+On a board with a screen, you can also browse the network and ping nodes. Its apps let you chat over the console or IRC, read Gopher and Gemini pages, trade files over SFTP and, on the Cardputer, make voice calls.
 
-The mesh, the gateway and the services have been tested on two ESP32-S3 boards (M5Stack Cardputers), one acting as a gateway to a yggdrasil-rs node over WiFi. The on-device interface has only run in the desktop preview so far. An ESP32-C3 and an ESP32-C6 have also booted and peered with each other over ESP-NOW, and the interface runs on the Waveshare board's touch screen. The original ESP32 builds but has not been tried.
+esp-ygg has run on the M5Stack Cardputer and Cardputer ADV (ESP32-S3), the Waveshare ESP32-C6-Touch-LCD-2.8, an ESP32-C3 and an ESP32-C6. It builds for the original ESP32, but has not been tried on one.
 
-## Layout
+## Build and flash
 
-`node` is the Yggdrasil node itself, as a `no_std` library that does no I/O. `app` adds the services and the on-device interface on top, also without touching hardware. Both build and run on a desktop, which is how they are tested. `firmware` wraps them for the ESP32 using esp-hal, esp-radio and Embassy.
-
-## Building and flashing
-
-The ESP32-S3 and the original ESP32 use Xtensa cores, which need Espressif's Rust toolchain. Install it once with `espup`, then load its environment in each shell you build from:
+You need Espressif's Rust toolchain and espflash. Install them once:
 
 ```sh
 cargo install espup espflash
 espup install
+```
+
+The ESP32-S3 and the original ESP32 use Xtensa cores, whose linker comes from that toolchain. Before you build for them, load its environment in your shell:
+
+```sh
 source ~/export-esp.sh
 ```
 
-Then, with a board plugged in, run one of these from the `firmware` directory:
+Plug in your board, and from the `firmware` directory, run `build.py` with the name of your board:
 
 ```sh
-cargo cardputer  # M5Stack Cardputer or Cardputer ADV
-cargo s3     # ESP32-S3
-cargo c3     # ESP32-C3
-cargo c6     # ESP32-C6
-cargo c6-touch  # Waveshare ESP32-C6-Touch-LCD-2.8
-cargo c6-gui    # the same, with the graphical interface
-cargo esp32  # original ESP32
+cd firmware
+python3 build.py cardputer --flash --monitor
 ```
 
-Each builds a release image, flashes it with espflash and opens the serial monitor. The log shows the board's public key and address on startup.
+| Name | Board |
+|---|---|
+| `cardputer` | M5Stack Cardputer or Cardputer ADV, with the text interface |
+| `voice` | the same, with voice calls |
+| `c6-touch` | Waveshare ESP32-C6-Touch-LCD-2.8, with the text interface |
+| `c6-gui` | the same, with the graphical interface |
+| `s3` | any ESP32-S3, as a node without a screen |
+| `c3` | any ESP32-C3, as a node without a screen |
+| `c6` | any ESP32-C6, as a node without a screen |
+| `esp32` | any original ESP32, as a node without a screen |
 
-`firmware/espflash.toml` sets the flash to quad I/O at 80 MHz, which the Stamp-S3 in the Cardputers supports. The firmware runs its code straight from flash, so this makes everything about four times faster than espflash's default of dual I/O at 40 MHz. Flash from the `firmware` directory so espflash finds it. A board whose flash cannot run that fast will not boot, so remove the file for such boards.
+`--flash` writes the build to the board, and `--monitor` then shows its log, which starts with the board's public key and address. Add `--port /dev/ttyACM0`, or whichever port the board is on, if espflash cannot tell. Without `--flash`, the script builds and nothing more.
 
-On boards that use the ESP32-S3's built-in USB port, the reset after flashing sometimes leaves the chip waiting for another download, and the monitor shows `waiting for download`. Press the board's reset button to start the firmware. If the board has a button on GPIO0, such as the Cardputer's G0, do not hold it while resetting.
+Each build lands in `firmware/target/images/<name>`, with any extra features you add in the folder's name, such as `cardputer+gopher+irc`. The folder holds:
 
-On first boot, the board creates a private key and saves it alongside its settings and clock in the `esp-ygg` namespace of the flash `nvs` partition. It keeps that key across reflashing when the partition is preserved. Earlier firmware stored these values in a different format; upgrading creates a new identity and resets saved settings.
+- `esp-ygg.elf`, which espflash flashes and which you need to decode a backtrace
+- `esp-ygg.bin`, the app image, for launchers and other flashing tools
+- `esp-ygg-merged.bin`, when you add `--merged`, with the bootloader and partition table as well, to write at address 0
 
-## Choosing an interface
+If the monitor shows `waiting for download` after flashing a board that uses the ESP32-S3's built-in USB port, press the board's reset button. Do not hold a button on GPIO0, such as the Cardputer's G0, while you press reset.
 
-A board's feature, `cardputer` or `c6-touch-lcd`, says which hardware it is, and `tui` or `gui` adds an interface on its screen: `tui` for the text one, and `gui` for the graphical one, which only the touch board has. The aliases above pick these for you. A board built without either runs as a node alone, with its screen off, which leaves the most memory for the network.
+`firmware/espflash.toml` runs the flash at quad I/O and 80 MHz, which makes the firmware about four times faster than espflash's default of dual I/O at 40 MHz. The Cardputers' Stamp-S3 supports this. If your board does not start after flashing, its flash may not, so delete the file and build and flash again.
 
-## Choosing services
+Your board makes its private key on first boot, and keeps it with its settings and clock in the `esp-ygg` namespace of its `nvs` flash partition. Reflashing keeps them as long as that partition stays. Boards flashed with much older esp-ygg firmware stored these in another format, so they get a new identity and default settings when you upgrade them.
 
-Each service costs memory while the board runs, so the firmware can be built with or without each one. They are Cargo features:
+## Choose what to build in
 
-| Feature | Service | Default |
+The board name chooses the interface: `tui` for the text interface, or `gui` for the graphical one, which only the touch board supports. Builds without an interface, such as `s3` and `c6`, run as a node with the screen off, which leaves the most memory for the network.
+
+To add services and apps, list their features after the board name:
+
+```sh
+python3 build.py cardputer gopher irc gemini
+```
+
+| Feature | What you get | Default |
 |---|---|---|
 | `http` | HTTP status page | on |
-| `console` | UDP console, and the Console screen | on |
+| `console` | UDP console, and its app | on |
 | `ntp` | Time over NTP, and the clock | on |
-| `gopher` | Gopher menu, and the Gopher screen | off |
-| `irc` | The IRC screen | off |
-| `gemini` | The Gemini screen | off |
-| `sftp` | The SFTP app, for sending and receiving files, on boards with an interface | off |
+| `gopher` | Gopher menu, and the Gopher app | off |
+| `irc` | IRC app | off |
+| `gemini` | Gemini app | off |
+| `sftp` | SFTP app, on boards with a screen | off |
 | `voice` | Voice calls, on the Cardputers | off |
 
-To add the larger ones, list them along with the board:
+To leave out the default ones, add `--minimal` and list the features you want. For example, a Cardputer with the console alone:
 
 ```sh
-cargo run --release --features cardputer,tui,gopher,irc,gemini
+python3 build.py cardputer --minimal console
 ```
 
-To leave out default ones too, turn off the defaults and list everything you want. For example, a Cardputer with only the console:
+A service's server takes memory all the time, while its app takes memory only while you use it. A Cardputer ADV acting as a gateway with every service has about 70 KB free. SFTP also adds about 260 KB to the firmware.
+
+## Settings for boards without a screen
+
+A board with a screen keeps the settings you choose in its interface. Until you save some, and on boards without a screen, settings come from these environment variables, read when you build:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ESP_YGG_CHANNEL` | `1` | WiFi channel for ESP-NOW |
+| `ESP_YGG_NAME` | none | `name` field in the board's nodeinfo |
+| `ESP_YGG_PASSWORD` | none | Link password. Boards peer with others that use the same one. |
+| `ESP_YGG_WIFI_SSID` | none | WiFi network to join for a TCP peering |
+| `ESP_YGG_WIFI_PASSWORD` | none | Its WPA2 password. Leave unset for an open network. |
+| `ESP_YGG_PEER` | none | Node to peer with over TCP, as an IPv4 address and port |
+| `ESP_YGG_STATUS_PAGE` | `on` | Set to `off` to close the HTTP and Gopher ports |
+| `ESP_YGG_HOTSPOT` | none | Name of a WiFi network for the board to run as a hotspot |
+| `ESP_YGG_HOTSPOT_PASSWORD` | none | Its WPA2 password, 8 to 63 characters. Leave unset for an open network. |
+
+For example:
 
 ```sh
-cargo run --release --no-default-features --features cardputer,tui,console
+ESP_YGG_WIFI_SSID=home ESP_YGG_WIFI_PASSWORD=secret ESP_YGG_PEER=192.168.1.10:9001 python3 build.py s3
 ```
 
-Clients take memory only while they are in use, so most of the cost of a service is its server, if it has one. A Cardputer ADV acting as a gateway with every service has about 70 KB free.
+## Connect the mesh to a Yggdrasil network
 
-## On-device interface
+To connect the ESP-NOW mesh to the rest of Yggdrasil, have one board join your WiFi network and peer over TCP with a regular Yggdrasil node. Settings calls this the bridge. Set it up under Settings, Bridge, or with `ESP_YGG_WIFI_SSID`, `ESP_YGG_WIFI_PASSWORD` and `ESP_YGG_PEER` when you build. The board bridges once it has both a network and a peer.
 
-On a board with a screen, the home screen shows the board's address and how many nodes it knows, with a menu below:
+Your Yggdrasil node needs a TCP listener in its config, such as `Listen: ["tcp://0.0.0.0:9001"]`.
+
+A board's radio can use one channel at a time, so a bridging board uses your access point's channel for ESP-NOW too. Set your other boards to that channel, in Settings or with `ESP_YGG_CHANNEL`, or they will not hear it.
+
+The board stores the WiFi password in flash as plain text.
+
+## Hotspot
+
+Turn on the hotspot under Settings, or build with `ESP_YGG_HOTSPOT`, and your phones and laptops can join the board's own WiFi network to reach Yggdrasil without installing anything. A board can bridge and run a hotspot at once.
+
+A device that joins gets an address in the board's `300:` subnet and a route to the rest of Yggdrasil through the board. From it, you can reach any Yggdrasil address, such as the status page of a board across the mesh. The hotspot carries Yggdrasil traffic and nothing else. Phones may warn that it has no internet, and need telling to stay connected. A laptop also on another network keeps using that one for everything else.
+
+The hotspot runs on the board's ESP-NOW channel, or on your WiFi network's channel when the board also bridges. NetworkManager installs the route to `200::/7` that the board advertises. Your Linux laptop may let the kernel handle router advertisements instead. In that case, set `net.ipv6.conf.<interface>.accept_ra_rt_info_max_plen` to 7 or more. Otherwise the kernel ignores the route when the laptop has IPv6 from another network as well.
+
+## Use the text interface
+
+On a Cardputer, or the touch board built as `c6-touch`, the home screen shows the board's address and how many nodes it knows, with a menu below:
 
 - Yggdrasil Nodes lists every node the board knows, direct peers first, named from their nodeinfo. Open one to see its details, then press `p` to ping it or `m` to send it a console message.
-- ESP-NOW Neighbors lists the boards in radio range, with their recent signal strength and the share of frames sent to them that went unacknowledged, for finding where boards still reach each other.
-- Apps opens a menu of the apps below, and counts the new messages waiting in them:
-  - Ping sends a ping every second to an address you type or pick, and shows each round trip.
-  - Gopher browses Gopher menus and text, starting from an address you type. Links to a board's peers make it easy to hop across the mesh. Yggdrasil has no standard way to look up names, so links work when they use an address or the name of the server they came from.
-  - Gemini browses Gemini capsules, starting from an address you type. Up and down move between links, scrolling past text where there are none, and Enter follows the selected one. It answers questions servers ask and follows redirects. Gemini servers mostly sign their own certificates, so the browser trusts the certificate a server shows first and refuses a different one until the board restarts. Going back fetches the page again, to save memory.
-  - IRC connects to an IRC server over Yggdrasil and joins a channel. Each channel and private conversation gets its own buffer, and Tab moves between them. The usual commands work, such as `/join`, `/part`, `/msg`, `/me`, `/nick` and `/quit`. Leaving the screen keeps the connection, and the menu counts new lines.
-  - UDP Console shows text received on UDP port 4242 and sends what you type, to an address or `[address]:port`.
-  - SFTP lists the files in the shared folder on the SD card, and sends the selected one to an address you type, logging in as the user you give. It asks on screen when a peer wants in, and when a server wants a password. See [SFTP](#sftp).
-- Settings changes the name, channel and time zone, turns the status pages on or off, and sets up the bridge and the hotspot. Builds with SFTP add its password. Voice builds add the ringer, with five ringtones and five volume steps, each played briefly as it changes. Saving applies the name, channel, time zone, status pages, SFTP password and ringer at once. Joining a network, the bridge peer and the hotspot set up WiFi as the board starts, so changing them restarts it, as does changing the channel while the hotspot is on, and the save button says when it will. Settings can also be exported to and imported from `esp-ygg/settings.txt` on a FAT32 microSD card, as `key = value` lines that are easy to edit on a computer, with passwords in plain text. A file may leave out settings it does not change, and importing fills in the settings screen without saving.
+- ESP-NOW Neighbors lists the boards in radio range, with their recent signal strength and the share of frames sent to them that went unacknowledged. Use it to find where boards stop reaching each other.
+- Apps opens the apps, and counts the new messages waiting in them.
+- Settings changes the board's settings, described below.
 
-Once the board knows the time, the title bar shows it. A bridged board gets the time from `pool.ntp.org`, and other boards ask their peers over Yggdrasil, so it spreads through the mesh. The time zone is a fixed offset from UTC, so it needs changing by hand for daylight saving time.
+The apps are:
 
-In fields that take an address, typing the start of a known node's address or name and pressing Tab fills in its address, and pressing Tab again moves to the next node that matches. Names come from nodeinfo, which the board looks up while these screens are open.
+- Ping pings an address you type or pick, once a second, and shows each round trip.
+- UDP Console shows text that arrives on UDP port 4242, and sends what you type to an address or `[address]:port`.
+- IRC, with `irc`, connects to an IRC server over Yggdrasil and joins a channel. Each channel and private chat gets its own buffer, and Tab moves between them. The usual commands work, such as `/join`, `/part`, `/msg`, `/me`, `/nick` and `/quit`. You can leave the screen and stay connected, and the menu counts new lines.
+- Gopher, with `gopher`, browses Gopher menus and text from an address you type. Links to a board's peers let you hop across the mesh. Yggdrasil has no standard way to look up names, so links work when they use an address or the name of the server they came from.
+- Gemini, with `gemini`, browses Gemini capsules from an address you type. Up and down move between links, scrolling past text where there are none, and Enter follows the selected one. You can answer questions that servers ask, and redirects are followed. Gemini servers mostly sign their own certificates, so the app trusts the first certificate a server shows and refuses a different one until the board restarts. Going back fetches the page again, to save memory.
+- SFTP, with `sftp`, sends and receives files. See [SFTP](#sftp).
+- Voice Call (IAX2), with `voice`, calls other boards. See [Voice calls](#voice-calls).
 
-The arrow keys are Fn with `;` `.` `,` and `/`, and Escape is Fn with `` ` ``. In lists, the same keys work without Fn.
+In Settings, you can change the board's name, channel and time zone, turn the status pages on or off, and set up the bridge and the hotspot. Builds with SFTP add its password, and voice builds add the ringer. Saving applies most settings at once. Changing the bridge or the hotspot restarts the board, as does changing the channel while the hotspot is on. The Save button tells you when saving will restart the board.
 
-On the touch screen, dragging up or down moves the selection a row at a time, following the finger. A tap is Enter, and a swipe to the right is Escape. When a tap opens a text field, a keyboard comes up on the lower half of the screen, with `123` for digits and symbols and `▼` to put it away. Tapping anywhere above it while the field is still open brings it back. Fields that only take numbers, such as the channel, time zone and peer, get a number pad of two rows instead, which leaves more of the screen to see.
+You can also export your settings to `esp-ygg/settings.txt` on a FAT32 microSD card and import them back. The file holds `key = value` lines that you can edit on a computer, with passwords in plain text. A file can leave out settings it does not change, and importing fills in the settings screen without saving.
 
-The touch board's screen dims after 30 seconds without a touch, and turns off 30 seconds later. Touching it wakes it, and the touch that wakes it does nothing else.
+Once the board knows the time, the title bar shows it. A bridging board gets the time from `pool.ntp.org`, and other boards ask their peers, so the time spreads through the mesh. The time zone is a fixed offset from UTC, so change it by hand for daylight saving time.
 
-The button on the side, G0 on a Cardputer and BOOT on the touch board, locks the board against input, so it can go in a pocket. The text interface says Locked, and the graphical one dims behind a lock, then the screen turns off after 5 seconds. Nothing but the button wakes it, and pressing it again unlocks. On voice builds, where G0 is also push-to-talk, it locks only outside a call, and an incoming call unlocks the board to answer.
+In fields that take an address, type the start of a known node's address or name and press Tab to fill in its address. Press Tab again for the next node that matches. Names come from nodeinfo, which the board looks up while these screens are open.
 
-The interface can also be driven from a computer over the USB serial port, for testing without someone at the keyboard. `firmware/drive.py` sends lines such as `type 200::1`, `key down enter`, `tap 5 2`, which taps a touch screen at a column and row of characters, and `screen`, which prints what the screen shows, or for the graphical interface saves it as `screen.png`, and it does so without resetting the board:
+On the Cardputer, the arrow keys are Fn with `;` `.` `,` and `/`, and Escape is Fn with `` ` ``. In lists, the same keys work without Fn.
 
-```sh
-python3 firmware/drive.py /dev/ttyACM0 "key down down enter enter" "type 200::1" "key enter" "wait 3" screen
-```
+On the touch screen, drag up or down to move the selection a row at a time. A tap is Enter, and a swipe to the right is Escape. Tapping a text field brings up a keyboard on the lower half of the screen, where `123` switches to digits and symbols and `▼` puts the keyboard away. Tap above it to bring it back while the field is open. Fields that take numbers alone, such as the channel, time zone and peer, get a two-row number pad that leaves more of the screen in view.
 
-`lock` presses the button that locks and unlocks the board. In voice builds, `talk on` and `talk off` hold and release push-to-talk, and `mute on` silences the speaker for quiet testing.
+The touch board's screen dims after 30 seconds without a touch, and turns off 30 seconds later. Touch it to wake it. That touch does nothing else.
 
-To try the interface without a board, run `cargo run -p esp-ygg-app --example preview`. It shows the interface in a terminal as one of three simulated boards in a line, where the farthest one echoes console messages back. Add `-- touch` for the touch board's larger screen, where mouse clicks are taps.
+To lock a board against input, such as before putting it in a pocket, press the button on its side: G0 on a Cardputer, or BOOT on the touch board. The text interface says Locked, the graphical one dims behind a lock, and the screen turns off after 5 seconds. Press the button again to unlock. In voice builds, where G0 is also push-to-talk, the button locks the board outside calls alone, and an incoming call unlocks it so you can answer.
 
-The preview can also draw the touch board's screen pixel for pixel, as the board does, and save pictures of it. It takes the same commands as `drive.py`, and saves a PNG at each `screen`:
+## Use the graphical interface
 
-```sh
-cargo run -p esp-ygg-app --example preview -- png shots "key down down down enter" "tap 5 2" screen
-```
+Build `c6-gui` to give the touch board a graphical interface instead, made with [Slint](https://slint.dev) and its Material 3 components. It has four pages:
 
-## Graphical interface
+- Home, a launcher for the apps. Console and IRC show counts of new messages on their icons.
+- Nodes, every node the board knows, named once they answer.
+- Radio, the boards in ESP-NOW range, with their signal.
+- Settings, with the board's address and uptime, the settings for the node, the bridge and the hotspot, and export and import to the SD card. You can pick the bridge's network from a scan, or type one that does not show.
 
-The touch board can show a graphical interface instead of the text one, made with [Slint](https://slint.dev) and its Material 3 components. The `tui` and `gui` features choose between them, as `cargo c6-touch` and `cargo c6-gui` do. It has four pages: Home, a launcher for the apps: Ping, the UDP console, which a count on its icon and a short notice tell of new messages, IRC when built with `irc`, which counts unread lines the same way and lists its channels and private chats to switch between, Gopher when built with `gopher`, which wraps menus and text to the screen and goes back through the pages before, and Gemini when built with `gemini`, which does the same for gemtext, with its headings, lists, quotes and preformatted text, and asks on the keyboard when a server asks a question, and SFTP when built with `sftp`; Nodes, every node it knows, named once they answer; Radio, the boards in ESP-NOW range with their signal; and Settings, which shows the node's address and uptime, sets up the node, the bridge and the hotspot, and exports and imports settings on the SD card. The bridge's network is picked from a scan, or typed for one that does not show. The navigation runs down the side of a wide screen and along the bottom of a tall one, so the interface suits boards held either way. While an app is open, the navigation folds away to a thin handle, leaving the app the screen. Tapping the handle brings the navigation back over the app, tapping the app puts it away, and Home goes back to the launcher.
+The apps work as they do in the text interface. Gopher and Gemini wrap pages to the screen, Gemini shows headings, lists, quotes and preformatted text, and IRC lists its channels and private chats for you to switch between.
 
-Tapping a setting opens a keyboard in the style of Material 3 over the whole screen, with the setting at the top. Settings that take numbers, such as the channel and the peer, get a number pad. Enter checks the setting, with the same rules as the text interface, and says what is wrong if it will not do. Over the serial port, `type` and `key` type on the keyboard while it is up, `tap` taps at a pixel, and `drag 200 220 200 40` drags a finger from one pixel to another, which scrolls.
+The navigation runs down the side of a wide screen and along the bottom of a tall one, so you can hold the board either way. While an app is open, the navigation folds to a thin handle. Tap the handle to bring the navigation back, tap the app to put it away, and tap Home to go back to the launcher.
 
-Slint draws a few lines of the screen at a time, and the board sends each batch to the screen by DMA while it draws the next. Redrawing the whole screen takes about 60 ms, and a frame of scrolling about 30. Slint goes through every part of the interface each frame, so the navigation and the Settings page use lighter versions of Material's navigation items, switch, buttons and scroll view, drawn the same from fewer parts, with presses tinting instead of rippling.
+Tapping a setting opens a keyboard over the whole screen, with the setting at the top. Settings that take numbers, such as the channel and the peer, get a number pad. Enter checks the value with the same rules as the text interface, and tells you what is wrong with a value it cannot use.
 
-Slint is licensed under the GPLv3 on microcontrollers, so firmware built with `gui` is distributed under the GPLv3. The rest of the project, and every other build, stays under the LGPLv3. The Material components in `gui/material-1.1.0` are under the MIT license, the Roboto and Roboto Mono fonts in `gui/fonts` under the SIL Open Font License, with Roboto's variable font cut down to the weights from regular to medium and Roboto Mono to the ASCII the keyboard shows, and the icons in `gui/icons`, from Google's Material Symbols, under the Apache License 2.0.
-
-The board draws text with glyphs made ahead of time, for printable ASCII and the characters written in the interface's own files. Other characters, such as in a node's name, do not show yet.
-
-To see the interface without a board, draw it as a board does, for a small made-up mesh, and save each page wide and tall as pictures in a folder:
-
-```sh
-cargo run -p esp-ygg-gui --example screenshot -- screens
-```
+The interface shows printable ASCII and the characters in its own text. Other characters, such as accented letters in a node's name, do not show yet.
 
 ## Voice calls
 
-With the `voice` feature, the Voice Call (IAX2) app calls other boards by address, with Tab completion like the other address fields. Calls use IAX2, the protocol Asterisk speaks, on UDP port 4569, so other IAX2 software over Yggdrasil should be able to call in too. Yggdrasil already encrypts and authenticates traffic by address, so calls use no IAX2 passwords.
+Build `voice` to call other boards by address from the Voice Call (IAX2) app, with Tab completion like the other address fields. Calls use IAX2, the protocol Asterisk speaks, on UDP port 4569, so other IAX2 software on Yggdrasil should be able to call in too. Calls use no IAX2 passwords, as Yggdrasil already encrypts traffic and authenticates it by address.
 
-An incoming call rings and brings up the call screen from anywhere. Enter answers and Escape declines or hangs up. Talking is push-to-talk, like a walkie-talkie: hold G0 on the side of the board to talk, and let go to listen. Outside a call, G0 locks the board instead, and `talk on` over the serial port records a few seconds and plays them back at `talk off`, to check the speaker and microphone.
+An incoming call rings and brings up the call screen wherever you are. Press Enter to answer, and Escape to decline or hang up. Calls are push-to-talk, like a walkie-talkie: hold G0 on the side of the board to talk, and let go to listen.
 
-Calls prefer G.726 at 32 kbit/s, which fits each 20 ms of voice in a single ESP-NOW frame, and fall back to G.711 μ-law for software without it. The G.726 codec matches Sun's reference implementation, which Asterisk's is built on, bit for bit. Asterisk swapped the IAX2 format bits for G.726's two byte packings from what RFC 5456 lists, and the boards follow Asterisk, offering both packings.
+Under Settings, Ringer picks one of five ringtones and five volume steps, playing each briefly as you change it. To check the speaker and microphone outside a call, send `talk on` over the serial port to record a few seconds, and `talk off` to play them back (see [Development](#development)).
 
-A computer on the same Yggdrasil network can call boards and take their calls with the `phone` example. It reads and writes raw audio, so ALSA's tools make it a softphone:
+Calls use G.726 at 32 kbit/s, which fits 20 ms of voice in one ESP-NOW frame, and fall back to G.711 μ-law with software that lacks G.726. The boards offer both G.726 byte orders that Asterisk uses, so G.726 calls work with Asterisk.
+
+To call boards from a computer on the same Yggdrasil network, and take their calls, use the `phone` example with ALSA's tools:
 
 ```sh
 arecord -q -t raw -f S16_LE -r 8000 -c 1 \
@@ -160,9 +202,9 @@ arecord -q -t raw -f S16_LE -r 8000 -c 1 \
   | aplay -q -t raw -f S16_LE -r 8000 -c 1
 ```
 
-`phone answer` instead waits for a board to call the computer. It talks continuously rather than push-to-talk, so use headphones.
+Use `phone answer` instead of `phone call <board address>` to wait for a board to call the computer. The computer sends sound all the time instead of push-to-talk, so use headphones.
 
-Asterisk can take the boards' calls too. They call without a username, so Asterisk treats them as its `guest` user. Asterisk's IAX2 dial strings cannot hold an IPv6 address, so call a board through a named peer:
+To take the boards' calls in Asterisk, allow its `guest` user, as boards call without a username. Asterisk's IAX2 dial strings cannot hold an IPv6 address, so define a named peer for each board you want to call:
 
 ```ini
 ; iax.conf
@@ -183,56 +225,27 @@ host=<board address>
 
 Then `Dial(IAX2/kitchen/s)` rings the board.
 
-
-A board with a screen stores the settings chosen in its interface in flash. Until then, and on boards without a screen, settings come from environment variables read when the firmware is built.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `ESP_YGG_CHANNEL` | `1` | WiFi channel for ESP-NOW |
-| `ESP_YGG_NAME` | none | `name` field in the board's nodeinfo |
-| `ESP_YGG_PASSWORD` | none | Link password. Boards only peer with others that use the same one. |
-| `ESP_YGG_WIFI_SSID` | none | WiFi network to join for a TCP peering |
-| `ESP_YGG_WIFI_PASSWORD` | none | Its WPA2 password. Leave unset for an open network. |
-| `ESP_YGG_PEER` | none | Address of the node to peer with over TCP, as an IPv4 address and port |
-| `ESP_YGG_STATUS_PAGE` | `on` | Set to `off` to close the HTTP and Gopher ports |
-| `ESP_YGG_HOTSPOT` | none | Name of a WiFi network for the board to run as a hotspot |
-| `ESP_YGG_HOTSPOT_PASSWORD` | none | Its WPA2 password, 8 to 63 characters. Leave unset for an open network. |
-
-A board peers over TCP only when both `ESP_YGG_WIFI_SSID` and `ESP_YGG_PEER` are set. For example:
-
-```sh
-ESP_YGG_WIFI_SSID=home ESP_YGG_WIFI_PASSWORD=secret ESP_YGG_PEER=192.168.1.10:9001 cargo s3
-```
-
-The WiFi password is stored in flash as plain text. The node at that address needs a TCP listener in its config, such as `Listen: ["tcp://0.0.0.0:9001"]`.
-
-A board on WiFi uses the access point's channel for ESP-NOW too, because the radio can only be on one channel at a time. Build the other boards with `ESP_YGG_CHANNEL` set to that channel, or they will not hear it.
-
-## Hotspot
-
-The bridge and the hotspot both use WiFi, in opposite directions. The bridge joins an existing WiFi network to peer with a node on it. The hotspot is a WiFi network the board runs itself, so phones and laptops can reach Yggdrasil without installing anything. A board can do both at once.
-
-Devices that join the hotspot get an address in the board's `300:` subnet and a route to the rest of Yggdrasil through the board. They can then reach any Yggdrasil address, such as the status page of a board across the mesh. The hotspot only carries Yggdrasil traffic. It has no IPv4 and no internet, so phones may warn that the network has no internet and need telling to stay connected. Laptops on another network as well keep using it for everything else.
-
-The hotspot runs on the board's ESP-NOW channel, or on the bridge's network's channel when bridging. NetworkManager installs the route to `200::/7` that the board advertises. Where the Linux kernel handles advertisements itself, it ignores that route unless `net.ipv6.conf.<interface>.accept_ra_rt_info_max_plen` is at least 7, which matters on a laptop that has IPv6 from another network as well.
-
 ## SFTP
 
-The SFTP app sends and receives files, so any SFTP client or server can be on the other end, whether another board or a computer. It keeps files in `esp-ygg/sftp` on the SD card, a single folder that peers can list, download from and upload to. They cannot delete or rename files, or make folders.
+Build with `sftp` to send and receive files with any SFTP client or server, whether another board or a computer.
 
-A peer that connects is let in when it gives the password set in Settings. Without a password set, or when a peer gives the wrong one, the board asks on screen whether to let it in, and turns it away after a minute without an answer. From a computer on Yggdrasil, any user name works:
+Files go in `esp-ygg/sftp` on the SD card. Peers can list, download and upload files in that folder. They cannot delete or rename files, or make folders.
+
+To let peers in without asking, set a password under Settings. Without one, or when a peer gives the wrong one, the board asks you on screen whether to let the peer in, and turns it away after a minute without an answer. From a computer on Yggdrasil, any user name works:
 
 ```sh
 sftp 'me@[<board address>]'
 ```
 
-The board's SSH host key is its Yggdrasil key, so a computer sees the same key fingerprint for as long as the board keeps its identity. When sending, the board accepts whatever host key the server shows, as Yggdrasil already makes sure that the node at an address holds that address's key. It logs in with a password, asking for one on screen when the server wants it, as it has no key of its own for logging in.
+To send a file, pick it in the SFTP app, then pick a node or type an address and the user to log in as. If the server asks for a password, the board asks you for it on screen. Boards cannot log in with a key.
 
-The card's file system can read long file names but only write short ones, so received files are named in the 8.3 style, as Windows does, such as `HOLIDA~1.JPE` for `holiday photo.jpeg`. A name that is taken gets the next number instead of replacing the file.
+The board's SSH host key is its Yggdrasil key, so your computer sees the same fingerprint for as long as the board keeps its identity. When sending, the board accepts any host key, as Yggdrasil already makes sure that the node at an address holds that address's key.
 
-Key exchange is curve25519 without its post-quantum ML-KEM hybrid, as that took more stack than the interface has to spare.
+Received files get short names in the 8.3 style that Windows uses, such as `HOLIDA~1.JPE` for `holiday photo.jpeg`. The board can read long file names on the card, but cannot write them. When a name is taken, the new file gets the next number, and the old file stays.
 
-## Trying it out
+Key exchange uses curve25519, without the post-quantum ML-KEM hybrid, so a client set to require ML-KEM cannot connect.
+
+## Try it from a computer
 
 From a computer whose Yggdrasil node peers with a board, directly or through other boards:
 
@@ -244,20 +257,56 @@ curl gopher://[<board address>]/
 nc -6u <board address> 4242
 ```
 
-The first request after the boards come up can take several seconds while routes form. After that, a ping across a gateway and one ESP-NOW hop typically takes 30 to 70 ms.
+The first request after the boards start can take several seconds while routes form. After that, a ping across a gateway and one ESP-NOW hop usually takes 30 to 70 ms.
 
-On a board with a screen, ESP-NOW Neighbors shows each neighbor's signal and the share of frames it did not acknowledge. A few failures are normal and are resent.
+If a board seems out of reach, check ESP-NOW Neighbors on a board with a screen. It shows each neighbor's signal and the share of frames it did not acknowledge. A few failures are normal, and the boards resend those frames.
 
 ## Limits
 
 A board peers with at most six ESP-NOW neighbors at once.
 
-The board has no real-time clock. Yggdrasil numbers some messages with the time, and other nodes ignore numbers that go backwards, so the board saves its clock to flash every hour and starts each boot an hour past the last save. Its clock runs ahead of real time as a result, which does no harm.
+The boards have no real-time clock. Yggdrasil numbers some messages with the time, and other nodes ignore numbers that go backwards, so each board saves its clock to flash every hour and starts each boot an hour past the last save. As a result, a board's clock runs ahead until it learns the time from NTP or its peers.
 
-## Testing
+## Development
 
-Run `cargo test` in this directory. The tests simulate several nodes sharing a radio, including lost frames and nodes moving out of range. One test also peers a simulated board with a yggdrasil-rs node over TCP and pings across both links.
+`node` is the Yggdrasil node, as a `no_std` library that does no I/O. `app` adds the services and the interface, also without touching hardware. Both build and run on a desktop. `firmware` runs them on the ESP32 with esp-hal, esp-radio and Embassy.
+
+To test `node`, `app` and `gui` on your computer, run `cargo test` from the repository root.
+
+To try the text interface without a board, run the preview. It shows the interface in a terminal as one of three simulated boards in a line, and the farthest board echoes console messages back. Add `-- touch` for the touch board's larger screen, where mouse clicks are taps:
+
+```sh
+cargo run -p esp-ygg-app --example preview
+```
+
+The preview can also draw the touch board's screen pixel for pixel and save it. It takes the same commands as `drive.py`, below, and saves a PNG at each `screen`:
+
+```sh
+cargo run -p esp-ygg-app --example preview -- png shots "key down down down enter" "tap 5 2" screen
+```
+
+To see the graphical interface without a board, draw each page for a small made-up mesh, wide and tall, into a folder:
+
+```sh
+cargo run -p esp-ygg-gui --example screenshot -- screens
+```
+
+To drive a board's interface from your computer over its USB serial port, without resetting it, use `firmware/drive.py`:
+
+```sh
+python3 firmware/drive.py /dev/ttyACM0 "key down down enter enter" "type 200::1" "key enter" "wait 3" screen
+```
+
+It sends commands such as `type <text>`, `key <names>`, `tap <column> <row>`, `drag <x> <y> <x> <y>`, `lock` and `screen`. On the graphical interface, `tap` and `drag` take pixels, and `screen` saves the screen as `screen.png` instead of printing it. Voice builds add `talk on`, `talk off` and `mute on`. Run it without commands to list them all.
 
 ## License
 
 The code is licensed under the GNU Lesser General Public License version 3, with the same exception for static linking that yggdrasil-go uses. See [LICENSE](LICENSE).
+
+Slint is licensed under the GPLv3 on microcontrollers, so firmware built with `gui` is distributed under the GPLv3. The rest of the project, and all other builds, stay under the LGPLv3.
+
+The graphical interface bundles:
+
+- the Material components in `gui/material-1.1.0`, under the MIT license
+- the Roboto and Roboto Mono fonts in `gui/fonts`, cut down to the weights and characters the interface uses, under the SIL Open Font License
+- icons from Google's Material Symbols in `gui/icons`, under the Apache License 2.0
