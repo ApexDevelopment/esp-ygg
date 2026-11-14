@@ -16,24 +16,34 @@ use tokio::process::Command;
 const SEED: [u8; 32] = [7; 32];
 
 /// A folder on disk.
-struct Folder(PathBuf);
+struct Folder {
+	directory: PathBuf,
+	opened: usize,
+	closed: usize,
+	pause_on_read: Option<std::rc::Rc<Cell<bool>>>,
+}
 
 impl Folder {
 	fn new(name: &str) -> Self {
 		let path = std::env::temp_dir().join(format!("esp-ygg-sftp-{name}-{}", std::process::id()));
 		let _ = fs::remove_dir_all(&path);
 		fs::create_dir_all(&path).unwrap();
-		Folder(path)
+		Folder {
+			directory: path,
+			opened: 0,
+			closed: 0,
+			pause_on_read: None,
+		}
 	}
 
 	fn path(&self, name: &str) -> PathBuf {
-		self.0.join(name)
+		self.directory.join(name)
 	}
 }
 
 impl Drop for Folder {
 	fn drop(&mut self) {
-		let _ = fs::remove_dir_all(&self.0);
+		let _ = fs::remove_dir_all(&self.directory);
 	}
 }
 
@@ -41,7 +51,7 @@ impl Store for Folder {
 	type File = fs::File;
 
 	async fn list(&mut self) -> Result<Vec<Entry>, StoreError> {
-		let mut entries: Vec<Entry> = fs::read_dir(&self.0)
+		let mut entries: Vec<Entry> = fs::read_dir(&self.directory)
 			.map_err(|_| StoreError::Failed)?
 			.filter_map(Result::ok)
 			.map(|entry| Entry {
@@ -60,10 +70,12 @@ impl Store for Folder {
 
 	async fn open(&mut self, name: &str, mode: Mode) -> Result<fs::File, StoreError> {
 		let path = self.path(name);
-		match mode {
+		let file = match mode {
 			Mode::Read => fs::File::open(path).map_err(|_| StoreError::NotFound),
 			Mode::Write => fs::File::create(path).map_err(|_| StoreError::Failed),
-		}
+		}?;
+		self.opened += 1;
+		Ok(file)
 	}
 
 	async fn read(
@@ -72,6 +84,10 @@ impl Store for Folder {
 		offset: u64,
 		buf: &mut [u8],
 	) -> Result<usize, StoreError> {
+		if let Some(paused) = &self.pause_on_read {
+			paused.set(true);
+			core::future::pending::<()>().await;
+		}
 		file.seek(SeekFrom::Start(offset))
 			.map_err(|_| StoreError::Failed)?;
 		file.read(buf).map_err(|_| StoreError::Failed)
@@ -89,6 +105,7 @@ impl Store for Folder {
 	}
 
 	async fn close(&mut self, _file: fs::File) -> Result<(), StoreError> {
+		self.closed += 1;
 		Ok(())
 	}
 }
@@ -209,7 +226,7 @@ async fn takes_and_gives_files_to_openssh() {
 	};
 	let commands = "put big.bin\nls -l\nget hello.txt fetched.txt\n";
 	let worked = serve_one(&mut shared, None, &person, |port| {
-		sftp(port, commands, None, &local.0)
+		sftp(port, commands, None, &local.directory)
 	})
 	.await;
 	assert!(worked, "sftp failed");
@@ -232,7 +249,7 @@ async fn lets_the_password_straight_in() {
 	fs::write(local.path("note.txt"), "note").unwrap();
 	let person = Person::default();
 	let worked = serve_one(&mut shared, Some("hunter22"), &person, |port| {
-		sftp(port, "put note.txt\n", Some("hunter22"), &local.0)
+		sftp(port, "put note.txt\n", Some("hunter22"), &local.directory)
 	})
 	.await;
 	assert!(worked, "sftp failed");
@@ -247,7 +264,7 @@ async fn asks_about_a_wrong_password() {
 	fs::write(local.path("note.txt"), "note").unwrap();
 	let person = Person::default();
 	let worked = serve_one(&mut shared, Some("hunter22"), &person, |port| {
-		sftp(port, "put note.txt\n", Some("guess"), &local.0)
+		sftp(port, "put note.txt\n", Some("guess"), &local.directory)
 	})
 	.await;
 	assert!(!worked, "a declined peer got in");
@@ -287,4 +304,66 @@ async fn sends_to_a_board() {
 		.await
 		.unwrap();
 	assert_eq!(fs::read(receiving.path("photo.jpg")).unwrap(), photo);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn disconnect_closes_files_on_both_sides_of_a_transfer() {
+	let mut sending = Folder::new("disconnect-source");
+	let mut receiving = Folder::new("disconnect-target");
+	fs::write(sending.path("file.bin"), [42; 4096]).unwrap();
+	let paused = std::rc::Rc::new(Cell::new(false));
+	sending.pause_on_read = Some(paused.clone());
+	let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+	let client = TcpStream::connect(listener.local_addr().unwrap())
+		.await
+		.unwrap();
+	let (server, _) = listener.accept().await.unwrap();
+	let server = server.into_std().unwrap();
+	let shutdown = server.try_clone().unwrap();
+	let server = TcpStream::from_std(server).unwrap();
+	let sender = Person::default();
+	let receiver = Person {
+		admits: true,
+		..Person::default()
+	};
+	let send = async {
+		let (input, output) = client.into_split();
+		sftp::send(
+			&mut FromTokio::new(input),
+			&mut FromTokio::new(output),
+			"esp-ygg",
+			"file.bin",
+			&mut sending,
+			&sender,
+		)
+		.await
+	};
+	let serve = async {
+		let (input, output) = server.into_split();
+		sftp::serve(
+			&mut FromTokio::new(input),
+			&mut FromTokio::new(output),
+			Ipv6Addr::LOCALHOST,
+			&SEED,
+			None,
+			&mut receiving,
+			&receiver,
+		)
+		.await
+	};
+	let disconnect = async {
+		while !paused.get() {
+			tokio::task::yield_now().await;
+		}
+		shutdown.shutdown(std::net::Shutdown::Both).unwrap();
+	};
+	let (sent, _, _) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+		tokio::join!(send, serve, disconnect)
+	})
+	.await
+	.expect("disconnect did not finish");
+	assert!(sent.is_err());
+	assert!(sending.opened > 0 && receiving.opened > 0);
+	assert_eq!(sending.opened, sending.closed);
+	assert_eq!(receiving.opened, receiving.closed);
 }

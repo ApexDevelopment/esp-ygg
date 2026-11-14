@@ -86,22 +86,23 @@ pub async fn serve<S: Store, A: Attendant>(
 		}
 	};
 
+	let mut files = SharedFiles::new(store, attendant);
 	let sftp = async {
 		let channel = sftp_channel.wait().await;
 		let (input, output) = server.stdio(channel).await?.split();
-		let mut files = SharedFiles::new(store, attendant);
 		let mut handler = SftpServerHandler::default();
 		let result = handler.run(&mut files, input, output).await;
-		files.close_all().await;
 		result.map_err(|error| {
 			warn!("SFTP with {from} ended: {error:?}");
 			Error::ChannelEOF
 		})
 	};
 
-	match select3(server.run(input, output), events, sftp).await {
+	let result = match select3(server.run(input, output), events, sftp).await {
 		Either3::First(result) | Either3::Second(result) | Either3::Third(result) => result,
-	}
+	};
+	files.close_all().await;
+	result
 }
 
 /// Whether two passwords match, taking as long whatever the difference.

@@ -618,14 +618,19 @@ impl Store for CardStore {
 	}
 
 	async fn close(&mut self, mut file: CardFile) -> Result<(), StoreError> {
-		if file.reading {
+		file.flush().await
+	}
+}
+
+impl Drop for CardFile {
+	fn drop(&mut self) {
+		if self.reading {
 			READING.lock(|reading| {
 				let mut reading = reading.borrow_mut();
-				if let Some(index) = reading.iter().position(|read| *read == file.name) {
+				if let Some(index) = reading.iter().position(|name| *name == self.name) {
 					reading.remove(index);
 				}
 			});
 		}
-		file.flush().await
 	}
 }

@@ -104,37 +104,38 @@ pub async fn send<S: Store, A: Attendant>(
 		}
 	};
 
+	let mut file = None;
 	let transfer = async {
 		let mut channel = session.wait().await;
-		upload(&mut channel, name, store, attendant).await
+		let total = store.size(name).await?;
+		file = Some(store.open(name, Mode::Read).await?);
+		write_file(
+			&mut channel,
+			name,
+			total,
+			store,
+			file.as_mut().expect("opened"),
+			attendant,
+		)
+		.await
 	};
 
 	let result = match select3(client.run(input, output), events, transfer).await {
-		Either3::First(result) => result.map_err(SendError::from),
+		Either3::First(_) => Err(SendError::Failed),
 		Either3::Second(result) => result,
 		Either3::Third(result) => result,
 	};
+	if let Some(file) = file {
+		store.close(file).await?;
+	}
+	if result.is_ok() {
+		attendant.progress(Progress::Sent { name });
+		info!("Sent {name}");
+	}
 	match result {
 		Err(SendError::Failed) if refused => Err(SendError::Refused),
 		result => result,
 	}
-}
-
-/// Writes the file over an SFTP channel: open, write, close.
-async fn upload<S: Store, A: Attendant>(
-	channel: &mut ChanInOut<'_>,
-	name: &str,
-	store: &mut S,
-	attendant: &A,
-) -> Result<(), SendError> {
-	let total = store.size(name).await?;
-	let mut file = store.open(name, Mode::Read).await?;
-	let result = write_file(channel, name, total, store, &mut file, attendant).await;
-	store.close(file).await?;
-	result?;
-	attendant.progress(Progress::Sent { name });
-	info!("Sent {name}");
-	Ok(())
 }
 
 async fn write_file<S: Store, A: Attendant>(
