@@ -655,7 +655,11 @@ fn uplink_state(bridge: bool, node: &Node<EspPlatform>, stream: Option<StreamId>
 	if !bridge {
 		Uplink::Off
 	} else if !uplink::WIFI_UP.load(core::sync::atomic::Ordering::Relaxed) {
-		Uplink::JoiningWifi
+		if uplink::WIFI_FAILED.load(core::sync::atomic::Ordering::Relaxed) {
+			Uplink::WifiFailed
+		} else {
+			Uplink::JoiningWifi
+		}
 	} else if stream.is_some_and(|id| node.stream_key(id).is_some()) {
 		Uplink::Connected
 	} else {

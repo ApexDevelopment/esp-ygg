@@ -98,6 +98,18 @@ fn screen(app: &App) -> Vec<String> {
 }
 
 #[test]
+fn shows_wifi_failure_and_clears_it_after_recovery() {
+	let mut app = App::new(Settings::new(), at(0));
+	let mut current = status(&[], &[]);
+	current.uplink = Uplink::WifiFailed;
+	app.set_status(current.clone());
+	assert!(screen(&app)[0].contains("WiFi failed"));
+	current.uplink = Uplink::Connected;
+	app.set_status(current);
+	assert!(!screen(&app)[0].contains("WiFi failed"));
+}
+
+#[test]
 fn pings_a_node_picked_from_the_network() {
 	let mut app = App::new(Settings::new(), at(0));
 	let peer = key(2);

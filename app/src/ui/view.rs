@@ -131,6 +131,7 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
 	let mut right = String::from(match uplink {
 		Uplink::Off => "",
 		Uplink::JoiningWifi => "joining WiFi ",
+		Uplink::WifiFailed => "WiFi failed ",
 		Uplink::Connecting => "bridging… ",
 		Uplink::Connected => "bridged ",
 	});

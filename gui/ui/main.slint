@@ -12,7 +12,7 @@ import { PingPage } from "ping.slint";
 import { CompactBar, CompactRail, NavigationHandle } from "rail.slint";
 import { SettingsPage } from "settings.slint";
 import { AdmitDialog, SftpPage } from "sftp.slint";
-import { App, Keyboard, Launcher, Lock, Notice, Sftp } from "state.slint";
+import { App, Keyboard, Launcher, Lock, Node, Notice, Sftp } from "state.slint";
 export { App, ChatEntry, Console, Gemini, Gopher, Irc, IrcBuffer, IrcField, Keyboard, Launcher, LineStyle, Lock, Node, NodeEntry, NeighborEntry, Notice, PageLine, Ping, Setting, Setup, Sftp, SftpFile, WifiEntry } from "state.slint";
 import "../fonts/Roboto.ttf";
 import "../fonts/RobotoMono-Regular.ttf";
@@ -36,24 +36,26 @@ component Pages inherits VerticalLayout {
 /// A short message along the bottom, in the style of Material's snackbar,
 /// which goes after a few seconds.
 component NoticeBar inherits Rectangle {
+    in property <string> text;
+    in property <bool> warning;
     height: max(40px, message.preferred_height + 20px);
     border_radius: 4px;
-    background: MaterialPalette.inverse_surface;
+    background: root.warning ? MaterialPalette.error_container : MaterialPalette.inverse_surface;
 
     message := MaterialText {
         x: 16px;
         width: parent.width - 32px;
         height: parent.height;
-        text: Notice.text;
+        text: root.text;
         style: MaterialTypography.body_medium;
-        color: MaterialPalette.inverse_on_surface;
+        color: root.warning ? MaterialPalette.on_error_container : MaterialPalette.inverse_on_surface;
         vertical_alignment: center;
         wrap: word_wrap;
     }
 
     Timer {
         interval: 4s;
-        running: Notice.text != "";
+        running: !root.warning && Notice.text != "";
 
         triggered => {
             Notice.text = "";
@@ -213,7 +215,9 @@ export component MainWindow inherits MaterialWindow {
         }
     }
 
-    if Notice.text != "" && !Keyboard.open: NoticeBar {
+    if (Notice.text != "" || Node.wifi_failed) && !Keyboard.open: NoticeBar {
+        warning: Notice.text == "" && Node.wifi_failed;
+        text: self.warning ? "WiFi connection failed. Retrying…" : Notice.text;
         property <length> navigation: (root.in_app ? root.handle_size : 80px) + 8px;
 
         x: root.portrait ? 8px : self.navigation;

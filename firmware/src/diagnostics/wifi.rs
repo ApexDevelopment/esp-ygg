@@ -69,6 +69,7 @@ pub async fn run(
 			match select(controller.wait_for_disconnect_async(), next_command()).await {
 				Either::First(result) => {
 					WIFI_UP.store(false, Ordering::Relaxed);
+					uplink::WIFI_FAILED.store(true, Ordering::Relaxed);
 					warn!(
 						"diag t={} ms: disconnected {result:?}",
 						Instant::now().as_millis()
@@ -101,24 +102,8 @@ async fn next_command() -> WifiCommand {
 }
 
 async fn connect(controller: &mut WifiController<'static>) {
-	let started = Instant::now();
-	info!("diag t={} ms: connecting", started.as_millis());
-	match with_timeout(OPERATION_TIMEOUT, controller.connect_async()).await {
-		Ok(Ok(connection)) => {
-			WIFI_UP.store(true, Ordering::Relaxed);
-			info!(
-				"diag: connected {connection:?}, took {} ms",
-				started.elapsed().as_millis()
-			);
-		}
-		result => {
-			warn!(
-				"diag: connection failed {result:?}, took {} ms",
-				started.elapsed().as_millis()
-			);
-			disconnect(controller).await;
-		}
-	}
+	info!("diag t={} ms: connecting", Instant::now().as_millis());
+	uplink::connect_wifi(controller).await;
 }
 
 async fn disconnect(controller: &mut WifiController<'static>) {

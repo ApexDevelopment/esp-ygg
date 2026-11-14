@@ -158,6 +158,7 @@ pub enum Uplink {
 	#[default]
 	Off,
 	JoiningWifi,
+	WifiFailed,
 	Connecting,
 	Connected,
 }

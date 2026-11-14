@@ -14,7 +14,7 @@ use embassy_net::tcp::TcpSocket;
 use embassy_net::{Runner, Stack};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer, with_timeout};
 use embedded_io_async::Write;
 use esp_radio::wifi::scan::ScanConfig;
 #[cfg(not(feature = "diagnostics"))]
@@ -25,6 +25,7 @@ use esp_radio::wifi::{
 use log::{info, warn};
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_TX_POWER: i8 = 20;
 // Quarter-dBm units. The driver's 5 dBm default can fail before authentication.
 const BRIDGE_TX_POWER: i8 = 60;
@@ -47,6 +48,8 @@ pub static TO_SOCKET: Channel<CriticalSectionRawMutex, ToSocket, 8> = Channel::n
 
 /// Set while the board is connected to a WiFi network.
 pub static WIFI_UP: AtomicBool = AtomicBool::new(false);
+/// Remains set while retrying, until the station connects again.
+pub static WIFI_FAILED: AtomicBool = AtomicBool::new(false);
 /// Asks the WiFi task to scan for networks.
 pub static SCANS: Channel<CriticalSectionRawMutex, (), 1> = Channel::new();
 pub static SCAN_RESULTS: Channel<CriticalSectionRawMutex, Vec<ScannedNetwork>, 1> = Channel::new();
@@ -88,6 +91,35 @@ pub fn configure_tx_power(controller: &mut WifiController<'static>, bridge: bool
 	}
 }
 
+pub(crate) async fn connect_wifi(controller: &mut WifiController<'static>) -> bool {
+	let started = Instant::now();
+	match with_timeout(CONNECT_TIMEOUT, controller.connect_async()).await {
+		Ok(Ok(connection)) => {
+			WIFI_FAILED.store(false, Ordering::Relaxed);
+			WIFI_UP.store(true, Ordering::Relaxed);
+			info!(
+				"WiFi connected: {connection:?}, took {} ms",
+				started.elapsed().as_millis()
+			);
+			true
+		}
+		result => {
+			WIFI_UP.store(false, Ordering::Relaxed);
+			WIFI_FAILED.store(true, Ordering::Relaxed);
+			warn!(
+				"WiFi connection failed: {result:?}, took {} ms",
+				started.elapsed().as_millis()
+			);
+			// Dropping the connection future leaves the driver's attempt active.
+			match with_timeout(Duration::from_secs(3), controller.disconnect_async()).await {
+				Ok(Ok(_)) | Ok(Err(esp_radio::wifi::WifiError::NotConnected)) => {}
+				result => warn!("Cancelling WiFi connection failed: {result:?}"),
+			}
+			false
+		}
+	}
+}
+
 /// Owns the WiFi controller: keeps the board on its network when bridging,
 /// and scans for networks when asked.
 #[embassy_executor::task]
@@ -99,20 +131,16 @@ pub async fn wifi(mut controller: WifiController<'static>, bridge: bool) {
 			scan(&mut controller).await;
 			continue;
 		}
-		match controller.connect_async().await {
-			Ok(_) => {
-				info!("WiFi connected");
-				WIFI_UP.store(true, Ordering::Relaxed);
-				loop {
-					match select(controller.wait_for_disconnect_async(), SCANS.receive()).await {
-						Either::First(_) => break,
-						Either::Second(()) => scan(&mut controller).await,
-					}
+		if connect_wifi(&mut controller).await {
+			loop {
+				match select(controller.wait_for_disconnect_async(), SCANS.receive()).await {
+					Either::First(_) => break,
+					Either::Second(()) => scan(&mut controller).await,
 				}
-				WIFI_UP.store(false, Ordering::Relaxed);
-				warn!("WiFi disconnected");
 			}
-			Err(error) => warn!("WiFi connection failed: {error:?}"),
+			WIFI_UP.store(false, Ordering::Relaxed);
+			WIFI_FAILED.store(true, Ordering::Relaxed);
+			warn!("WiFi disconnected");
 		}
 		if let Either::Second(()) = select(Timer::after(RETRY_DELAY), SCANS.receive()).await {
 			scan(&mut controller).await;

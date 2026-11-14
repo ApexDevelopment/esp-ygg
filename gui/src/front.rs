@@ -18,7 +18,7 @@ use esp_ygg_app::Stream;
 use esp_ygg_app::settings::TextSetting;
 use esp_ygg_app::time::{DateTime, format_offset, short_uptime};
 use esp_ygg_app::ui::directory::Directory;
-use esp_ygg_app::ui::{Command, Key, Status, WifiNetwork};
+use esp_ygg_app::ui::{Command, Key, Status, Uplink, WifiNetwork};
 use esp_ygg_app::{Event, Settings};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use yggdrasil_espnow::PublicKey;
@@ -334,6 +334,7 @@ impl Gui {
 		let node = self.window.global::<Node>();
 		node.set_address(status.address.to_string().into());
 		node.set_uptime(short_uptime(status.board.uptime.as_secs()).into());
+		node.set_wifi_failed(status.uplink == Uplink::WifiFailed);
 		self.status = Some(status);
 		self.refresh_lists();
 	}

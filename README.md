@@ -122,6 +122,8 @@ Your Yggdrasil node needs a TCP listener in its config, such as `Listen: ["tcp:/
 
 A board's radio can use one channel at a time, so a bridging board uses your access point's channel for ESP-NOW too. Set your other boards to that channel, in Settings or with `ESP_YGG_CHANNEL`, or they will not hear it.
 
+WiFi connection attempts time out after 15 seconds and retry after a five-second delay. The interface stays usable and warns after a failed attempt, clearing the warning when WiFi connects.
+
 The board stores the WiFi password in flash as plain text.
 
 ## Hotspot
