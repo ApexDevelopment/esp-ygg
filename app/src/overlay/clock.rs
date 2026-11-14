@@ -55,13 +55,14 @@ impl Clock {
 pub(super) struct TimeService {
 	socket: SocketHandle,
 	/// When each peer was last asked, so only replies we asked for count.
-	requests: BTreeMap<Ipv6Addr, Instant>,
+	requests: BTreeMap<Ipv6Addr, (Instant, sntp::Query)>,
+	next_token: u64,
 	pub next_request: Instant,
 }
 
 #[cfg(feature = "ntp")]
 impl TimeService {
-	pub fn new(sockets: &mut SocketSet<'static>, now: Instant) -> Self {
+	pub fn new(sockets: &mut SocketSet<'static>, now: Instant, random_seed: u64) -> Self {
 		let mut socket = udp::Socket::new(
 			udp::PacketBuffer::new(
 				vec![udp::PacketMetadata::EMPTY; 4],
@@ -76,6 +77,7 @@ impl TimeService {
 		TimeService {
 			socket: sockets.add(socket),
 			requests: BTreeMap::new(),
+			next_token: random_seed,
 			next_request: now,
 		}
 	}
@@ -123,7 +125,14 @@ impl Overlay {
 						let _ = socket.send_slice(&reply, meta.endpoint);
 					}
 				}
-				Some(sntp::Message::Reply(reply)) => replies.push((from, reply)),
+				Some(sntp::Message::Reply(_)) => {
+					let endpoint = core::net::SocketAddr::new(from.into(), meta.endpoint.port);
+					if let Some((_, query)) = self.time.requests.get(&from)
+						&& let Some(reply) = query.accept(endpoint, message)
+					{
+						replies.push((from, reply));
+					}
+				}
 				None => {}
 			}
 		}
@@ -132,7 +141,7 @@ impl Overlay {
 				.time
 				.requests
 				.remove(&from)
-				.is_some_and(|sent| now.saturating_duration_since(sent) < REQUEST_TIMEOUT);
+				.is_some_and(|(sent, _)| now.saturating_duration_since(sent) < REQUEST_TIMEOUT);
 			if asked && reply.stratum < 15 {
 				self.set_time(reply.unix_micros, reply.stratum + 1, now);
 			}
@@ -149,8 +158,13 @@ impl Overlay {
 		for peer in node.network().debug().get_peers() {
 			let address = Ipv6Addr::from(addr_for_key(&peer.key).0);
 			let endpoint = IpEndpoint::new(IpAddress::Ipv6(address), sntp::PORT);
-			if socket.send_slice(&sntp::request(), endpoint).is_ok() {
-				self.time.requests.insert(address, now);
+			self.time.next_token = self.time.next_token.wrapping_add(1).max(1);
+			let query = sntp::Query::new(
+				core::net::SocketAddr::new(address.into(), sntp::PORT),
+				self.time.next_token,
+			);
+			if socket.send_slice(&query.request(), endpoint).is_ok() {
+				self.time.requests.insert(address, (now, query));
 			}
 		}
 	}

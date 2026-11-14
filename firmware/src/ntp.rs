@@ -5,7 +5,7 @@ use embassy_net::dns::DnsQueryType;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Instant, Timer, with_timeout};
+use embassy_time::{Duration, Instant, Timer, with_deadline};
 use esp_ygg_app::sntp;
 use log::info;
 
@@ -46,18 +46,27 @@ async fn query_ntp(stack: Stack<'static>) -> Option<(u64, u8, Instant)> {
 		&mut tx_buffer,
 	);
 	socket.bind(0).ok()?;
+	let mut token = [0; 8];
+	esp_hal::rng::Rng::new().read(&mut token);
+	let query = sntp::Query::new(
+		core::net::SocketAddr::new(server.into(), sntp::PORT),
+		u64::from_le_bytes(token),
+	);
 	socket
-		.send_to(&sntp::request(), (server, sntp::PORT))
+		.send_to(&query.request(), (server, sntp::PORT))
 		.await
 		.ok()?;
+	let deadline = Instant::now() + Duration::from_secs(5);
 	let mut reply = [0u8; 128];
-	let (length, _) = with_timeout(Duration::from_secs(5), socket.recv_from(&mut reply))
-		.await
-		.ok()?
-		.ok()?;
-	let received = Instant::now();
-	match sntp::parse(&reply[..length])? {
-		sntp::Message::Reply(reply) => Some((reply.unix_micros, reply.stratum, received)),
-		sntp::Message::Request => None,
+	loop {
+		let (length, metadata) = with_deadline(deadline, socket.recv_from(&mut reply))
+			.await
+			.ok()?
+			.ok()?;
+		let from =
+			core::net::SocketAddr::new(metadata.endpoint.addr.into(), metadata.endpoint.port);
+		if let Some(reply) = query.accept(from, &reply[..length]) {
+			return Some((reply.unix_micros, reply.stratum, Instant::now()));
+		}
 	}
 }

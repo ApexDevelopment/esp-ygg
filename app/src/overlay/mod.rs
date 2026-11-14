@@ -174,7 +174,7 @@ impl Overlay {
 			pinger: ping::Pinger::new(&mut sockets, (random_seed >> 16) as u16),
 			clock: None,
 			#[cfg(feature = "ntp")]
-			time: clock::TimeService::new(&mut sockets, node.now()),
+			time: clock::TimeService::new(&mut sockets, node.now(), random_seed),
 			#[cfg(any(feature = "http", feature = "gopher"))]
 			servers: if status_pages {
 				servers::listen(&mut sockets)

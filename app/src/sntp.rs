@@ -27,10 +27,41 @@ pub enum Message {
 	Reply(Reply),
 }
 
-pub fn request() -> [u8; MESSAGE_LEN] {
+pub fn request(token: u64) -> [u8; MESSAGE_LEN] {
 	let mut message = [0u8; MESSAGE_LEN];
 	message[0] = VERSION << 3 | MODE_CLIENT;
+	message[40..48].copy_from_slice(&token.max(1).to_be_bytes());
 	message
+}
+
+/// Matches replies to one server and one request.
+#[derive(Clone, Copy, Debug)]
+pub struct Query {
+	server: core::net::SocketAddr,
+	token: u64,
+}
+
+impl Query {
+	pub fn new(server: core::net::SocketAddr, token: u64) -> Self {
+		Self {
+			server,
+			token: token.max(1),
+		}
+	}
+
+	pub fn request(&self) -> [u8; MESSAGE_LEN] {
+		request(self.token)
+	}
+
+	pub fn accept(&self, from: core::net::SocketAddr, message: &[u8]) -> Option<Reply> {
+		if from != self.server || message.get(24..32)? != self.token.to_be_bytes() {
+			return None;
+		}
+		match parse(message)? {
+			Message::Reply(reply) => Some(reply),
+			Message::Request => None,
+		}
+	}
 }
 
 /// The answer to a request, telling the client the time is `unix_micros`
@@ -51,7 +82,7 @@ pub fn reply(request: &[u8], unix_micros: u64, stratum: u8) -> [u8; MESSAGE_LEN]
 }
 
 pub fn parse(message: &[u8]) -> Option<Message> {
-	if message.len() < MESSAGE_LEN {
+	if message.len() < MESSAGE_LEN || !matches!((message[0] >> 3) & 7, 3 | 4) {
 		return None;
 	}
 	match message[0] & 0x07 {
@@ -98,7 +129,7 @@ mod tests {
 
 	#[test]
 	fn answers_requests_with_the_time() {
-		let request = request();
+		let request = request(1);
 		assert_eq!(parse(&request), Some(Message::Request));
 		let time = 1_794_000_000_123_456;
 		let reply = reply(&request, time, 3);
@@ -118,9 +149,32 @@ mod tests {
 
 	#[test]
 	fn ignores_unsynchronized_servers() {
-		let mut reply = reply(&request(), 1_794_000_000_000_000, 2);
+		let mut reply = reply(&request(1), 1_794_000_000_000_000, 2);
 		reply[0] |= UNSYNCHRONIZED << 6;
 		assert_eq!(parse(&reply), None);
 		assert_eq!(parse(&[0u8; 10]), None);
+	}
+}
+
+#[cfg(test)]
+mod query_tests {
+	use super::*;
+
+	#[test]
+	fn accepts_only_the_requested_server_and_token() {
+		let server = "127.0.0.1:123".parse().unwrap();
+		let query = Query::new(server, 73);
+		let response = reply(&query.request(), 1_794_000_000_000_000, 2);
+		assert!(query.accept(server, &response).is_some());
+		assert_eq!(
+			query.accept("127.0.0.2:123".parse().unwrap(), &response),
+			None
+		);
+		assert_eq!(
+			query.accept("127.0.0.1:124".parse().unwrap(), &response),
+			None
+		);
+		assert_eq!(Query::new(server, 74).accept(server, &response), None);
+		assert_eq!(query.accept(server, &response[..31]), None);
 	}
 }
