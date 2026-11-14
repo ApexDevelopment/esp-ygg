@@ -1,8 +1,8 @@
 # esp-ygg
 
-esp-ygg turns your ESP32 boards into a Yggdrasil node. ESP32 boards running esp-ygg will pair with each other over ESP-NOW, Espressif's peer-to-peer protocol, and form their own Yggdrasil mesh.
+esp-ygg turns your ESP32 boards into Yggdrasil nodes. ESP32 boards running esp-ygg will pair with each other over ESP-NOW, Espressif's peer-to-peer protocol, and form their own Yggdrasil mesh.
 
-To connect the ESP-NOW mesh to the public Yggdrasil network, have one board join your WiFi network and peer with a regular Yggdrasil node. A board can also run a WiFi hotspot, so your phone or laptop can join Yggdrasil through it without installing anything.
+To connect your ESP-NOW mesh to the public Yggdrasil network, have one board join your WiFi network and peer with a regular Yggdrasil node. A board can also run a WiFi hotspot, so your phone or laptop can join Yggdrasil through it without installing anything.
 
 A board running esp-ygg makes the following services available, accessible via its Yggdrasil IP:
 
