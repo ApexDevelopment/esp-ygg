@@ -514,6 +514,8 @@ mod screen {
 	/// The text interface's screen, and touch read as gestures for it.
 	#[cfg(feature = "tui")]
 	mod text {
+		use core::sync::atomic::Ordering;
+
 		use embassy_time::{Duration, Timer};
 		use esp_hal::Blocking;
 		use esp_hal::i2c::master::I2c;
@@ -526,7 +528,7 @@ mod screen {
 
 		use super::{Display, PANEL_WIDTH, Pins, read_touch, set_backlight, set_up};
 		use crate::sdcard::Slot;
-		use crate::ui::{INPUT, Input, Screen, uptime};
+		use crate::ui::{BRIGHTNESS, INPUT, Input, Screen, uptime};
 
 		const TOUCH_INTERVAL: Duration = Duration::from_millis(20);
 
@@ -615,6 +617,7 @@ mod screen {
 					};
 					let _ = INPUT.try_send(input);
 				}
+				timeout.set_brightness(BRIGHTNESS.load(Ordering::Relaxed));
 				let level = timeout.backlight(uptime());
 				if level != backlight {
 					set_backlight(&mut i2c, level);

@@ -20,6 +20,8 @@ pub struct ScreenTimeout {
 	/// When the board was locked, if it is, and whether the screen dims
 	/// while it shows so.
 	locked: Option<(Duration, bool)>,
+	/// In percent, scaling every level.
+	brightness: u8,
 }
 
 impl ScreenTimeout {
@@ -28,7 +30,13 @@ impl ScreenTimeout {
 			last_input: now,
 			waking: false,
 			locked: None,
+			brightness: 100,
 		}
+	}
+
+	/// Sets how bright the screen is when lit, in percent.
+	pub fn set_brightness(&mut self, percent: u8) {
+		self.brightness = percent.min(100);
 	}
 
 	/// Follows the board's lock, given when it was locked if it is. Unlocking
@@ -92,9 +100,21 @@ impl ScreenTimeout {
 		} else {
 			fade(DIM, 0, idle - OFF_AFTER)
 		};
-		// Light looks about as bright as the square root of its strength.
-		(u16::from(looks) * u16::from(looks) / u16::from(u8::MAX)) as u8
+		strength(u16::from(looks) * u16::from(self.brightness) / 100)
 	}
+}
+
+/// The backlight's level for a screen lit at `brightness` percent.
+pub fn lit(brightness: u8) -> u8 {
+	strength(u16::from(u8::MAX) * u16::from(brightness.min(100)) / 100)
+}
+
+/// The backlight's level for the screen to look `looks` bright, out of 255.
+/// Light looks about as bright as the square root of its strength. Any
+/// light at all stays on, however dim.
+fn strength(looks: u16) -> u8 {
+	let level = (looks * looks / u16::from(u8::MAX)) as u8;
+	if looks > 0 { level.max(1) } else { 0 }
 }
 
 /// How bright the screen looks `elapsed` into fading from `from` to `to`.
@@ -154,6 +174,18 @@ mod tests {
 		assert_eq!(timeout.touch(SECOND * 20, Some((1, 2))), None);
 		assert_eq!(timeout.touch::<(u8, u8)>(SECOND * 21, None), None);
 		assert_eq!(timeout.touch(SECOND * 22, Some((1, 2))), Some((1, 2)));
+	}
+
+	#[test]
+	fn brightness_scales_every_level() {
+		let mut timeout = ScreenTimeout::new(Duration::ZERO);
+		timeout.set_brightness(50);
+		assert_eq!(timeout.backlight(SECOND), lit(50));
+		assert!(lit(50) < u8::MAX / 2);
+		assert!(timeout.backlight(SECOND * 45) < lit(50));
+		assert_eq!(timeout.backlight(SECOND * 61), 0);
+		assert!(lit(10) > 0);
+		assert_eq!(lit(100), u8::MAX);
 	}
 
 	#[test]

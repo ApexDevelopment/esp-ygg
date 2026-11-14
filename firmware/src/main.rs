@@ -236,6 +236,7 @@ async fn main(spawner: Spawner) -> ! {
 			dc: peripherals.GPIO34,
 			reset: peripherals.GPIO33,
 			backlight: peripherals.GPIO38,
+			ledc: peripherals.LEDC,
 			i2c: peripherals.I2C0,
 			gpio8: peripherals.GPIO8,
 			gpio9: peripherals.GPIO9,

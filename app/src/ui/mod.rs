@@ -49,7 +49,7 @@ use crate::BoardInfo;
 use crate::overlay::Event;
 #[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
 use crate::overlay::Stream;
-use crate::settings::{Settings, TextSetting};
+use crate::settings::{MIN_BRIGHTNESS, Settings, TextSetting};
 use crate::time::DateTime;
 use directory::Directory;
 pub use input::TextInput;
@@ -352,6 +352,7 @@ enum Field {
 	Ringtone,
 	#[cfg(feature = "voice")]
 	RingVolume,
+	Brightness,
 	Save,
 	Export,
 	Import,
@@ -392,6 +393,7 @@ const FIELDS: &[Field] = &[
 	Field::Open(Group::Ringer),
 	#[cfg(feature = "sftp")]
 	Field::SftpPassword,
+	Field::Brightness,
 	Field::Save,
 	Field::Export,
 	Field::Import,
@@ -922,6 +924,12 @@ impl App {
 					samples: crate::voice::ringtone::BEEP_SAMPLES,
 				});
 			}
+			Field::Brightness => {
+				self.draft.brightness = match self.draft.brightness {
+					100.. => MIN_BRIGHTNESS,
+					percent => (percent + 10).min(100),
+				};
+			}
 			Field::Open(group) => {
 				self.group_selected = 0;
 				self.screen = Screen::SettingsGroup(group);
@@ -1156,6 +1164,16 @@ impl App {
 			self.saved.utc_offset
 		};
 		Some(DateTime::from_unix((time / 1_000_000) as i64, offset))
+	}
+
+	/// How bright the screen is, in percent. While settings are open, it
+	/// follows the brightness being chosen.
+	pub fn brightness(&self) -> u8 {
+		if matches!(self.screen, Screen::Settings | Screen::SettingsGroup(_)) {
+			self.draft.brightness
+		} else {
+			self.saved.brightness
+		}
 	}
 
 	/// The speaker icon for the title bar. While settings are open, it

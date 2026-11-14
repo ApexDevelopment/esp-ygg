@@ -15,7 +15,7 @@ use core::net::SocketAddrV6;
 
 #[cfg(any(feature = "irc", feature = "gemini"))]
 use esp_ygg_app::Stream;
-use esp_ygg_app::settings::TextSetting;
+use esp_ygg_app::settings::{MIN_BRIGHTNESS, TextSetting};
 use esp_ygg_app::time::{DateTime, format_offset, short_uptime};
 use esp_ygg_app::ui::directory::Directory;
 use esp_ygg_app::ui::{Command, Key, Status, Uplink, WifiNetwork};
@@ -40,6 +40,8 @@ use crate::{
 	Setup, WifiEntry,
 };
 
+/// The settings page's number, among the pages along the rail.
+const SETTINGS_PAGE: i32 = 3;
 /// The most characters of the text being typed that the keyboard shows,
 /// from the end, as fits its width.
 const SHOWN_TYPED: usize = 24;
@@ -286,6 +288,9 @@ impl Gui {
 				App::Sftp,
 			]))));
 		window.global::<Setup>().set_sftp(cfg!(feature = "sftp"));
+		window
+			.global::<Setup>()
+			.set_min_brightness(MIN_BRIGHTNESS.into());
 		let gui = Gui {
 			window: window.clone_strong(),
 			directory: Directory::new(),
@@ -422,7 +427,7 @@ impl Gui {
 		#[cfg(feature = "sftp")]
 		self.tick_sftp();
 		// The switches change the edits in the interface alone.
-		if self.window.get_page() == 3 {
+		if self.window.get_page() == SETTINGS_PAGE {
 			self.take_switches();
 			self.show_restart();
 		}
@@ -495,6 +500,16 @@ impl Gui {
 				self.notify("Imported, not saved".into());
 			}
 			Err(problem) => self.notify(problem),
+		}
+	}
+
+	/// How bright the screen is, in percent. On the settings page, it
+	/// follows the brightness being chosen.
+	pub fn brightness(&self) -> u8 {
+		if self.window.get_page() == SETTINGS_PAGE {
+			self.draft.brightness
+		} else {
+			self.saved.brightness
 		}
 	}
 
@@ -875,6 +890,7 @@ impl Gui {
 		self.draft.status_page = setup.get_status_pages();
 		self.draft.bridge = setup.get_bridge();
 		self.draft.hotspot = setup.get_hotspot();
+		self.draft.brightness = setup.get_brightness().clamp(MIN_BRIGHTNESS.into(), 100) as u8;
 	}
 
 	/// Says on the save button whether saving the edits restarts the board.
@@ -911,6 +927,7 @@ impl Gui {
 		setup.set_status_pages(draft.status_page);
 		setup.set_bridge(draft.bridge);
 		setup.set_hotspot(draft.hotspot);
+		setup.set_brightness(draft.brightness.into());
 	}
 
 	/// A node's name if known, or its address.

@@ -288,6 +288,7 @@ pub async fn run(board: Board, settings: Settings) {
 			}
 		}
 		serial_finger.update(&window);
+		timeout.set_brightness(gui.brightness());
 		let level = timeout.backlight(uptime());
 		// What changed while the screen was off is drawn as it wakes.
 		if level > 0 {

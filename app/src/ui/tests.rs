@@ -251,12 +251,12 @@ fn edits_and_saves_settings() {
 	assert!(screen(&app).join("\n").contains("••••••"));
 	press(&mut app, &[Key::Escape]);
 	assert!(screen(&app).join("\n").contains("Bridge       on"));
-	press(&mut app, &[Key::Down; 4]);
+	press(&mut app, &[Key::Down; 5]);
 	press(&mut app, &[Key::Enter]);
 	assert!(commands(&mut app).is_empty());
 	assert!(screen(&app).join("\n").contains("needs network and peer"));
 	// Peer
-	press(&mut app, &[Key::Up; 4]);
+	press(&mut app, &[Key::Up; 5]);
 	press(&mut app, &[Key::Enter]);
 	press(&mut app, &[Key::Down; 3]);
 	press(&mut app, &[Key::Enter]);
@@ -278,7 +278,7 @@ fn edits_and_saves_settings() {
 	assert!(screen(&app).join("\n").contains("none, ask"));
 	press(&mut app, &[Key::Enter]);
 	type_text(&mut app, "sesame");
-	press(&mut app, &[Key::Enter, Key::Down, Key::Enter]);
+	press(&mut app, &[Key::Enter, Key::Down, Key::Down, Key::Enter]);
 	let expected = Settings {
 		name: "kitchen".into(),
 		bridge: true,
@@ -335,6 +335,32 @@ fn ringer_settings_cycle_and_preview() {
 	// Leaving without saving shows the saved volume again.
 	press(&mut app, &[Key::Escape]);
 	assert_eq!(app.speaker(false), Speaker::On);
+}
+
+#[test]
+fn brightness_follows_the_setting_being_chosen() {
+	let mut app = App::new(Settings::new(), at(0));
+	open(&mut app, "Settings");
+	press(&mut app, &[Key::Down; 8]);
+	assert!(screen(&app).join("\n").contains("Brightness   100%"));
+	press(&mut app, &[Key::Enter]);
+	assert!(screen(&app).join("\n").contains("Brightness   10%"));
+	press(&mut app, &[Key::Enter, Key::Enter]);
+	assert_eq!(app.brightness(), 30);
+	// Leaving without saving goes back to the saved brightness.
+	press(&mut app, &[Key::Escape]);
+	assert_eq!(app.brightness(), 100);
+	open(&mut app, "Settings");
+	press(&mut app, &[Key::Down; 8]);
+	press(&mut app, &[Key::Enter, Key::Down, Key::Enter, Key::Escape]);
+	assert_eq!(
+		commands(&mut app),
+		[Command::Save(Settings {
+			brightness: 10,
+			..Settings::new()
+		})]
+	);
+	assert_eq!(app.brightness(), 10);
 }
 
 #[test]

@@ -25,19 +25,24 @@ mod screen {
 	use core::sync::atomic::{AtomicU8, Ordering};
 
 	use embassy_time::{Duration, Timer};
+	use embedded_hal::pwm::SetDutyCycle;
 	use embedded_hal_bus::spi::{ExclusiveDevice, NoDelay};
 	use esp_hal::Blocking;
 	use esp_hal::delay::Delay;
-	use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+	use esp_hal::gpio::{DriveMode, Input, InputConfig, Level, Output, OutputConfig, Pull};
 	use esp_hal::i2c::master::I2c;
+	use esp_hal::ledc::channel::{self, ChannelIFace};
+	use esp_hal::ledc::timer::{self, TimerIFace};
+	use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
 	use esp_hal::peripherals::{
 		GPIO3, GPIO4, GPIO5, GPIO6, GPIO7, GPIO8, GPIO9, GPIO11, GPIO12, GPIO13, GPIO14, GPIO15,
-		GPIO33, GPIO34, GPIO35, GPIO36, GPIO37, GPIO38, GPIO39, GPIO40, I2C0, SPI2, SPI3,
+		GPIO33, GPIO34, GPIO35, GPIO36, GPIO37, GPIO38, GPIO39, GPIO40, I2C0, LEDC, SPI2, SPI3,
 	};
 	use esp_hal::spi::Mode;
 	use esp_hal::spi::master::Spi;
 	use esp_hal::time::Rate;
 	use esp_ygg_app::ui::keyboard::{Keyboard, Position};
+	use esp_ygg_app::ui::screen_timeout;
 	use log::info;
 	use mipidsi::interface::SpiInterface;
 	use mipidsi::models::ST7789;
@@ -99,6 +104,8 @@ mod screen {
 		pub dc: GPIO34<'static>,
 		pub reset: GPIO33<'static>,
 		pub backlight: GPIO38<'static>,
+		/// Dims the backlight.
+		pub ledc: LEDC<'static>,
 		pub i2c: I2C0<'static>,
 		pub gpio8: GPIO8<'static>,
 		pub gpio9: GPIO9<'static>,
@@ -117,7 +124,7 @@ mod screen {
 
 	/// What the keyboard task looks after besides the keys.
 	struct Controls {
-		backlight: Output<'static>,
+		backlight: Backlight,
 		#[cfg(not(feature = "voice"))]
 		lock_button: Input<'static>,
 	}
@@ -150,15 +157,8 @@ mod screen {
 		};
 		MODEL.store(model as u8 + 1, Ordering::Relaxed);
 		info!("Board: {}", model.name());
-		let (screen, backlight) = screen(
-			pins.spi,
-			pins.sck,
-			pins.mosi,
-			pins.cs,
-			pins.dc,
-			pins.reset,
-			pins.backlight,
-		);
+		let screen = screen(pins.spi, pins.sck, pins.mosi, pins.cs, pins.dc, pins.reset);
+		let backlight = backlight(pins.ledc, pins.backlight);
 		let reader = match model {
 			Model::Adv => KeyReader::controller(pins.i2c, pins.gpio8, pins.gpio9),
 			Model::Original => KeyReader::Matrix {
@@ -220,8 +220,7 @@ mod screen {
 		cs: GPIO37<'static>,
 		dc: GPIO34<'static>,
 		reset: GPIO33<'static>,
-		backlight: GPIO38<'static>,
-	) -> (Screen, Output<'static>) {
+	) -> Screen {
 		let config = esp_hal::spi::master::Config::default()
 			.with_frequency(Rate::from_mhz(40))
 			.with_mode(Mode::_0);
@@ -245,8 +244,6 @@ mod screen {
 		// The panel powers up with random contents, and the terminal only draws
 		// cells that change, so blank cells would never be drawn over.
 		display.clear(Rgb565::BLACK).expect("clearing the display");
-		// On the ADV, the backlight's pin also powers the RGB LED.
-		let backlight = Output::new(backlight, Level::High, OutputConfig::default());
 		static DISPLAY: StaticCell<Display> = StaticCell::new();
 		#[allow(unused_mut)]
 		let mut config = EmbeddedBackendConfig::default();
@@ -258,8 +255,34 @@ mod screen {
 			});
 		}
 		let backend = EmbeddedBackend::new(DISPLAY.init(display), config);
-		let terminal = Terminal::new(backend).expect("starting the terminal");
-		(terminal, backlight)
+		Terminal::new(backend).expect("starting the terminal")
+	}
+
+	type Backlight = channel::Channel<'static, LowSpeed>;
+
+	/// The backlight, lit full, dimmed by switching it on and off faster than
+	/// the eye sees. On the ADV, its pin also powers the RGB LED.
+	fn backlight(ledc: LEDC<'static>, pin: GPIO38<'static>) -> Backlight {
+		let mut ledc = Ledc::new(ledc);
+		ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+		static TIMER: StaticCell<timer::Timer<'static, LowSpeed>> = StaticCell::new();
+		let timer = TIMER.init(ledc.timer(timer::Number::Timer0));
+		timer
+			.configure(timer::config::Config {
+				duty: timer::config::Duty::Duty8Bit,
+				clock_source: timer::LSClockSource::APBClk,
+				frequency: Rate::from_khz(24),
+			})
+			.expect("configuring the backlight's timer");
+		let mut backlight = ledc.channel(channel::Number::Channel0, pin);
+		backlight
+			.configure(channel::config::Config {
+				timer,
+				duty_pct: 100,
+				drive_mode: DriveMode::PushPull,
+			})
+			.expect("configuring the backlight");
+		backlight
 	}
 
 	enum KeyReader {
@@ -375,15 +398,21 @@ mod screen {
 		let mut keyboard = Keyboard::new();
 		#[cfg(not(feature = "voice"))]
 		let mut lock_button = crate::lock::Button::default();
+		let mut shown = u8::MAX;
 		loop {
 			#[cfg(not(feature = "voice"))]
 			lock_button.update(controls.lock_button.is_low());
-			let lit = if crate::lock::is_dark() {
-				Level::Low
+			let level = if crate::lock::is_dark() {
+				0
 			} else {
-				Level::High
+				screen_timeout::lit(ui::BRIGHTNESS.load(Ordering::Relaxed))
 			};
-			controls.backlight.set_level(lit);
+			if level != shown {
+				let _ = controls
+					.backlight
+					.set_duty_cycle_fraction(level.into(), u8::MAX.into());
+				shown = level;
+			}
 			// The ADV's audio codec shares the keyboard's I2C bus.
 			#[cfg(feature = "voice")]
 			if let KeyReader::Controller { i2c, .. } = &mut reader {

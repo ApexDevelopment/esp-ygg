@@ -26,6 +26,11 @@ pub(crate) use crate::touch_lcd as board;
 #[cfg(feature = "tui")]
 pub use text::{Screen, spawn};
 
+/// How bright the text interface wants the screen, in percent, for the task
+/// that runs the backlight.
+#[cfg(feature = "tui")]
+pub static BRIGHTNESS: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(100);
+
 /// The longest command line read from the serial port.
 const MAX_COMMAND: usize = 512;
 
@@ -248,6 +253,7 @@ mod text {
 		usb: USB_DEVICE<'static>,
 		settings: Settings,
 	) {
+		super::BRIGHTNESS.store(settings.brightness, Ordering::Relaxed);
 		spawner.spawn(run(screen, slot, settings).expect("spawning the UI task"));
 		spawner.spawn(serial(usb).expect("spawning the serial task"));
 		#[cfg(feature = "sftp")]
@@ -302,6 +308,7 @@ mod text {
 				app.set_sftp_status(status);
 			}
 			app.tick(now());
+			super::BRIGHTNESS.store(app.brightness(), Ordering::Relaxed);
 			while let Some(command) = app.poll_command() {
 				use super::LocalReply;
 				match super::local_command(command, &mut slot, app.local_time(), || {}) {

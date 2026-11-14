@@ -434,6 +434,7 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App, fields: &[Field], sel
 				format!("UTC{}", format_offset(draft.utc_offset)),
 			),
 			Field::StatusPage => ("Status pages", on_off(draft.status_page)),
+			Field::Brightness => ("Brightness", format!("{}%", draft.brightness)),
 			Field::Open(Group::Bridge) => ("Bridge", on_off(draft.bridge)),
 			Field::Open(Group::Hotspot) => ("Hotspot", on_off(draft.hotspot)),
 			Field::Bridge => ("Bridge", on_off(draft.bridge)),

@@ -1,7 +1,7 @@
 import { ListView, MaterialPalette, MaterialText, MaterialTypography } from "@material/material.slint";
 import { EmptyNote, PageTitle, Row } from "page.slint";
 import { Node, Setting, Setup } from "state.slint";
-import { Button, ButtonKind, Scroller, Toggle } from "widgets.slint";
+import { Button, ButtonKind, Scroller, Slider, Toggle } from "widgets.slint";
 
 /// A heading over a group of settings. Parts here are placed by hand, as
 /// layouts cost memory in every row.
@@ -47,6 +47,37 @@ component SwitchRow inherits Rectangle {
         width: 52px;
         height: 32px;
         checked <=> root.checked;
+    }
+}
+
+/// A setting picked along a slider.
+component SliderRow inherits Rectangle {
+    in property <string> text;
+    in property <int> minimum;
+    in property <int> step;
+    in_out property <int> value;
+
+    height: 48px;
+
+    label := Text {
+        x: 16px;
+        width: self.preferred_width;
+        height: root.height;
+        text: root.text;
+        font_size: MaterialTypography.body_large.font_size;
+        font_weight: MaterialTypography.body_large.font_weight;
+        color: MaterialPalette.on_background;
+        vertical_alignment: center;
+    }
+
+    Slider {
+        x: label.x + label.width + 16px;
+        y: (root.height - self.height) / 2;
+        width: root.width - self.x - 16px;
+        height: 44px;
+        minimum: root.minimum;
+        step: root.step;
+        value <=> root.value;
     }
 }
 
@@ -180,6 +211,17 @@ export component SettingsPage inherits VerticalLayout {
             SwitchRow {
                 text: "Status pages";
                 checked <=> Setup.status_pages;
+            }
+
+            Section {
+                text: "Screen";
+            }
+
+            SliderRow {
+                text: "Brightness";
+                minimum: Setup.min_brightness;
+                step: 10;
+                value <=> Setup.brightness;
             }
 
             Section {

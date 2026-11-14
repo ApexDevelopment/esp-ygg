@@ -263,6 +263,9 @@ export global Setup {
     in_out property <bool> status_pages;
     in_out property <bool> bridge;
     in_out property <bool> hotspot;
+    /// In percent.
+    in_out property <int> brightness;
+    in property <int> min_brightness;
     /// Whether the board was built with SFTP, which has a password.
     in property <bool> sftp;
     /// Whether saving the edits restarts the board, which some need.

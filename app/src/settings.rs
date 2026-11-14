@@ -39,6 +39,8 @@ pub struct Settings {
 	/// Lets peers into SFTP without asking on screen. Empty to always ask.
 	/// Stored in flash as plain text.
 	pub sftp_password: String,
+	/// How bright the screen is, in percent.
+	pub brightness: u8,
 }
 
 /// A setting written as text, on screen or in a settings file.
@@ -85,6 +87,9 @@ impl TextSetting {
 	}
 }
 
+/// The dimmest the screen can be set, in percent, which stays readable.
+pub const MIN_BRIGHTNESS: u8 = 10;
+
 /// The hotspot's name until the user picks another.
 pub const DEFAULT_HOTSPOT_NAME: &str = "Yggdrasil";
 
@@ -95,6 +100,7 @@ impl Settings {
 			status_page: true,
 			hotspot_name: DEFAULT_HOTSPOT_NAME.into(),
 			ring_volume: 3,
+			brightness: 100,
 			..Settings::default()
 		}
 	}
@@ -189,6 +195,7 @@ impl Settings {
 		push_text(&mut bytes, &self.hotspot_password);
 		bytes.extend_from_slice(&[self.ringtone, self.ring_volume]);
 		push_text(&mut bytes, &self.sftp_password);
+		bytes.push(self.brightness);
 		bytes
 	}
 
@@ -220,6 +227,9 @@ impl Settings {
 		};
 		let mut rest = rest.get(2..).unwrap_or_default();
 		let sftp_password = take_text(&mut rest).unwrap_or_default();
+		let brightness = rest
+			.first()
+			.map_or(defaults.brightness, |&byte| byte.clamp(MIN_BRIGHTNESS, 100));
 		Some(Settings {
 			name,
 			ssid,
@@ -235,6 +245,7 @@ impl Settings {
 			ringtone,
 			ring_volume,
 			sftp_password,
+			brightness,
 		})
 	}
 }
@@ -258,6 +269,7 @@ impl Settings {
 			("ringtone", self.ringtone.to_string()),
 			("ring_volume", self.ring_volume.to_string()),
 			("sftp_password", self.sftp_password.clone()),
+			("brightness", self.brightness.to_string()),
 		];
 		lines
 			.iter()
@@ -307,6 +319,13 @@ impl Settings {
 			"hotspot" => self.hotspot = parse_on_off(value)?,
 			"ringtone" => self.ringtone = value.parse().map_err(|_| "bad ringtone")?,
 			"ring_volume" => self.ring_volume = value.parse().map_err(|_| "bad volume")?,
+			"brightness" => {
+				self.brightness = value
+					.parse()
+					.ok()
+					.filter(|percent| (MIN_BRIGHTNESS..=100).contains(percent))
+					.ok_or("bad brightness")?
+			}
 			_ => return Err("unknown setting"),
 		}
 		Ok(())
@@ -394,6 +413,7 @@ mod tests {
 			ringtone: 2,
 			ring_volume: 5,
 			sftp_password: "sesame".into(),
+			brightness: 40,
 		};
 		assert_eq!(Settings::decode(&settings.encode()), Some(settings));
 	}
@@ -401,7 +421,7 @@ mod tests {
 	#[test]
 	fn reads_settings_saved_before_the_status_page_option() {
 		let mut old = Settings::new().encode();
-		old.truncate(old.len() - 1 - 2 - 3 - 1 - 1 - DEFAULT_HOTSPOT_NAME.len() - 1);
+		old.truncate(old.len() - 1 - 1 - 2 - 3 - 1 - 1 - DEFAULT_HOTSPOT_NAME.len() - 1);
 		assert_eq!(Settings::decode(&old), Some(Settings::new()));
 	}
 
@@ -422,6 +442,7 @@ mod tests {
 		settings.bridge = true;
 		settings.peer = "192.168.1.176:9001".into();
 		settings.ring_volume = 0;
+		settings.brightness = 30;
 		assert_eq!(Settings::new().with_text(&settings.to_text()), Ok(settings));
 	}
 

@@ -148,6 +148,75 @@ export component Toggle {
     }
 }
 
+/// Material's slider, for whole numbers from `minimum` to `maximum` in
+/// `step`s. A tap sets it, as does dragging along it.
+export component Slider {
+    in property <int> minimum;
+    in property <int> maximum: 100;
+    in property <int> step: 1;
+    in_out property <int> value;
+
+    // The handle's middle, kept off the very ends so it shows whole.
+    property <length> inset: 2px;
+    property <length> handle_x: root.inset + (root.width - 2 * root.inset) * (root.value - root.minimum) / (root.maximum - root.minimum);
+    property <length> track_height: 16px;
+    // The space each side of the handle.
+    property <length> gap: 6px;
+
+    min_width: 64px;
+    min_height: 44px;
+
+    Rectangle {
+        x: 0;
+        y: (root.height - self.height) / 2;
+        width: max(0px, root.handle_x - root.gap);
+        height: root.track_height;
+        border_top_left_radius: self.height / 2;
+        border_bottom_left_radius: self.height / 2;
+        border_top_right_radius: 2px;
+        border_bottom_right_radius: 2px;
+        background: MaterialPalette.primary;
+    }
+
+    Rectangle {
+        x: min(root.width, root.handle_x + root.gap);
+        y: (root.height - self.height) / 2;
+        width: root.width - self.x;
+        height: root.track_height;
+        border_top_left_radius: 2px;
+        border_bottom_left_radius: 2px;
+        border_top_right_radius: self.height / 2;
+        border_bottom_right_radius: self.height / 2;
+        background: MaterialPalette.surface_container_highest;
+    }
+
+    Rectangle {
+        x: root.handle_x - self.width / 2;
+        width: touch.pressed ? 2px : 4px;
+        height: root.height;
+        border_radius: self.width / 2;
+        background: MaterialPalette.primary;
+    }
+
+    touch := TouchArea {
+        pointer_event(event) => {
+            if event.kind == PointerEventKind.down {
+                root.move_to(self.mouse_x);
+            }
+        }
+
+        moved => {
+            root.move_to(self.mouse_x);
+        }
+    }
+
+    function move_to(x: length) {
+        let along = clamp((x - root.inset) / (root.width - 2 * root.inset), 0, 1);
+        let steps = round(along * (root.maximum - root.minimum) / root.step);
+        root.value = root.minimum + steps * root.step;
+    }
+}
+
 export enum ButtonKind { filled, outlined, text }
 
 /// Material's filled, outlined and text buttons.

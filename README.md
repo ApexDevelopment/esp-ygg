@@ -127,6 +127,8 @@ The board stores the WiFi password in flash as plain text.
 
 The TUI and GUI largely have the same options available, they're just laid out a little differently. The TUI presents options line-by-line, while the GUI gives you a more traditional "app" experience. Both have an on-screen keyboard for touch devices, so you can build the TUI version for a touch device if you prefer it over the GUI. The TUI supports tab completion in all address fields so you don't have to manually type out a long IPv6 address. Pressing G0/BOOT/GPIO0 (while not in a voice call) will lock the screen; press it again to unlock (all other inputs will be disabled).
 
+You can set the screen's brightness under Settings and watch it change as you adjust it. Saving it won't restart the board.
+
 ## Hotspot
 
 Turn on the hotspot under Settings, or build with `ESP_YGG_HOTSPOT`, and your devices can join the board's own WiFi network to reach Yggdrasil without installing anything. A board can bridge and run a hotspot at the same time.
