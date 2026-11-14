@@ -49,34 +49,57 @@ pub(crate) fn read_flash_encrypted(
     crate::mmu::read_flash_encrypted(offset, bytes)
 }
 
-#[cfg(esp32s3)]
+#[cfg(not(esp32))]
 #[ram]
-fn read_flash_id_esp32s3() -> u32 {
-    #[repr(C)]
-    struct RomFlashChip {
-        device_id: u32,
-        chip_size: u32,
-        block_size: u32,
-        sector_size: u32,
-        page_size: u32,
-        status_mask: u32,
-    }
+fn flash_dummy_cycles() -> Option<u8> {
+    #[cfg(esp32s2)]
+    let dummy_cycles = {
+        unsafe extern "C" {
+            static g_rom_spiflash_dummy_len_plus: [u8; 3];
+        }
+        // SAFETY: the ROM exports SPI1's timing in the second array entry.
+        unsafe { g_rom_spiflash_dummy_len_plus[1] }
+    };
+    #[cfg(not(esp32s2))]
+    let dummy_cycles = {
+        #[repr(C)]
+        struct RomFlashChip {
+            device_id: u32,
+            chip_size: u32,
+            block_size: u32,
+            sector_size: u32,
+            page_size: u32,
+            status_mask: u32,
+        }
 
-    #[repr(C)]
-    struct RomFlashData {
-        chip: RomFlashChip,
-        dummy_len_plus: [u8; 3],
-        sig_matrix: u8,
-    }
+        #[repr(C)]
+        struct RomFlashData {
+            chip: RomFlashChip,
+            dummy_len_plus: [u8; 3],
+            sig_matrix: u8,
+        }
 
-    unsafe extern "C" {
-        static rom_spiflash_legacy_data: *const RomFlashData;
-    }
+        unsafe extern "C" {
+            static rom_spiflash_legacy_data: *const RomFlashData;
+        }
 
-    let Some(rom_data) = (unsafe { rom_spiflash_legacy_data.as_ref() }) else {
+        // SAFETY: the pointer and layout are defined by esp_rom_spiflash.h.
+        let Some(rom_data) = (unsafe { rom_spiflash_legacy_data.as_ref() }) else {
+            return None;
+        };
+        rom_data.dummy_len_plus[1]
+    };
+    Some(dummy_cycles)
+}
+
+#[cfg(not(esp32))]
+#[ram]
+fn read_flash_id_user_command() -> u32 {
+    let Some(dummy_cycles) = flash_dummy_cycles() else {
         return 0;
     };
-    let dummy_cycles = rom_data.dummy_len_plus[1];
+    // A launcher can leave quad-read settings that corrupt the hardware RDID command.
+    // Use a single-line command with the ROM's timing, then restore SPI1.
     let spi = esp_hal::peripherals::SPI1::regs();
     let ctrl = spi.ctrl().read().bits();
     let user = spi.user().read().bits();
@@ -107,7 +130,7 @@ fn read_flash_id_esp32s3() -> u32 {
     id
 }
 
-/// Detect flash size by reading via the dedicated hardware RDID command.
+/// Detect flash size from the JEDEC ID.
 pub(crate) fn get_flash_size() -> u32 {
     // On ESP32 the hardware RDID mechanism does not work reliably, so we
     // read the flash size from the ROM global `g_rom_flashchip` instead.
@@ -126,16 +149,7 @@ pub(crate) fn get_flash_size() -> u32 {
 
     #[cfg(not(esp32))]
     {
-        #[cfg(esp32s3)]
-        let id = maybe_with_critical_section(read_flash_id_esp32s3);
-
-        #[cfg(not(esp32s3))]
-        let id = maybe_with_critical_section(|| {
-            let spi1 = esp_hal::peripherals::SPI1::regs();
-            spi1.cmd().write(|w| w.flash_rdid().set_bit());
-            while spi1.cmd().read().flash_rdid().bit_is_set() {}
-            spi1.w(0).read().buf().bits() & 0x00FF_FFFF
-        });
+        let id = maybe_with_critical_section(read_flash_id_user_command);
 
         const KB: u32 = 1024;
         const MB: u32 = 1024 * KB;

@@ -133,7 +133,7 @@ opt-level = "s"
 # rustls with a workaround for an Xtensa compiler bug (esp-rs/rust#282),
 # which it otherwise trips when optimized.
 [patch.crates-io]
-# Fix ESP32-S3 flash ID detection after a launcher reset.
+# Keep flash ID detection independent of launcher SPI settings.
 esp-storage = { path = "vendor/esp-storage" }
 # Without ML-KEM key exchange, whose 30 KB of stack the UI cannot spare.
 sunset = { path = "vendor/sunset" }
