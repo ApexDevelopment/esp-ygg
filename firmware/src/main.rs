@@ -161,6 +161,10 @@ async fn main(spawner: Spawner) -> ! {
 		}
 		(None, None) => {}
 	}
+	info!(
+		"Starting WiFi: bridge={bridge}, hotspot={hotspot_on}, free heap={} bytes",
+		esp_alloc::HEAP.free()
+	);
 	let controller =
 		WifiController::new(peripherals.WIFI, controller_config).expect("starting WiFi");
 	let rng = Rng::new();
@@ -295,6 +299,10 @@ async fn main(spawner: Spawner) -> ! {
 			boot_button: peripherals.GPIO9,
 			dma: peripherals.DMA_CH0,
 		};
+		info!(
+			"Starting UI thread, free heap={} bytes",
+			esp_alloc::HEAP.free()
+		);
 		ui::own_thread::start(pins, peripherals.USB_DEVICE, settings.clone());
 	}
 	#[cfg(feature = "ui")]
@@ -302,6 +310,7 @@ async fn main(spawner: Spawner) -> ! {
 	#[cfg(feature = "voice")]
 	let mut call = call::CallLink::default();
 
+	info!("Node ready, free heap={} bytes", esp_alloc::HEAP.free());
 	let mut frame = alloc::vec![0u8; FRAME_LEN];
 	let mut stream: Option<StreamId> = None;
 	let mut next_save = Instant::now() + Duration::from_secs(SAVE_INTERVAL_SECS);
