@@ -419,9 +419,9 @@ pub mod own_thread {
 	/// TLS for Gemini 14 KB in a handshake with an elliptic curve
 	/// certificate.
 	const STACK_SIZE: usize = 40 * 1024;
-	/// WiFi's own threads run above both of these.
-	const NETWORK_PRIORITY: usize = 1;
-	const UI_PRIORITY: u32 = 0;
+	// Keep the UI above idle priority, with network work above the UI.
+	const NETWORK_PRIORITY: usize = 2;
+	const UI_PRIORITY: u32 = 1;
 
 	struct Start {
 		pins: Pins,
@@ -453,6 +453,7 @@ pub mod own_thread {
 	}
 
 	extern "C" fn run(start: *mut c_void) {
+		log::info!("UI thread running");
 		// SAFETY: `start` came from `Box::into_raw` in `start`, and is only
 		// taken back here.
 		let start = unsafe { Box::from_raw(start.cast::<Start>()) };
