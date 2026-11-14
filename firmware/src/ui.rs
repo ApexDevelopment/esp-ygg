@@ -294,7 +294,8 @@ mod text {
 			#[cfg(feature = "voice")]
 			{
 				app.set_talking(crate::audio::TALKING.load(Ordering::Relaxed));
-				crate::speaker::show(app.speaker(crate::audio::MUTED.load(Ordering::Relaxed)));
+				let muted = crate::audio::MUTED.load(Ordering::Relaxed);
+				crate::speaker::show((!app.is_locked()).then(|| app.speaker(muted)));
 			}
 			#[cfg(feature = "sftp")]
 			if let Some(status) = crate::sftp::status_changed() {

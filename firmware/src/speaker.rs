@@ -52,16 +52,24 @@ const MUTED: Icon = [
 	"............",
 ];
 
+/// What [`SHOWN`] holds while no icon shows.
+const HIDDEN: u8 = u8::MAX;
+
 static SHOWN: AtomicU8 = AtomicU8::new(Speaker::On as u8);
 
-pub fn show(speaker: Speaker) {
-	SHOWN.store(speaker as u8, Ordering::Relaxed);
+/// Sets the icon to draw, or none, as while the board is locked.
+pub fn show(speaker: Option<Speaker>) {
+	SHOWN.store(
+		speaker.map_or(HIDDEN, |speaker| speaker as u8),
+		Ordering::Relaxed,
+	);
 }
 
 /// Draws the icon. Called after every flush, as the terminal may have
 /// drawn its blank cells over it.
 pub fn draw<D: DrawTarget<Color = Rgb565>>(display: &mut D, cell: Size) {
 	let icon = match SHOWN.load(Ordering::Relaxed) {
+		HIDDEN => return,
 		value if value == Speaker::Silent as u8 => &SILENT,
 		value if value == Speaker::Muted as u8 => &MUTED,
 		_ => &ON,
