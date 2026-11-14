@@ -17,6 +17,8 @@ pub mod http;
 #[cfg(feature = "irc")]
 pub mod irc;
 mod overlay;
+#[cfg(feature = "ui")]
+pub mod ping;
 pub mod settings;
 #[cfg(feature = "sftp")]
 pub mod sftp;

@@ -12,6 +12,8 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use yggdrasil_espnow::Instant;
 
+use crate::ping::Session;
+
 use super::view::{DIM, field_line, split_top, tail};
 use super::{Command, Commands, Key, Outcome, TextInput, push_limited};
 
@@ -22,9 +24,7 @@ pub(super) struct Ping {
 	pub running: bool,
 	last: Option<Instant>,
 	log: VecDeque<String>,
-	sent: u32,
-	received: u32,
-	total: Duration,
+	session: Session,
 }
 
 impl Ping {
@@ -34,9 +34,7 @@ impl Ping {
 			running: false,
 			last: None,
 			log: VecDeque::new(),
-			sent: 0,
-			received: 0,
-			total: Duration::ZERO,
+			session: Session::default(),
 		}
 	}
 
@@ -50,9 +48,9 @@ impl Ping {
 		self.running = true;
 		self.last = None;
 		self.log.clear();
-		self.sent = 0;
-		self.received = 0;
-		self.total = Duration::ZERO;
+		if let Ok(target) = self.target.text.parse() {
+			self.session.start(target);
+		}
 	}
 
 	pub fn handle_key(&mut self, key: Key) -> Outcome {
@@ -78,14 +76,12 @@ impl Ping {
 		{
 			commands.push_back(Command::Ping(target));
 			self.last = Some(now);
-			self.sent += 1;
+			self.session.record_sent();
 		}
 	}
 
 	pub fn replied(&mut self, from: Ipv6Addr, sequence: u16, round_trip: Duration) {
-		if self.target.text.parse() == Ok(from) {
-			self.received += 1;
-			self.total += round_trip;
+		if self.session.replied(from, round_trip) {
 			push_limited(
 				&mut self.log,
 				format!("#{sequence}  {} ms", round_trip.as_millis()),
@@ -94,7 +90,7 @@ impl Ping {
 	}
 
 	pub fn timed_out(&mut self, target: Ipv6Addr, sequence: u16) {
-		if self.target.text.parse() == Ok(target) {
+		if self.session.target == Some(target) {
 			push_limited(&mut self.log, format!("#{sequence}  timed out"));
 		}
 	}
@@ -106,9 +102,11 @@ impl Ping {
 			Paragraph::new(field_line("to", &self.target, !self.running)),
 			target,
 		);
-		let mut text = format!(" sent {}  received {}", self.sent, self.received);
-		if self.received > 0 {
-			let average = self.total / self.received;
+		let mut text = format!(
+			" sent {}  received {}",
+			self.session.sent, self.session.received
+		);
+		if let Some(average) = self.session.average() {
 			text.push_str(&format!("  avg {} ms", average.as_millis()));
 		}
 		frame.render_widget(Paragraph::new(Line::styled(text, DIM)), summary);
