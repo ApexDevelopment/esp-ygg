@@ -25,6 +25,9 @@ use esp_radio::wifi::{
 use log::{info, warn};
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
+const DEFAULT_TX_POWER: i8 = 20;
+// Quarter-dBm units. The driver's 5 dBm default can fail before authentication.
+const BRIDGE_TX_POWER: i8 = 60;
 /// The largest chunk passed through a channel.
 pub const CHUNK: usize = 1024;
 
@@ -67,6 +70,22 @@ pub fn station_config(ssid: &str, password: &str) -> Option<StationConfig> {
 			.with_ssid(ssid.try_into().ok()?)
 			.with_authentication(auth),
 	)
+}
+
+pub fn configure_tx_power(controller: &mut WifiController<'static>, bridge: bool) -> i8 {
+	if !bridge {
+		return DEFAULT_TX_POWER;
+	}
+	match controller.set_max_tx_power(BRIDGE_TX_POWER) {
+		Ok(()) => {
+			info!("WiFi bridge TX power limit: 15 dBm");
+			BRIDGE_TX_POWER
+		}
+		Err(error) => {
+			warn!("Setting WiFi bridge TX power failed: {error:?}");
+			DEFAULT_TX_POWER
+		}
+	}
 }
 
 /// Owns the WiFi controller: keeps the board on its network when bridging,

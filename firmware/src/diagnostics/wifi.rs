@@ -28,6 +28,7 @@ struct State {
 	enabled: bool,
 	saved_enabled: bool,
 	requested_power: i8,
+	boot_power: i8,
 	power_save: PowerSaveMode,
 	bandwidths: Option<Bandwidths>,
 	sniffer: Option<Sniffer>,
@@ -39,6 +40,7 @@ pub async fn run(
 	config: Config,
 	enabled: bool,
 	mac: [u8; 6],
+	boot_power: i8,
 ) {
 	let mut state = State {
 		mac,
@@ -46,7 +48,8 @@ pub async fn run(
 		current: config,
 		enabled,
 		saved_enabled: enabled,
-		requested_power: 20,
+		requested_power: boot_power,
+		boot_power,
 		power_save: PowerSaveMode::None,
 		bandwidths: controller.bandwidths().ok(),
 		sniffer: None,
@@ -323,8 +326,8 @@ async fn apply_config(controller: &mut WifiController<'static>, state: &mut Stat
 
 async fn reset(controller: &mut WifiController<'static>, state: &mut State) {
 	apply_config(controller, state, state.saved.clone()).await;
-	match controller.set_max_tx_power(20) {
-		Ok(()) => state.requested_power = 20,
+	match controller.set_max_tx_power(state.boot_power) {
+		Ok(()) => state.requested_power = state.boot_power,
 		Err(error) => warn!("diag: restoring TX power failed: {error:?}"),
 	}
 	match controller.set_power_saving(PowerSaveMode::None) {

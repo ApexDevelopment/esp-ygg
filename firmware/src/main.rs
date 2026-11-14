@@ -172,8 +172,10 @@ async fn main(spawner: Spawner) -> ! {
 	);
 	#[cfg(feature = "diagnostics")]
 	let diagnostic_config = controller_config.initial_config().clone();
-	let controller =
+	let mut controller =
 		WifiController::new(peripherals.WIFI, controller_config).expect("starting WiFi");
+	#[cfg_attr(not(feature = "diagnostics"), allow(unused_variables))]
+	let initial_tx_power = uplink::configure_tx_power(&mut controller, bridge);
 	#[cfg(feature = "diagnostics")]
 	let diagnostic_mac = Interface::station().mac_address();
 	let rng = Rng::new();
@@ -196,8 +198,14 @@ async fn main(spawner: Spawner) -> ! {
 	#[cfg(feature = "diagnostics")]
 	{
 		spawner.spawn(
-			diagnostics::wifi::run(controller, diagnostic_config, bridge, diagnostic_mac)
-				.expect("spawning WiFi diagnostics"),
+			diagnostics::wifi::run(
+				controller,
+				diagnostic_config,
+				bridge,
+				diagnostic_mac,
+				initial_tx_power,
+			)
+			.expect("spawning WiFi diagnostics"),
 		);
 		spawner.spawn(ui::serial(peripherals.USB_DEVICE).expect("spawning the serial task"));
 		spawner.spawn(diagnostics::log_frames().expect("spawning packet diagnostics"));

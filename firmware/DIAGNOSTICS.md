@@ -36,7 +36,7 @@ The image reports its build timestamp, flash capacity and partition layout at bo
 | `diag wifi reset` | Restore the WiFi configuration from boot and disable capture |
 | `diag wifi scan passive auto 360` | Scan all channels, listening for 360 ms per channel |
 | `diag wifi scan active 1 300` | Probe channel 1 for 300 ms |
-| `diag wifi power 40` | Request a transmit-power limit in quarter-dBm units; accepts 8–84; boot default is 20 (5 dBm) |
+| `diag wifi power 40` | Request a transmit-power limit in quarter-dBm units; accepts 8–84; bridge boot default is 60 (15 dBm) |
 | `diag wifi ps none` | Select `none`, `min` or `max` power saving |
 | `diag wifi protocol bgn` | Select `b`, `bg`, `bgn` or `bgnax` |
 | `diag wifi bandwidth 20` | Request 20 or 40 MHz bandwidth |
