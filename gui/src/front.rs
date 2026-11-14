@@ -462,9 +462,8 @@ impl Gui {
 	}
 
 	/// Takes the networks a scan found.
-	pub fn set_networks(&mut self, mut networks: Vec<WifiNetwork>) {
-		networks.sort_by_key(|network| core::cmp::Reverse(network.signal));
-		let entries = networks
+	pub fn set_networks(&mut self, networks: Vec<WifiNetwork>) {
+		let entries = esp_ygg_app::ui::sorted_wifi_networks(networks)
 			.into_iter()
 			.map(|network| WifiEntry {
 				ssid: network.ssid.into(),

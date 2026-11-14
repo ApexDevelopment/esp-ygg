@@ -942,3 +942,40 @@ fn sends_a_file_and_answers_what_sftp_asks() {
 	});
 	assert_eq!(commands(&mut app), [Command::SftpList]);
 }
+
+#[test]
+fn wifi_results_keep_the_strongest_access_point_even_when_duplicates_are_separated() {
+	let mut app = App::new(Settings::new(), at(0));
+	app.set_networks(Vec::from([
+		WifiNetwork {
+			ssid: "home".into(),
+			signal: -80,
+			secured: true,
+		},
+		WifiNetwork {
+			ssid: "other".into(),
+			signal: -60,
+			secured: false,
+		},
+		WifiNetwork {
+			ssid: "home".into(),
+			signal: -40,
+			secured: true,
+		},
+	]));
+	assert_eq!(
+		app.networks,
+		Some(Vec::from([
+			WifiNetwork {
+				ssid: "home".into(),
+				signal: -40,
+				secured: true
+			},
+			WifiNetwork {
+				ssid: "other".into(),
+				signal: -60,
+				secured: false
+			},
+		]))
+	);
+}

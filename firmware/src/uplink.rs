@@ -16,7 +16,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use embedded_io_async::Write;
-use esp_radio::wifi::scan::ScanConfig;
+use esp_radio::wifi::scan::{ScanConfig, ScanTypeConfig};
 use esp_radio::wifi::{
 	AuthenticationMethod, AuthenticationMethodConfig, Interface, WifiController, sta::StationConfig,
 };
@@ -99,17 +99,34 @@ pub async fn wifi(mut controller: WifiController<'static>, bridge: bool) {
 }
 
 async fn scan(controller: &mut WifiController<'static>) {
-	let config = ScanConfig::default().with_max(20);
+	// Use the standard passive dwell time so scans do not depend on probe responses.
+	let config = ScanConfig::default().with_scan_type(ScanTypeConfig::Passive(
+		esp_hal::time::Duration::from_millis(360),
+	));
 	let networks = match controller.scan_async(&config).await {
-		Ok(found) => found
-			.into_iter()
-			.filter(|network| !network.ssid.is_empty())
-			.map(|network| ScannedNetwork {
-				ssid: network.ssid.as_str().into(),
-				signal: network.signal_strength,
-				secured: !matches!(network.auth_method, None | Some(AuthenticationMethod::None)),
-			})
-			.collect(),
+		Ok(found) => {
+			info!("WiFi scan found {} access points", found.len());
+			for network in &found {
+				info!(
+					"WiFi scan: {:?}, channel {}, {} dBm",
+					network.ssid.as_str(),
+					network.channel,
+					network.signal_strength
+				);
+			}
+			found
+				.into_iter()
+				.filter(|network| !network.ssid.is_empty())
+				.map(|network| ScannedNetwork {
+					ssid: network.ssid.as_str().into(),
+					signal: network.signal_strength,
+					secured: !matches!(
+						network.auth_method,
+						None | Some(AuthenticationMethod::None)
+					),
+				})
+				.collect()
+		}
 		Err(error) => {
 			warn!("WiFi scan failed: {error:?}");
 			Vec::new()

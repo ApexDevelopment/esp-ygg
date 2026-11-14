@@ -268,6 +268,14 @@ pub struct WifiNetwork {
 	pub secured: bool,
 }
 
+/// Keeps the strongest access point for each SSID, ordered by signal strength.
+pub fn sorted_wifi_networks(mut networks: Vec<WifiNetwork>) -> Vec<WifiNetwork> {
+	networks.sort_unstable_by(|a, b| a.ssid.cmp(&b.ssid).then_with(|| b.signal.cmp(&a.signal)));
+	networks.dedup_by(|a, b| a.ssid == b.ssid);
+	networks.sort_unstable_by(|a, b| b.signal.cmp(&a.signal).then_with(|| a.ssid.cmp(&b.ssid)));
+	networks
+}
+
 /// Nodes whose name or address start with what was typed, for Tab to
 /// cycle through.
 struct Completion {
@@ -508,10 +516,8 @@ impl App {
 		self.status = Some(status);
 	}
 
-	pub fn set_networks(&mut self, mut networks: Vec<WifiNetwork>) {
-		networks.sort_by_key(|network| core::cmp::Reverse(network.signal));
-		networks.dedup_by(|a, b| a.ssid == b.ssid);
-		self.networks = Some(networks);
+	pub fn set_networks(&mut self, networks: Vec<WifiNetwork>) {
+		self.networks = Some(sorted_wifi_networks(networks));
 		self.networks_selected = 0;
 	}
 
