@@ -3,6 +3,9 @@
 
 extern crate alloc;
 
+#[cfg(all(feature = "diagnostics", not(feature = "gui")))]
+compile_error!("diagnostics requires the C6 graphical interface");
+
 #[cfg(all(feature = "tui", feature = "gui"))]
 compile_error!("Pick one interface, tui or gui, not both");
 #[cfg(all(
@@ -19,6 +22,8 @@ mod audio;
 mod call;
 #[cfg(feature = "cardputer")]
 mod cardputer;
+#[cfg(feature = "diagnostics")]
+mod diagnostics;
 #[cfg(feature = "gui")]
 mod gui;
 mod hotspot;
@@ -165,8 +170,12 @@ async fn main(spawner: Spawner) -> ! {
 		"Starting WiFi: bridge={bridge}, hotspot={hotspot_on}, free heap={} bytes",
 		esp_alloc::HEAP.free()
 	);
+	#[cfg(feature = "diagnostics")]
+	let diagnostic_config = controller_config.initial_config().clone();
 	let controller =
 		WifiController::new(peripherals.WIFI, controller_config).expect("starting WiFi");
+	#[cfg(feature = "diagnostics")]
+	let diagnostic_mac = Interface::station().mac_address();
 	let rng = Rng::new();
 	let (mut store, unix_base) = settings_store.open(&rng);
 	#[cfg(feature = "sftp")]
@@ -182,7 +191,19 @@ async fn main(spawner: Spawner) -> ! {
 	}
 	let (manager, sender, mut receiver) = esp_now.split();
 	spawner.spawn(radio::sender(sender).expect("spawning the radio task"));
+	#[cfg(not(feature = "diagnostics"))]
 	spawner.spawn(uplink::wifi(controller, bridge).expect("spawning the WiFi task"));
+	#[cfg(feature = "diagnostics")]
+	{
+		spawner.spawn(
+			diagnostics::wifi::run(controller, diagnostic_config, bridge, diagnostic_mac)
+				.expect("spawning WiFi diagnostics"),
+		);
+		spawner.spawn(ui::serial(peripherals.USB_DEVICE).expect("spawning the serial task"));
+		spawner.spawn(diagnostics::log_frames().expect("spawning packet diagnostics"));
+	}
+	#[cfg(feature = "diagnostics")]
+	let mut diagnostic_stack = None;
 	if bridge {
 		let peer = settings.peer.parse().expect("checked by can_bridge");
 		let (stack, runner) = embassy_net::new(
@@ -190,7 +211,8 @@ async fn main(spawner: Spawner) -> ! {
 			embassy_net::Config::dhcpv4(Default::default()),
 			{
 				// DHCP, DNS, the TCP peering and NTP
-				static RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
+				const SOCKETS: usize = if cfg!(feature = "diagnostics") { 6 } else { 4 };
+				static RESOURCES: StaticCell<StackResources<SOCKETS>> = StaticCell::new();
 				RESOURCES.init(StackResources::new())
 			},
 			u64::from(rng.random()) << 32 | u64::from(rng.random()),
@@ -200,7 +222,16 @@ async fn main(spawner: Spawner) -> ! {
 		#[cfg(feature = "ntp")]
 		spawner.spawn(ntp::ntp(stack).expect("spawning the NTP task"));
 		info!("Peering with {peer} over WiFi network {}", settings.ssid);
+		#[cfg(feature = "diagnostics")]
+		{
+			diagnostic_stack = Some(stack);
+		}
 	}
+	#[cfg(feature = "diagnostics")]
+	spawner.spawn(
+		diagnostics::monitor(diagnostic_stack, settings.peer.parse().ok())
+			.expect("spawning diagnostics"),
+	);
 
 	let mut node = Node::new(
 		node_config(&store, &settings),
@@ -303,7 +334,12 @@ async fn main(spawner: Spawner) -> ! {
 			"Starting UI thread, free heap={} bytes",
 			esp_alloc::HEAP.free()
 		);
-		ui::own_thread::start(pins, peripherals.USB_DEVICE, settings.clone());
+		ui::own_thread::start(
+			pins,
+			#[cfg(not(feature = "diagnostics"))]
+			peripherals.USB_DEVICE,
+			settings.clone(),
+		);
 	}
 	#[cfg(feature = "ui")]
 	let mut next_status = Instant::now();
@@ -317,6 +353,8 @@ async fn main(spawner: Spawner) -> ! {
 	#[cfg(feature = "sftp")]
 	let mut sftp_pump = sftp::Pump::default();
 	loop {
+		#[cfg(feature = "diagnostics")]
+		diagnostics::NODE_LOOPS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 		let started = Instant::now();
 		send_frames(&mut node, &manager, &mut frame);
 		let backlogged = flush_stream(&mut node, &mut stream) || radio::OUTBOX.is_full();

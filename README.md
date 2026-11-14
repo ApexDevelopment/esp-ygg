@@ -299,6 +299,8 @@ python3 firmware/drive.py /dev/ttyACM0 "key down down enter enter" "type 200::1"
 
 It sends commands such as `type <text>`, `key <names>`, `tap <column> <row>`, `drag <x> <y> <x> <y>`, `lock` and `screen`. On the graphical interface, `tap` and `drag` take pixels, and `screen` saves the screen as `screen.png` instead of printing it. Voice builds add `talk on`, `talk off` and `mute on`. Run it without commands to list them all.
 
+For C6 WiFi and scheduling troubleshooting, add `diagnostics` to a `c6-gui` build. Its serial commands let you change radio settings, scan access points and probe DNS, TCP and NTP without reinstalling firmware. See [C6 serial diagnostics](firmware/DIAGNOSTICS.md).
+
 ## License
 
 The code is licensed under the GNU Lesser General Public License version 3, with the same exception for static linking that yggdrasil-go uses. See [LICENSE](LICENSE).

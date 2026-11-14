@@ -16,7 +16,9 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use embedded_io_async::Write;
-use esp_radio::wifi::scan::{ScanConfig, ScanTypeConfig};
+use esp_radio::wifi::scan::ScanConfig;
+#[cfg(not(feature = "diagnostics"))]
+use esp_radio::wifi::scan::ScanTypeConfig;
 use esp_radio::wifi::{
 	AuthenticationMethod, AuthenticationMethodConfig, Interface, WifiController, sta::StationConfig,
 };
@@ -70,6 +72,7 @@ pub fn station_config(ssid: &str, password: &str) -> Option<StationConfig> {
 /// Owns the WiFi controller: keeps the board on its network when bridging,
 /// and scans for networks when asked.
 #[embassy_executor::task]
+#[cfg(not(feature = "diagnostics"))]
 pub async fn wifi(mut controller: WifiController<'static>, bridge: bool) {
 	loop {
 		if !bridge {
@@ -98,15 +101,22 @@ pub async fn wifi(mut controller: WifiController<'static>, bridge: bool) {
 	}
 }
 
+#[cfg(not(feature = "diagnostics"))]
 async fn scan(controller: &mut WifiController<'static>) {
 	// Use the standard passive dwell time so scans do not depend on probe responses.
 	let config = ScanConfig::default().with_scan_type(ScanTypeConfig::Passive(
 		esp_hal::time::Duration::from_millis(360),
 	));
-	let networks = match controller.scan_async(&config).await {
+	scan_with(controller, &config).await;
+}
+
+pub(crate) async fn scan_with(controller: &mut WifiController<'static>, config: &ScanConfig) {
+	let networks = match controller.scan_async(config).await {
 		Ok(found) => {
 			info!("WiFi scan found {} access points", found.len());
 			for network in &found {
+				#[cfg(feature = "diagnostics")]
+				info!("diag AP: {network:?}");
 				info!(
 					"WiFi scan: {:?}, channel {}, {} dBm",
 					network.ssid.as_str(),
@@ -137,7 +147,18 @@ async fn scan(controller: &mut WifiController<'static>) {
 
 #[embassy_executor::task]
 pub async fn network(mut runner: Runner<'static, Interface>) {
-	runner.run().await
+	#[cfg(not(feature = "diagnostics"))]
+	runner.run().await;
+	#[cfg(feature = "diagnostics")]
+	{
+		use core::future::{Future, poll_fn};
+		let mut run = core::pin::pin!(runner.run());
+		poll_fn(|context| {
+			crate::diagnostics::NETWORK_POLLS.fetch_add(1, Ordering::Relaxed);
+			run.as_mut().poll(context)
+		})
+		.await;
+	}
 }
 
 #[embassy_executor::task]

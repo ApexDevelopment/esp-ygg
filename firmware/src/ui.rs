@@ -104,6 +104,7 @@ pub static SCREEN_WANTED: AtomicBool = AtomicBool::new(false);
 pub(crate) async fn serial(usb: USB_DEVICE<'static>) {
 	let (mut receiver, _transmitter) = UsbSerialJtag::new(usb).into_async().split();
 	let mut line = Vec::new();
+	let mut overflow = false;
 	let mut buffer = [0u8; 64];
 	loop {
 		let Ok(count) = receiver.read(&mut buffer).await;
@@ -111,22 +112,39 @@ pub(crate) async fn serial(usb: USB_DEVICE<'static>) {
 			if byte != b'\n' {
 				if line.len() < MAX_COMMAND {
 					line.push(byte);
+				} else {
+					overflow = true;
 				}
 				continue;
 			}
+			if overflow {
+				warn!("Serial command too long; command rejected");
+				line.clear();
+				overflow = false;
+				continue;
+			}
 			let text = String::from_utf8_lossy(&line);
+			#[cfg(feature = "diagnostics")]
+			if crate::diagnostics::command(&text) {
+				line.clear();
+				continue;
+			}
 			match remote::parse(&text) {
 				Ok(Remote::Keys(keys)) => {
 					for key in keys {
-						INPUT.send(Input::Key(key)).await;
+						if !queue_input(Input::Key(key)).await {
+							break;
+						}
 					}
 				}
 				Ok(Remote::Tap(column, row)) => {
-					INPUT.send(Input::Press { column, row }).await;
-					INPUT.send(Input::Tap { column, row }).await;
-					INPUT.send(Input::Release).await;
+					queue_input(Input::Press { column, row }).await;
+					queue_input(Input::Tap { column, row }).await;
+					queue_input(Input::Release).await;
 				}
-				Ok(Remote::Drag(from, to)) => INPUT.send(Input::Drag { from, to }).await,
+				Ok(Remote::Drag(from, to)) => {
+					queue_input(Input::Drag { from, to }).await;
+				}
 				Ok(Remote::Screen) => SCREEN_WANTED.store(true, Ordering::Relaxed),
 				Ok(Remote::Lock) => crate::lock::toggle(),
 				#[cfg(feature = "voice")]
@@ -139,6 +157,24 @@ pub(crate) async fn serial(usb: USB_DEVICE<'static>) {
 			}
 			line.clear();
 		}
+	}
+}
+
+async fn queue_input(input: Input) -> bool {
+	#[cfg(feature = "diagnostics")]
+	{
+		let result =
+			embassy_time::with_timeout(embassy_time::Duration::from_millis(250), INPUT.send(input))
+				.await;
+		if result.is_err() {
+			warn!("UI input timed out; input dropped");
+		}
+		result.is_ok()
+	}
+	#[cfg(not(feature = "diagnostics"))]
+	{
+		INPUT.send(input).await;
+		true
 	}
 }
 
@@ -407,6 +443,7 @@ pub mod own_thread {
 	use alloc::boxed::Box;
 	use core::ffi::c_void;
 
+	#[cfg(not(feature = "diagnostics"))]
 	use esp_hal::peripherals::USB_DEVICE;
 	use esp_rtos::CurrentThreadHandle;
 	use esp_rtos::embassy::Executor;
@@ -424,15 +461,21 @@ pub mod own_thread {
 
 	struct Start {
 		pins: Pins,
+		#[cfg(not(feature = "diagnostics"))]
 		usb: USB_DEVICE<'static>,
 		settings: Settings,
 	}
 
 	/// Starts the screen and UI at the calling network thread's priority.
-	pub fn start(pins: Pins, usb: USB_DEVICE<'static>, settings: Settings) {
+	pub fn start(
+		pins: Pins,
+		#[cfg(not(feature = "diagnostics"))] usb: USB_DEVICE<'static>,
+		settings: Settings,
+	) {
 		CurrentThreadHandle::get().set_priority(THREAD_PRIORITY);
 		let start = Box::into_raw(Box::new(Start {
 			pins,
+			#[cfg(not(feature = "diagnostics"))]
 			usb,
 			settings,
 		}));
@@ -451,6 +494,8 @@ pub mod own_thread {
 	}
 
 	extern "C" fn run(start: *mut c_void) {
+		#[cfg(feature = "diagnostics")]
+		crate::diagnostics::UI_STARTED.store(true, core::sync::atomic::Ordering::Relaxed);
 		log::info!("UI thread running");
 		// SAFETY: `start` came from `Box::into_raw` in `start`, and is only
 		// taken back here.
@@ -460,6 +505,7 @@ pub mod own_thread {
 		EXECUTOR.init(Executor::new()).run(move |spawner| {
 			let Start {
 				pins,
+				#[cfg(not(feature = "diagnostics"))]
 				usb,
 				settings,
 			} = *start;
@@ -473,6 +519,7 @@ pub mod own_thread {
 				let board = touch_lcd::set_up(pins);
 				spawner
 					.spawn(crate::gui::run(board, settings).expect("spawning the interface task"));
+				#[cfg(not(feature = "diagnostics"))]
 				spawner.spawn(super::serial(usb).expect("spawning the serial task"));
 				#[cfg(feature = "sftp")]
 				{

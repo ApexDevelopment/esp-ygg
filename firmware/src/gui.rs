@@ -205,6 +205,8 @@ pub async fn run(board: Board, settings: Settings) {
 	let mut serial_finger = SerialFinger::default();
 	let mut lock_button = crate::lock::Button::default();
 	loop {
+		#[cfg(feature = "diagnostics")]
+		crate::diagnostics::UI_FRAMES.fetch_add(1, Ordering::Relaxed);
 		let frame_started = Instant::now();
 		crate::ui::report_stack();
 		slint::platform::update_timers_and_animations();
