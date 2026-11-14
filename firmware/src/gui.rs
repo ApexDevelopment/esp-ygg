@@ -7,7 +7,6 @@ use alloc::rc::Rc;
 use core::sync::atomic::Ordering;
 use embassy_time::{Duration, Instant, Timer};
 use esp_ygg_app::Settings;
-use esp_ygg_app::ui::Command;
 use esp_ygg_app::ui::remote;
 use esp_ygg_app::ui::screen_timeout::ScreenTimeout;
 use esp_ygg_gui::{Gui, slint};
@@ -260,31 +259,16 @@ pub async fn run(board: Board, settings: Settings) {
 		}
 		gui.tick();
 		while let Some(command) = gui.poll_command() {
-			match command {
-				// The card is on this side, and quick enough to wait for.
-				Command::ExportSettings(text) => {
-					let time = gui.local_time();
-					panel.finish();
-					gui.settings_exported(slot.export_settings(&text, time));
-				}
-				Command::ImportSettings => {
-					panel.finish();
-					gui.settings_imported(slot.import_settings());
-				}
+			use crate::ui::LocalReply;
+			match crate::ui::local_command(command, &mut slot, gui.local_time(), || panel.finish())
+			{
 				#[cfg(feature = "sftp")]
-				Command::SftpList => {
-					panel.finish();
-					let files = match slot.sftp(crate::sftp::CardRequest::List) {
-						crate::sftp::CardReply::List(Ok(files)) => files,
-						_ => alloc::vec::Vec::new(),
-					};
-					gui.set_sftp_files(files);
-				}
+				Ok(LocalReply::Done) => {}
+				Ok(LocalReply::Exported(result)) => gui.settings_exported(result),
+				Ok(LocalReply::Imported(result)) => gui.settings_imported(result),
 				#[cfg(feature = "sftp")]
-				command @ (Command::SftpSend { .. }
-				| Command::SftpAdmit(_)
-				| Command::SftpPassword(_)) => crate::sftp::carry_out(command),
-				command => FROM_UI.send(command).await,
+				Ok(LocalReply::Files(files)) => gui.set_sftp_files(files),
+				Err(command) => FROM_UI.send(command).await,
 			}
 		}
 		// Taps over the serial port, in pixels here, for testing.

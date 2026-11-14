@@ -194,7 +194,7 @@ mod text {
 	use esp_hal::peripherals::USB_DEVICE;
 	use esp_ygg_app::Settings;
 	use esp_ygg_app::ui::remote;
-	use esp_ygg_app::ui::{self, App, Command};
+	use esp_ygg_app::ui::{self, App};
 	use mousefood::EmbeddedBackend;
 	use mousefood::embedded_graphics::pixelcolor::Rgb565;
 	use ratatui::Terminal;
@@ -271,25 +271,15 @@ mod text {
 			}
 			app.tick(now());
 			while let Some(command) = app.poll_command() {
-				match command {
-					// The card is on this side, and quick enough to wait for.
-					Command::ExportSettings(text) => {
-						app.settings_exported(slot.export_settings(&text, app.local_time()))
-					}
-					Command::ImportSettings => app.settings_imported(slot.import_settings()),
+				use super::LocalReply;
+				match super::local_command(command, &mut slot, app.local_time(), || {}) {
 					#[cfg(feature = "sftp")]
-					Command::SftpList => {
-						let files = match slot.sftp(crate::sftp::CardRequest::List) {
-							crate::sftp::CardReply::List(Ok(files)) => files,
-							_ => alloc::vec::Vec::new(),
-						};
-						app.set_sftp_files(files);
-					}
+					Ok(LocalReply::Done) => {}
+					Ok(LocalReply::Exported(result)) => app.settings_exported(result),
+					Ok(LocalReply::Imported(result)) => app.settings_imported(result),
 					#[cfg(feature = "sftp")]
-					command @ (Command::SftpSend { .. }
-					| Command::SftpAdmit(_)
-					| Command::SftpPassword(_)) => crate::sftp::carry_out(command),
-					command => FROM_UI.send(command).await,
+					Ok(LocalReply::Files(files)) => app.set_sftp_files(files),
+					Err(command) => FROM_UI.send(command).await,
 				}
 			}
 			if let Ok(frame) = screen.draw(|frame| ui::draw(frame, &app))
@@ -470,5 +460,47 @@ pub mod own_thread {
 				}
 			}
 		});
+	}
+}
+
+pub enum LocalReply {
+	#[cfg(feature = "sftp")]
+	Done,
+	Exported(Result<(), String>),
+	Imported(Result<String, String>),
+	#[cfg(feature = "sftp")]
+	Files(Vec<esp_ygg_app::sftp::Entry>),
+}
+
+pub fn local_command(
+	command: Command,
+	slot: &mut crate::sdcard::Slot,
+	time: Option<esp_ygg_app::time::DateTime>,
+	before_card: impl FnOnce(),
+) -> Result<LocalReply, Command> {
+	match command {
+		Command::ExportSettings(text) => {
+			before_card();
+			Ok(LocalReply::Exported(slot.export_settings(&text, time)))
+		}
+		Command::ImportSettings => {
+			before_card();
+			Ok(LocalReply::Imported(slot.import_settings()))
+		}
+		#[cfg(feature = "sftp")]
+		Command::SftpList => {
+			before_card();
+			let files = match slot.sftp(crate::sftp::CardRequest::List) {
+				crate::sftp::CardReply::List(Ok(files)) => files,
+				_ => Vec::new(),
+			};
+			Ok(LocalReply::Files(files))
+		}
+		#[cfg(feature = "sftp")]
+		command @ (Command::SftpSend { .. } | Command::SftpAdmit(_) | Command::SftpPassword(_)) => {
+			crate::sftp::carry_out(command);
+			Ok(LocalReply::Done)
+		}
+		command => Err(command),
 	}
 }
