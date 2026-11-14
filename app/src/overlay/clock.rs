@@ -103,6 +103,10 @@ impl Overlay {
 				synced: now,
 				stratum,
 			});
+			#[cfg(feature = "ntp")]
+			{
+				self.time.next_request = now + RESYNC_INTERVAL;
+			}
 		}
 	}
 

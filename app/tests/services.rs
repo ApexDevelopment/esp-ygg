@@ -715,3 +715,19 @@ fn slow_event_consumers_resume_streams_without_losing_bytes() {
 	);
 	assert_eq!(received, expected);
 }
+
+#[test]
+fn synchronized_time_does_not_leave_an_expired_wakeup() {
+	let (mut radio, mut overlays) = mesh(1, &[0]);
+	let now = radio.nodes[0].now();
+	overlays[0].1.set_time(1_800_000_000_000_000, 2, now);
+	overlays[0].1.poll(&mut radio.nodes[0], &board());
+	let next = overlays[0]
+		.1
+		.poll_at(now)
+		.expect("time resynchronization deadline");
+	assert!(
+		next > now,
+		"synchronized clock kept wakeup {next:?} at {now:?}"
+	);
+}
