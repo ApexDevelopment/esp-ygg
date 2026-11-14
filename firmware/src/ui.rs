@@ -1,8 +1,8 @@
 //! Runs the on-device UI and talks to the network side through channels.
 //! On the Cardputer, the UI has the second core to itself, so drawing and
 //! scanning keys never delay the radio and network work on the first. On
-//! single-core boards, it runs in a thread below the network's priority, so
-//! the network takes the core whenever it has work.
+//! single-core boards, it shares the network's thread priority so both can
+//! make progress while WiFi reconnects.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -400,8 +400,8 @@ pub mod second_core {
 	}
 }
 
-/// Starting the UI in a thread of its own on single-core boards, below the
-/// network's priority, so drawing never holds up the radio.
+/// Starts the UI in its own thread on single-core boards. It shares the
+/// network's priority, below the radio workers.
 #[cfg(feature = "c6-touch-lcd")]
 pub mod own_thread {
 	use alloc::boxed::Box;
@@ -419,9 +419,8 @@ pub mod own_thread {
 	/// TLS for Gemini 14 KB in a handshake with an elliptic curve
 	/// certificate.
 	const STACK_SIZE: usize = 40 * 1024;
-	// Keep the UI above idle priority, with network work above the UI.
-	const NETWORK_PRIORITY: usize = 2;
-	const UI_PRIORITY: u32 = 1;
+	// Sharing priority lets the UI run while WiFi is reconnecting.
+	const THREAD_PRIORITY: usize = 1;
 
 	struct Start {
 		pins: Pins,
@@ -429,10 +428,9 @@ pub mod own_thread {
 		settings: Settings,
 	}
 
-	/// Raises the calling thread, which runs the network, above the UI, and
-	/// starts the screen and the UI in a thread of their own.
+	/// Starts the screen and UI at the calling network thread's priority.
 	pub fn start(pins: Pins, usb: USB_DEVICE<'static>, settings: Settings) {
-		CurrentThreadHandle::get().set_priority(NETWORK_PRIORITY);
+		CurrentThreadHandle::get().set_priority(THREAD_PRIORITY);
 		let start = Box::into_raw(Box::new(Start {
 			pins,
 			usb,
@@ -445,7 +443,7 @@ pub mod own_thread {
 				"ui",
 				run,
 				start.cast(),
-				UI_PRIORITY,
+				THREAD_PRIORITY as u32,
 				None,
 				STACK_SIZE,
 			);
