@@ -12,6 +12,7 @@ use yggdrasil_espnow::yggdrasil_proto::address::addr_for_key;
 use yggdrasil_espnow::{Node, Platform};
 
 use super::Overlay;
+use super::pending::PendingWrite;
 #[cfg(feature = "gopher")]
 use crate::gopher;
 use crate::http::{self, BoardInfo};
@@ -42,8 +43,7 @@ pub(super) struct ServerConnection {
 	protocol: Protocol,
 	socket: SocketHandle,
 	request: Vec<u8>,
-	response: Vec<u8>,
-	sent: usize,
+	response: Option<PendingWrite>,
 }
 
 /// A listening socket for each connection the servers can take at once.
@@ -69,8 +69,7 @@ pub(super) fn listen(sockets: &mut SocketSet<'static>) -> Vec<ServerConnection> 
 				protocol,
 				socket: sockets.add(socket),
 				request: Vec::new(),
-				response: Vec::new(),
-				sent: 0,
+				response: None,
 			}
 		})
 		.collect()
@@ -94,13 +93,12 @@ impl Overlay {
 			if !socket.is_open() {
 				// Drop rather than clear, so idle connections hold no memory.
 				connection.request = Vec::new();
-				connection.response = Vec::new();
-				connection.sent = 0;
+				connection.response = None;
 				let port = connection.protocol.port();
 				let _ = socket.listen(IpListenEndpoint::from(port));
 				continue;
 			}
-			if connection.response.is_empty() {
+			if connection.response.is_none() {
 				let _ = socket.recv(|data| {
 					connection.request.extend_from_slice(data);
 					(data.len(), ())
@@ -109,7 +107,7 @@ impl Overlay {
 					socket.abort();
 					continue;
 				}
-				connection.response = match connection.protocol {
+				let response = match connection.protocol {
 					#[cfg(feature = "http")]
 					Protocol::Http if http::is_complete(&connection.request) => {
 						http::respond(&connection.request, node, board)
@@ -120,12 +118,12 @@ impl Overlay {
 					}
 					_ => Vec::new(),
 				};
-			}
-			if connection.sent < connection.response.len() {
-				if let Ok(sent) = socket.send_slice(&connection.response[connection.sent..]) {
-					connection.sent += sent;
+				if !response.is_empty() {
+					connection.response = Some(PendingWrite::new(response));
 				}
-				if connection.sent == connection.response.len() {
+			}
+			if let Some(response) = &mut connection.response {
+				if response.write_to(socket) {
 					socket.close();
 				}
 			}

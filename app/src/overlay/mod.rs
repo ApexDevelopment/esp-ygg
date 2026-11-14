@@ -12,6 +12,14 @@ mod clients;
 mod clock;
 #[cfg(feature = "console")]
 mod console;
+#[cfg(any(
+	feature = "http",
+	feature = "gopher",
+	feature = "irc",
+	feature = "gemini",
+	feature = "sftp"
+))]
+mod pending;
 #[cfg(feature = "voice")]
 mod phone;
 mod ping;

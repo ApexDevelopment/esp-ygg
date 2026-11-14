@@ -594,3 +594,59 @@ fn boards_call_each_other_across_the_mesh() {
 			.collect::<Vec<_>>()
 	);
 }
+
+#[test]
+fn fetch_sends_a_long_request_without_repeating_its_prefix() {
+	let (mut radio, mut overlays) = mesh(2, &[0]);
+	let server_address = address(&radio, 1);
+	let mut queues = Queues::default();
+	let now = smoltcp::time::Instant::from_micros(radio.now_micros() as i64);
+	let mut interface = device::interface(&radio.nodes[1].address(), &mut queues, 17, now);
+	let mut sockets = SocketSet::new(Vec::new());
+	let handle = sockets.add(tcp::Socket::new(
+		tcp::SocketBuffer::new(vec![0; 256]),
+		tcp::SocketBuffer::new(vec![0; 256]),
+	));
+	sockets.get_mut::<tcp::Socket>(handle).listen(70).unwrap();
+	let request = [b"selector/".repeat(400), b"\r\n".to_vec()].concat();
+	overlays[0]
+		.1
+		.fetch(
+			SocketAddrV6::new(server_address, 70, 0, 0),
+			request.clone(),
+			radio.nodes[0].now(),
+		)
+		.unwrap();
+	let mut received = Vec::new();
+	let result = wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(30),
+		|radio, overlays| {
+			while let Some(packet) = radio.nodes[1].recv_ipv6() {
+				queues.received.push_back(packet);
+			}
+			let now = smoltcp::time::Instant::from_micros(radio.now_micros() as i64);
+			interface.poll(now, &mut queues, &mut sockets);
+			let socket = sockets.get_mut::<tcp::Socket>(handle);
+			while socket.can_recv() {
+				socket
+					.recv(|data| {
+						received.extend_from_slice(data);
+						(data.len(), ())
+					})
+					.unwrap();
+			}
+			if received.ends_with(b"\r\n") {
+				socket.close();
+			}
+			interface.poll(now, &mut queues, &mut sockets);
+			while let Some(packet) = queues.outgoing.pop_front() {
+				let _ = radio.nodes[1].send_ipv6(&packet);
+			}
+			overlays[0].1.poll_event()
+		},
+	);
+	assert!(matches!(result, Some(Event::Fetched { .. })), "{result:?}");
+	assert_eq!(received, request);
+}

@@ -13,6 +13,7 @@ use smoltcp::wire::{IpAddress, IpEndpoint};
 #[cfg(feature = "gopher")]
 use yggdrasil_espnow::Instant;
 
+use super::pending::PendingWrite;
 use super::{Event, Overlay, SendError};
 
 /// Local ports for connections this board opens.
@@ -91,7 +92,7 @@ pub(super) struct StreamSlot {
 	/// Made when the stream opens, so a closed stream costs no memory.
 	socket: Option<SocketHandle>,
 	state: StreamState,
-	outgoing: Vec<u8>,
+	outgoing: PendingWrite,
 }
 
 #[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
@@ -103,7 +104,7 @@ pub(super) fn stream_slots() -> Vec<StreamSlot> {
 			receive_buffer,
 			socket: None,
 			state: StreamState::Closed,
-			outgoing: Vec::new(),
+			outgoing: PendingWrite::default(),
 		})
 		.collect()
 }
@@ -112,8 +113,7 @@ pub(super) fn stream_slots() -> Vec<StreamSlot> {
 #[cfg(feature = "gopher")]
 pub(super) struct Fetch {
 	socket: SocketHandle,
-	request: Vec<u8>,
-	sent: bool,
+	request: PendingWrite,
 	connected: bool,
 	response: Vec<u8>,
 	pub started: Instant,
@@ -137,8 +137,7 @@ impl Overlay {
 		let socket = self.connect(to, 4096)?;
 		self.fetch = Some(Fetch {
 			socket,
-			request,
-			sent: false,
+			request: PendingWrite::new(request),
 			connected: false,
 			response: Vec::new(),
 			started: now,
@@ -303,11 +302,8 @@ impl Overlay {
 				)));
 				self.events.push_back(Event::StreamOpened(stream));
 			}
-			if slot.state == StreamState::Open
-				&& !slot.outgoing.is_empty()
-				&& let Ok(sent) = socket.send_slice(&slot.outgoing)
-			{
-				slot.outgoing.drain(..sent);
+			if slot.state == StreamState::Open && slot.outgoing.write_to(socket) {
+				slot.outgoing.clear();
 			}
 			// The host reads SFTP's streams itself, as fast as it can take
 			// them, so the sender slows to match.
@@ -330,7 +326,7 @@ impl Overlay {
 			if !socket.is_open() && !(pulled && socket.recv_queue() > 0) {
 				slot.state = StreamState::Closed;
 				slot.socket = None;
-				slot.outgoing = Vec::new();
+				slot.outgoing.clear();
 				self.sockets.remove(handle);
 				self.events.push_back(Event::StreamClosed(stream));
 				#[cfg(feature = "sftp")]
@@ -371,9 +367,7 @@ impl Overlay {
 		let socket = self.sockets.get_mut::<tcp::Socket>(fetch.socket);
 		if socket.may_send() {
 			fetch.connected = true;
-			if !fetch.sent && socket.send_slice(&fetch.request) == Ok(fetch.request.len()) {
-				fetch.sent = true;
-			}
+			fetch.request.write_to(socket);
 		}
 		while socket.can_recv() && fetch.response.len() < MAX_FETCH {
 			let room = MAX_FETCH - fetch.response.len();
@@ -383,7 +377,7 @@ impl Overlay {
 				(taken, ())
 			});
 		}
-		let finished = !socket.is_open() || (fetch.sent && !socket.may_recv());
+		let finished = !socket.is_open() || (fetch.request.is_empty() && !socket.may_recv());
 		let full = fetch.response.len() >= MAX_FETCH;
 		let timed_out = now >= fetch.started + FETCH_TIMEOUT;
 		if !(finished || full || timed_out) {
