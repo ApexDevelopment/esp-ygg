@@ -33,7 +33,7 @@ pub async fn ntp(stack: Stack<'static>) {
 	}
 }
 
-pub(crate) async fn query_ntp(stack: Stack<'static>) -> Option<(u64, u8, Instant)> {
+async fn query_ntp(stack: Stack<'static>) -> Option<(u64, u8, Instant)> {
 	let addresses = stack.dns_query(NTP_SERVER, DnsQueryType::A).await.ok()?;
 	let server = *addresses.first()?;
 	let (mut rx_meta, mut tx_meta) = ([PacketMetadata::EMPTY; 1], [PacketMetadata::EMPTY; 1]);

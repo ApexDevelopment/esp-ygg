@@ -53,8 +53,6 @@ pub struct Flash {
 }
 impl Flash {
 	pub fn new(mut flash: FlashStorage<'static>) -> Self {
-		#[cfg(feature = "diagnostics")]
-		log::info!("diag flash: capacity={} bytes", flash.capacity());
 		let mut buffer = [0u8; PARTITION_TABLE_MAX_LEN];
 		let table =
 			partitions::read_partition_table(&mut flash, &mut buffer).unwrap_or_else(|error| {
@@ -65,15 +63,6 @@ impl Flash {
 					flash.capacity()
 				);
 			});
-		#[cfg(feature = "diagnostics")]
-		for entry in table.iter() {
-			log::info!(
-				"diag partition: {:?}, offset={:#x}, length={:#x}",
-				entry.label_as_str(),
-				entry.offset(),
-				entry.len()
-			);
-		}
 		let partition = table
 			.iter()
 			.find(|entry| {

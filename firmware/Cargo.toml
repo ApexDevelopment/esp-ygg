@@ -48,8 +48,6 @@ default = ["esp32s3", "standard"]
 # IRC and Gemini are larger; add them with, for example,
 # --features cardputer,gopher,irc,gemini
 standard = ["http", "console", "ntp"]
-# Serial troubleshooting tools for the C6 graphical build.
-diagnostics = ["esp-radio/sniffer"]
 http = ["esp-ygg-app/http"]
 gopher = ["esp-ygg-app/gopher", "esp-ygg-gui?/gopher"]
 console = ["esp-ygg-app/console", "esp-ygg-gui?/console"]

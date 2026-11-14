@@ -87,10 +87,6 @@ pub fn forget_others(keep: &[Mac]) {
 pub async fn sender(mut sender: EspNowSender) {
 	loop {
 		let outgoing = OUTBOX.receive().await;
-		#[cfg(feature = "diagnostics")]
-		if !crate::diagnostics::RADIO_TX_ENABLED.load(core::sync::atomic::Ordering::Relaxed) {
-			continue;
-		}
 		let send = sender.send_async(&outgoing.mac, &outgoing.frame);
 		let lost = match with_timeout(SEND_TIMEOUT, send).await {
 			Ok(Ok(())) => false,

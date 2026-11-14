@@ -16,9 +16,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, Timer, with_timeout};
 use embedded_io_async::Write;
-use esp_radio::wifi::scan::ScanConfig;
-#[cfg(not(feature = "diagnostics"))]
-use esp_radio::wifi::scan::ScanTypeConfig;
+use esp_radio::wifi::scan::{ScanConfig, ScanTypeConfig};
 use esp_radio::wifi::{
 	AuthenticationMethod, AuthenticationMethodConfig, Interface, WifiController, sta::StationConfig,
 };
@@ -26,7 +24,6 @@ use log::{info, warn};
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-const DEFAULT_TX_POWER: i8 = 20;
 // Quarter-dBm units. The driver's 5 dBm default can fail before authentication.
 const BRIDGE_TX_POWER: i8 = 60;
 /// The largest chunk passed through a channel.
@@ -75,23 +72,21 @@ pub fn station_config(ssid: &str, password: &str) -> Option<StationConfig> {
 	)
 }
 
-pub fn configure_tx_power(controller: &mut WifiController<'static>, bridge: bool) -> i8 {
+pub fn configure_tx_power(controller: &mut WifiController<'static>, bridge: bool) {
 	if !bridge {
-		return DEFAULT_TX_POWER;
+		return;
 	}
 	match controller.set_max_tx_power(BRIDGE_TX_POWER) {
 		Ok(()) => {
 			info!("WiFi bridge TX power limit: 15 dBm");
-			BRIDGE_TX_POWER
 		}
 		Err(error) => {
 			warn!("Setting WiFi bridge TX power failed: {error:?}");
-			DEFAULT_TX_POWER
 		}
 	}
 }
 
-pub(crate) async fn connect_wifi(controller: &mut WifiController<'static>) -> bool {
+async fn connect_wifi(controller: &mut WifiController<'static>) -> bool {
 	let started = Instant::now();
 	match with_timeout(CONNECT_TIMEOUT, controller.connect_async()).await {
 		Ok(Ok(connection)) => {
@@ -123,7 +118,6 @@ pub(crate) async fn connect_wifi(controller: &mut WifiController<'static>) -> bo
 /// Owns the WiFi controller: keeps the board on its network when bridging,
 /// and scans for networks when asked.
 #[embassy_executor::task]
-#[cfg(not(feature = "diagnostics"))]
 pub async fn wifi(mut controller: WifiController<'static>, bridge: bool) {
 	loop {
 		if !bridge {
@@ -148,23 +142,16 @@ pub async fn wifi(mut controller: WifiController<'static>, bridge: bool) {
 	}
 }
 
-#[cfg(not(feature = "diagnostics"))]
 async fn scan(controller: &mut WifiController<'static>) {
 	// Use the standard passive dwell time so scans do not depend on probe responses.
 	let config = ScanConfig::default().with_scan_type(ScanTypeConfig::Passive(
 		esp_hal::time::Duration::from_millis(360),
 	));
-	scan_with(controller, &config).await;
-}
-
-pub(crate) async fn scan_with(controller: &mut WifiController<'static>, config: &ScanConfig) {
-	let networks = match controller.scan_async(config).await {
+	let networks = match controller.scan_async(&config).await {
 		Ok(found) => {
 			info!("WiFi scan found {} access points", found.len());
 			for network in &found {
-				#[cfg(feature = "diagnostics")]
-				info!("diag AP: {network:?}");
-				info!(
+				log::debug!(
 					"WiFi scan: {:?}, channel {}, {} dBm",
 					network.ssid.as_str(),
 					network.channel,
@@ -194,18 +181,7 @@ pub(crate) async fn scan_with(controller: &mut WifiController<'static>, config: 
 
 #[embassy_executor::task]
 pub async fn network(mut runner: Runner<'static, Interface>) {
-	#[cfg(not(feature = "diagnostics"))]
-	runner.run().await;
-	#[cfg(feature = "diagnostics")]
-	{
-		use core::future::{Future, poll_fn};
-		let mut run = core::pin::pin!(runner.run());
-		poll_fn(|context| {
-			crate::diagnostics::NETWORK_POLLS.fetch_add(1, Ordering::Relaxed);
-			run.as_mut().poll(context)
-		})
-		.await;
-	}
+	runner.run().await
 }
 
 #[embassy_executor::task]
