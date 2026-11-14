@@ -204,35 +204,62 @@ Many ESP32 boards have no real-time clock. Yggdrasil numbers some messages with 
 
 ## Development
 
-`node` is just the Yggdrasil node as a `no_std` library that does no I/O. `app` adds the services and the interface, also without touching hardware. Both will build and run on a desktop. `firmware` runs them on the ESP32 with esp-hal, esp-radio and Embassy.
+The code is split into four crates:
 
-To test `node`, `app` and `gui` on your computer, run `cargo test` from the repository root.
+- `node` is the Yggdrasil node. It's a `no_std` library that doesn't do any I/O.
+- `app` adds the services and the text interface. It also does not require the hardware.
+- `gui` is the Slint graphical interface.
+- `firmware` runs everything on the ESP32, using esp-hal, esp-radio and Embassy.
 
-To try the text interface without a board, run the preview. It shows the interface in a terminal as one of three simulated boards in a line, and the farthest board echoes console messages back. Add `-- touch` for the touch board's larger screen, where mouse clicks are taps:
+Only `firmware` needs a board. You can build and test the other three on your computer. To run their tests, run `cargo test` from the repository root.
+
+### Try the text interface
+
+You can try the text interface without a board:
 
 ```sh
 cargo run -p esp-ygg-app --example preview
 ```
 
-The preview can also draw the touch board's screen pixel for pixel and save it. It takes the same commands as `drive.py`, below, and saves a PNG at each `screen`:
+This opens the interface in your terminal, at the Cardputer's screen size. It simulates a mesh of three boards in a line, and you control the first one. The board at the far end echoes back any console messages you send it. Press Ctrl+C to quit.
+
+To see the touch board's larger screen instead, add `-- touch`. Mouse clicks act as taps.
+
+The preview can also save pictures of the touch board's screen. Give it a folder and a list of commands. It takes the same commands as `drive.py` (described below) and saves a PNG each time it reaches `screen`:
 
 ```sh
 cargo run -p esp-ygg-app --example preview -- png shots "key down down down enter" "tap 5 2" screen
 ```
 
-To see the graphical interface without a board, draw each page for a small made-up mesh, wide and tall, into a folder:
+### See the graphical interface
+
+To see the graphical interface without a board, save pictures of its pages into a folder:
 
 ```sh
 cargo run -p esp-ygg-gui --example screenshot -- screens
 ```
 
-To drive a board's interface from your computer over its USB serial port, without resetting it, use `firmware/drive.py`:
+It draws each page in landscape and portrait, for a small made-up mesh.
+
+### Control a board from your computer
+
+`firmware/drive.py` sends input to a board over its USB serial port. It doesn't reset the board, so the interface stays on whatever screen it was showing:
 
 ```sh
 python3 firmware/drive.py /dev/ttyACM0 "key down down enter enter" "type 200::1" "key enter" "wait 3" screen
 ```
 
-It sends commands such as `type <text>`, `key <names>`, `tap <column> <row>`, `drag <x> <y> <x> <y>`, `lock` and `screen`. On the graphical interface, `tap` and `drag` take pixels, and `screen` saves the screen as `screen.png` instead of printing it. Voice builds add `talk on`, `talk off` and `mute on`. Run it without commands to list them all.
+Each command is one argument. These are the main ones:
+
+- `type <text>` types text.
+- `key <names>` presses keys, such as `enter`, `esc` or `down`.
+- `tap <column> <row>` taps a touch screen.
+- `drag <x> <y> <x> <y>` drags across the graphical interface.
+- `lock` presses the lock button.
+- `wait <seconds>` waits and shows what the board logs meanwhile.
+- `screen` prints the screen.
+
+On the graphical interface, `tap` takes pixels instead of character cells, and `screen` saves a `screen.png` instead of printing. Voice builds also accept `talk on`, `talk off`, `mute on` and `mute off`. To list every command, run `drive.py` without any.
 
 ## License
 
