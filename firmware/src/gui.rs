@@ -18,7 +18,7 @@ use slint::platform::software_renderer::{
 use slint::platform::{Platform, PointerEventButton, WindowAdapter, WindowEvent};
 
 use crate::touch_lcd::{self, Board, Panel};
-use crate::ui::{FROM_UI, INPUT, Input, SCREEN_WANTED, TO_UI, ToUi, uptime};
+use crate::ui::{FROM_UI, INPUT, Input, SCREEN_WANTED, ToUi, uptime};
 
 const WIDTH: u16 = 320;
 const HEIGHT: u16 = 240;
@@ -238,7 +238,7 @@ pub async fn run(board: Board, settings: Settings) {
 			}
 		}
 		touching = touch;
-		while let Ok(message) = TO_UI.try_receive() {
+		while let Some(message) = crate::ui::try_message() {
 			match message {
 				ToUi::Status(status) => gui.set_status(status),
 				ToUi::NodeInfo(key, info) => gui.handle_nodeinfo(key, info.as_deref()),

@@ -650,3 +650,68 @@ fn fetch_sends_a_long_request_without_repeating_its_prefix() {
 	assert!(matches!(result, Some(Event::Fetched { .. })), "{result:?}");
 	assert_eq!(received, request);
 }
+
+#[test]
+fn slow_event_consumers_resume_streams_without_losing_bytes() {
+	let (mut radio, mut overlays) = mesh(2, &[0, 1]);
+	let destination = SocketAddrV6::new(address(&radio, 1), esp_ygg_app::sftp::PORT, 0, 0);
+	overlays[0].1.open_stream(Stream::Irc, destination).unwrap();
+	assert!(
+		wait_for(
+			&mut radio,
+			&mut overlays,
+			Duration::from_secs(30),
+			|_, overlays| {
+				while let Some(event) = overlays[1].1.poll_event() {
+					if matches!(event, Event::StreamAccepted { .. }) {
+						return Some(());
+					}
+				}
+				None
+			}
+		)
+		.is_some()
+	);
+	let expected: Vec<u8> = (0..40_000).map(|i| (i % 251) as u8).collect();
+	let mut sent = 0;
+	let mut received = Vec::new();
+	let mut count = 0;
+	let finished = wait_for(
+		&mut radio,
+		&mut overlays,
+		Duration::from_secs(60),
+		|_, overlays| {
+			count += 1;
+			if sent < expected.len() {
+				let end = (sent + 512).min(expected.len());
+				if overlays[1]
+					.1
+					.stream_send(Stream::SftpIncoming, &expected[sent..end])
+					.is_ok()
+				{
+					sent = end;
+				}
+			}
+			if count > 5000 {
+				let mut pending = 0;
+				while let Some(event) = overlays[0].1.poll_event() {
+					pending += 1;
+					if let Event::StreamData { data, .. } = event {
+						received.extend(data);
+					}
+				}
+				assert!(
+					pending <= 32,
+					"queued {pending} events while the consumer paused"
+				);
+			}
+			(received.len() >= expected.len()).then_some(())
+		},
+	);
+	assert!(
+		finished.is_some(),
+		"stream stalled after {} bytes",
+		received.len()
+	);
+	assert_eq!(received, expected);
+}

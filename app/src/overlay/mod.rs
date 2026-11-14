@@ -151,6 +151,8 @@ pub struct Overlay {
 	phone: phone::PhoneSlot,
 }
 
+const EVENT_BACKLOG: usize = 16;
+
 impl Overlay {
 	/// `random_seed` should differ between boots, for TCP sequence numbers.
 	/// Without `status_pages`, the HTTP and Gopher ports are closed.
@@ -277,23 +279,25 @@ impl Overlay {
 	fn run_services<P: Platform>(&mut self, node: &Node<P>, board: &BoardInfo, now: Instant) {
 		#[cfg(any(feature = "http", feature = "gopher"))]
 		self.serve(node, board);
-		#[cfg(feature = "gopher")]
-		self.progress_fetch(now);
-		#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
-		self.progress_streams();
-		#[cfg(any(
-			feature = "gopher",
-			feature = "irc",
-			feature = "gemini",
-			feature = "sftp"
-		))]
-		self.free_closed_sockets();
-		#[cfg(feature = "console")]
-		self.receive_datagrams();
+		if self.events.len() < EVENT_BACKLOG {
+			#[cfg(feature = "gopher")]
+			self.progress_fetch(now);
+			#[cfg(any(feature = "irc", feature = "gemini", feature = "sftp"))]
+			self.progress_streams();
+			#[cfg(any(
+				feature = "gopher",
+				feature = "irc",
+				feature = "gemini",
+				feature = "sftp"
+			))]
+			self.free_closed_sockets();
+			#[cfg(feature = "console")]
+			self.receive_datagrams();
+			self.receive_pings(now);
+			self.expire_pings(now);
+		}
 		#[cfg(feature = "voice")]
 		self.run_phone(now);
-		self.receive_pings(now);
-		self.expire_pings(now);
 		#[cfg(feature = "ntp")]
 		self.keep_time(node, now);
 	}
@@ -339,6 +343,7 @@ impl Overlay {
 			.pinger
 			.sent
 			.values()
+			.filter(|_| self.events.len() < EVENT_BACKLOG)
 			.map(|(_, sent)| *sent + PING_TIMEOUT);
 		let deadlines = [
 			#[cfg(feature = "ntp")]
@@ -349,6 +354,7 @@ impl Overlay {
 			#[cfg(feature = "gopher")]
 			self.fetch
 				.as_ref()
+				.filter(|_| self.events.len() < EVENT_BACKLOG)
 				.map(|fetch| fetch.started + clients::FETCH_TIMEOUT),
 		];
 		stack

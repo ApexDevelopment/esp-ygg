@@ -29,8 +29,7 @@ pub use text::{Screen, spawn};
 /// The longest command line read from the serial port.
 const MAX_COMMAND: usize = 512;
 
-/// What the network side tells the UI. The graphical interface does not
-/// take events yet.
+/// What the network side tells the UI.
 #[cfg_attr(feature = "gui", allow(dead_code))]
 pub enum ToUi {
 	Status(Status),
@@ -40,6 +39,29 @@ pub enum ToUi {
 }
 
 pub static TO_UI: Channel<CriticalSectionRawMutex, ToUi, 16> = Channel::new();
+pub static STATUS: embassy_sync::signal::Signal<CriticalSectionRawMutex, Status> =
+	embassy_sync::signal::Signal::new();
+pub static NETWORKS: embassy_sync::signal::Signal<CriticalSectionRawMutex, Vec<WifiNetwork>> =
+	embassy_sync::signal::Signal::new();
+
+#[cfg(feature = "tui")]
+async fn next_message() -> ToUi {
+	use embassy_futures::select::{Either3, select3};
+	match select3(TO_UI.receive(), STATUS.wait(), NETWORKS.wait()).await {
+		Either3::First(message) => message,
+		Either3::Second(status) => ToUi::Status(status),
+		Either3::Third(networks) => ToUi::Networks(networks),
+	}
+}
+
+#[cfg(feature = "gui")]
+pub fn try_message() -> Option<ToUi> {
+	TO_UI
+		.try_receive()
+		.ok()
+		.or_else(|| STATUS.try_take().map(ToUi::Status))
+		.or_else(|| NETWORKS.try_take().map(ToUi::Networks))
+}
 /// What the UI asks the network side to do.
 pub static FROM_UI: Channel<CriticalSectionRawMutex, Command, 8> = Channel::new();
 /// Key presses and taps, from the board's keyboard or touch screen, or the
@@ -199,7 +221,7 @@ mod text {
 	use mousefood::embedded_graphics::pixelcolor::Rgb565;
 	use ratatui::Terminal;
 
-	use super::{FROM_UI, INPUT, Input, SCREEN_WANTED, TO_UI, ToUi, board, serial};
+	use super::{FROM_UI, INPUT, Input, SCREEN_WANTED, ToUi, board, serial};
 	use crate::platform::now;
 	use crate::sdcard::Slot;
 	use core::sync::atomic::Ordering;
@@ -235,7 +257,7 @@ mod text {
 			let card = crate::sftp::CARD_REQUESTS.receive();
 			#[cfg(not(feature = "sftp"))]
 			let card = core::future::pending::<()>();
-			let input = select3(INPUT.receive(), TO_UI.receive(), Timer::after(TICK));
+			let input = select3(INPUT.receive(), super::next_message(), Timer::after(TICK));
 			match select(input, card).await {
 				Either::First(Either3::First(Input::Key(key))) => app.handle_key(key),
 				Either::First(Either3::First(Input::Tap { column, row })) => {

@@ -311,6 +311,8 @@ async fn main(spawner: Spawner) -> ! {
 		let started = Instant::now();
 		send_frames(&mut node, &manager, &mut frame);
 		let backlogged = flush_stream(&mut node, &mut stream) || radio::OUTBOX.is_full();
+		#[cfg(feature = "ui")]
+		let backlogged = backlogged || ui::TO_UI.is_full();
 
 		let mut wake = [
 			node.poll_timeout().map(to_embassy),
@@ -400,9 +402,17 @@ async fn main(spawner: Spawner) -> ! {
 
 		#[cfg(feature = "ui")]
 		{
-			// If the UI falls behind, it misses some updates rather than
-			// holding up the network.
-			while let Some(event) = overlay.poll_event() {
+			while !ui::TO_UI.is_full() {
+				let Some((key, info)) = node.poll_nodeinfo() else {
+					break;
+				};
+				let _ = ui::TO_UI.try_send(ui::ToUi::NodeInfo(key, info));
+			}
+			// Only this task sends ordered UI messages; leave them queued when full.
+			while !ui::TO_UI.is_full() {
+				let Some(event) = overlay.poll_event() else {
+					break;
+				};
 				#[cfg(feature = "sftp")]
 				let Some(event) = sftp_pump.route(event) else {
 					continue;
@@ -417,9 +427,7 @@ async fn main(spawner: Spawner) -> ! {
 			sftp_pump.pump(&mut overlay);
 			#[cfg(feature = "voice")]
 			call.deliver(&mut overlay);
-			while let Some((key, info)) = node.poll_nodeinfo() {
-				let _ = ui::TO_UI.try_send(ui::ToUi::NodeInfo(key, info));
-			}
+
 			if Instant::now() >= next_status {
 				let uplink = uplink_state(bridge, &node, stream);
 				send_status(&node, &board, uplink, overlay.hotspot_devices());
@@ -546,7 +554,7 @@ fn show_networks(networks: Vec<uplink::ScannedNetwork>) {
 			secured: network.secured,
 		})
 		.collect();
-	let _ = ui::TO_UI.try_send(ui::ToUi::Networks(networks));
+	ui::NETWORKS.signal(networks);
 }
 
 /// Gives the UI the node's state, with each neighbor's radio quality.
@@ -568,7 +576,7 @@ fn send_status(
 		.map(|neighbor| neighbor.mac)
 		.collect();
 	radio::forget_others(&macs);
-	let _ = ui::TO_UI.try_send(ui::ToUi::Status(status));
+	ui::STATUS.signal(status);
 }
 
 #[cfg(feature = "ui")]
